@@ -487,19 +487,17 @@ document.getElementById('fileinput').addEventListener('change', function(){
 });
 
 function handleFile(fileObj) {
-  var name = fileObj.name;
-  var ext  = name.split('.').pop().toLowerCase();
-  showMsg('info', 'Leyendo <strong>' + name + '</strong>...');
-  var reader = new FileReader();
-  if(ext === 'csv') {
-    reader.onload  = function(ev){ processCSV(ev.target.result, name); };
-    reader.onerror = function(){ showMsg('err', 'No se pudo leer el archivo.'); };
-    reader.readAsText(fileObj);
-  } else {
-    reader.onload  = function(ev){ processXLSX(ev.target.result, name).catch(function(e){ showMsg('err','Error: '+e.message); }); };
-    reader.onerror = function(){ showMsg('err', 'No se pudo leer el archivo.'); };
-    reader.readAsArrayBuffer(fileObj);
-  }
+  showMsg('info', 'Subiendo ' + fileObj.name + '...');
+  var form = new FormData();
+  form.append('file', fileObj);
+  form.append('usuario', currentUser ? currentUser.name : '—');
+  fetch('/api/upload', { method:'POST', body:form })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok){ showMsg('ok', fileObj.name + ' cargado correctamente.'); lastVersion=-1; pollNow(); }
+      else showMsg('err', 'Error: ' + d.error);
+    })
+    .catch(function(e){ showMsg('err', 'Error de red: ' + e.message); });
 }
 
 async function processXLSX(buffer, name) {
@@ -1169,54 +1167,18 @@ document.getElementById('cost-input').addEventListener('change', function(){
 });
 
 function loadCostFile(fileObj) {
-  var name = fileObj.name;
-  var reader = new FileReader();
-  reader.onload = async function(ev) {
-    try {
-      var wb    = await XLSX.readAsync(ev.target.result);
-      // Find the right sheet — prefer one with 'existencias' or 'sap' in name
-      var sheetName = wb.SheetNames[0];
-      for(var s=0; s<wb.SheetNames.length; s++) {
-        var nl = wb.SheetNames[s].toLowerCase();
-        if(nl.indexOf('existencia')>=0 || nl.indexOf('sap')>=0 || nl.indexOf('costo')>=0) {
-          sheetName = wb.SheetNames[s]; break;
-        }
-      }
-      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, defval:'', raw:false});
-      if(!rows || rows.length < 2) { setCostStatus('err','Archivo vacío.'); return; }
-
-      var hdr     = rows[0].map(function(h){ return norm(h); });
-      var colSku  = findCol(hdr, ['articulo','artículo','sku','codigo','código']);
-      var colCost = findCol(hdr, ['costo promedio','costo_promedio','precio promedio','costo']);
-
-      if(colSku < 0 || colCost < 0) {
-        setCostStatus('err','No se encontraron columnas SKU/Costo. Detectadas: ' + rows[0].join(' | '));
-        return;
-      }
-
-      // Accumulate sum+count per SKU then average
-      var raw_costos = {}; // { sku: {sum, count} }
-      for(var i=1; i<rows.length; i++) {
-        var sku  = String(rows[i][colSku]||'').trim();
-        var cost = parseFloat(String(rows[i][colCost]).replace(',','.'));
-        if(sku && !isNaN(cost) && cost > 0) {
-          if(!raw_costos[sku]) raw_costos[sku] = {sum:0, count:0};
-          raw_costos[sku].sum   += cost;
-          raw_costos[sku].count += 1;
-        }
-      }
-      costos = {};
-      var count = 0;
-      Object.keys(raw_costos).forEach(function(sku) {
-        costos[sku] = raw_costos[sku].sum / raw_costos[sku].count;
-        count++;
-      });
-      setCostStatus('ok', name + ' — ' + count + ' SKUs cargados (costo promedio por SKU)');
-    } catch(err) {
-      setCostStatus('err', 'Error: ' + err.message);
-    }
-  };
-  reader.readAsArrayBuffer(fileObj);
+  var form = new FormData();
+  form.append('file', fileObj);
+  fetch('/api/costos', { method:'POST', body:form })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok) setCostStatus('ok', fileObj.name + ' — ' + d.count + ' SKUs');
+      else setCostStatus('err', d.error);
+      return fetch('/api/costos');
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){ costos = d; })
+    .catch(function(e){ setCostStatus('err', e.message); });
 }
 
 function getCosto(sku) {
