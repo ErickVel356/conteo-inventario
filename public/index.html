@@ -1395,13 +1395,18 @@ function connectWS() {
       historial    = s.historial    || [];
       rebuildContsList();
       if(Object.keys(teorico).length > 0) {
+        var isCont = currentUser && currentUser.role === 'contador';
         document.getElementById('pg-upload').style.display = 'none';
         document.getElementById('pg-wait').style.display   = 'none';
         document.getElementById('pg-main').style.display   = '';
         buildSelect();
         renderConteo();
         updateStatusBar();
-        injectAsignacionesTab();
+        setTimeout(injectAsignacionesTab, 200);
+      } else if(currentUser && currentUser.role === 'contador') {
+        // No teorico yet — contador sees waiting screen
+        document.getElementById('pg-upload').style.display = 'none';
+        document.getElementById('pg-wait').style.display   = '';
       }
       if(msg.type === 'teorico_loaded') {
         showMsg('ok', 'Teórico cargado — ' + Object.keys(teorico).length + ' contenedores.');
@@ -1433,6 +1438,21 @@ function connectWS() {
   };
 
   ws.onerror = function(e) { console.warn('WS error:', e); };
+}
+
+// ── Tab switching ────────────────────────────────────────────────────────
+function switchTab(name) {
+  ['conteo','reporte','asign'].forEach(function(t) {
+    var el  = document.getElementById('tab-' + t);
+    var btn = document.getElementById('tab-btn-' + t);
+    if(el) el.style.display = (t === name) ? '' : 'none';
+    if(btn) {
+      btn.style.background = (t === name) ? '#1a1a1a' : 'transparent';
+      btn.style.color      = (t === name) ? '#fff'    : '#777';
+    }
+  });
+  if(name === 'asign')   { if(typeof renderAsignaciones==='function') renderAsignaciones(); }
+  if(name === 'reporte') { if(typeof buildReporte==='function') buildReporte(); }
 }
 
 // ── Patch saveConteo to send via WS ──────────────────────────────────────
