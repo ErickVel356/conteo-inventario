@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: conteo-inventario
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
