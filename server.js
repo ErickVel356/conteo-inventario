@@ -15,8 +15,21 @@ let state = {
   historial:    [],
   costos:       {},
   date:         new Date().toDateString(),
-  version:      0   // increments on every change
+  version:      0
 };
+
+// Active users: { name: lastSeenTimestamp }
+let activeUsers = {};
+const ACTIVE_TIMEOUT = 15000; // 15 seconds
+
+function getActiveUsers() {
+  const now = Date.now();
+  // Remove users not seen in last 15s
+  Object.keys(activeUsers).forEach(name => {
+    if(now - activeUsers[name] > ACTIVE_TIMEOUT) delete activeUsers[name];
+  });
+  return Object.keys(activeUsers);
+}
 
 function resetIfNewDay() {
   const today = new Date().toDateString();
@@ -37,14 +50,24 @@ function addHistorial(usuario, accion, detalle) {
 function publicState() {
   return { teorico:state.teorico, fisico:state.fisico,
            asignaciones:state.asignaciones, historial:state.historial.slice(-50),
-           date:state.date, version:state.version };
+           date:state.date, version:state.version,
+           activeUsers: getActiveUsers() };
 }
 
 // ── Polling API ──────────────────────────────────────────────────────────
 // Client polls this every 3 seconds with its current version
+// Heartbeat — client sends name, server tracks as active
+app.post('/api/heartbeat', (req, res) => {
+  const { name } = req.body;
+  if(name) activeUsers[name] = Date.now();
+  res.json({ active: getActiveUsers() });
+});
+
 app.get('/api/state', (req, res) => {
   resetIfNewDay();
-  res.json(publicState());
+  const s = publicState();
+  s.activeUsers = getActiveUsers();
+  res.json(s);
 });
 
 // Save conteo
