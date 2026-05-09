@@ -49,10 +49,10 @@ function addHistorial(usuario, accion, detalle) {
 }
 
 // ── WebSocket broadcast ──────────────────────────────────────────────────
-function broadcast(msg, exceptWs) {
+function broadcast(msg) {
   const data = JSON.stringify(msg);
   wss.clients.forEach(client => {
-    if(client !== exceptWs && client.readyState === WebSocket.OPEN)
+    if(client.readyState === WebSocket.OPEN)
       client.send(data);
   });
 }
@@ -70,8 +70,9 @@ wss.on('connection', ws => {
       if(msg.type === 'save_conteo') {
         state.fisico[msg.cont] = msg.data;
         addHistorial(msg.usuario, 'Conteo guardado', msg.cont);
+        // Broadcast to ALL clients (including sender) so everyone stays in sync
         broadcast({ type:'conteo_saved', cont:msg.cont, data:msg.data,
-          historial: state.historial.slice(-50) });
+          historial: state.historial.slice(-50), usuario: msg.usuario });
       }
 
       else if(msg.type === 'add_asign') {
