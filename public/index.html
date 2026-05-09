@@ -1382,6 +1382,9 @@ function connectWS() {
   ws.onopen = function() {
     wsReady = true;
     console.log('WS connected');
+    // Show connection status
+    var badge = document.getElementById('ws-status');
+    if(badge) { badge.textContent = '🟢 En línea'; badge.style.color='#1e7e34'; }
   };
 
   ws.onmessage = function(evt) {
@@ -1433,6 +1436,8 @@ function connectWS() {
 
   ws.onclose = function() {
     wsReady = false;
+    var badge = document.getElementById('ws-status');
+    if(badge) { badge.textContent = '🔴 Reconectando...'; badge.style.color='#c0392b'; }
     // Reconnect after 3s
     setTimeout(function(){ if(currentUser) connectWS(); }, 3000);
   };
