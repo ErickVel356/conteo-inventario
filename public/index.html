@@ -873,17 +873,24 @@ function updateTotDiff(idx) {
 function saveConteo() {
   if(!teorico[current]) return;
   var items = teorico[current].items;
-  fisico[current] = items.map(function(_,i){
+  var data  = items.map(function(_,i){
     var fv = parseFloat((document.getElementById('fi'+i)||{}).value);
     var dv = parseFloat((document.getElementById('da'+i)||{}).value);
     return { fisico: isNaN(fv)?0:fv, daniado: isNaN(dv)?0:dv };
   });
+  fisico[current] = data;
   updateProg();
   updateStatusBar();
-  var btn=document.getElementById('btn-save');
-  var orig=btn.textContent;
+  fetch('/api/conteo', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({cont:current, data:data, usuario:currentUser?currentUser.name:'—'})
+  }).then(function(r){ return r.json(); })
+    .then(function(d){ if(d.ok) lastVersion = d.version; })
+    .catch(function(e){ console.warn('Save error:', e); });
+  var btn=document.getElementById('btn-save'), orig=btn.textContent;
   btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
-  setTimeout(function(){ btn.textContent=orig; btn.style.background=''; btn.style.borderColor=''; },1500);
+  setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
 }
 
 function updateProg() {
@@ -1433,46 +1440,9 @@ function pollNow() {
     });
 }
 
-// ── Patch saveConteo to POST to server ───────────────────────────────────
-var _origSaveConteo = saveConteo;
-saveConteo = function() {
-  if(!teorico[current]) return;
-  var items = teorico[current].items;
-  var data  = items.map(function(_,i){
-    var fv=parseFloat((document.getElementById('fi'+i)||{}).value);
-    var dv=parseFloat((document.getElementById('da'+i)||{}).value);
-    return {fisico:isNaN(fv)?0:fv, daniado:isNaN(dv)?0:dv};
-  });
-  fisico[current] = data;
-  updateProg(); updateStatusBar();
+// saveConteo handled directly above
 
-  fetch('/api/conteo', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, data:data, usuario:currentUser?currentUser.name:'—'})
-  }).then(function(r){ return r.json(); })
-    .then(function(d){ if(d.ok){ lastVersion=d.version; } })
-    .catch(function(e){ console.warn('Save error:',e); });
-
-  var btn=document.getElementById('btn-save'), orig=btn.textContent;
-  btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
-  setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
-};
-
-// ── Patch file upload ─────────────────────────────────────────────────────
-var _origHandleFile = handleFile;
-handleFile = function(fileObj) {
-  showMsg('info', 'Subiendo ' + fileObj.name + '...');
-  var form = new FormData();
-  form.append('file', fileObj);
-  form.append('usuario', currentUser ? currentUser.name : '—');
-  fetch('/api/upload', {method:'POST', body:form})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok){ showMsg('ok', fileObj.name + ' cargado.'); lastVersion=-1; pollNow(); }
-      else showMsg('err','Error: '+d.error);
-    })
-    .catch(function(e){ showMsg('err','Error: '+e.message); });
-};
+// handleFile handled directly above
 
 // ── Patch loadCostFile ────────────────────────────────────────────────────
 var _origLoadCostFile = loadCostFile;
