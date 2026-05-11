@@ -459,7 +459,7 @@ document.getElementById('fecha').textContent =
 // ── Login ──────────────────────────────────────────────────────────────────
 // old login removed
 // old login removed
-document.getElementById('login-name').addEventListener('keydown', function(e){ if(e.key==='Enter') doLogin(); });
+// old login-name listener removed
 
 function doLogin() {
   var name = document.getElementById('login-name').value.trim();
@@ -1350,8 +1350,8 @@ function doLogout() {
   teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
   document.getElementById('main-wrap').style.display   = 'none';
   document.getElementById('pg-login').style.display    = 'flex';
-  document.getElementById('login-name').value          = '';
-  document.getElementById('login-pass').value          = '';
+  document.getElementById('login-name-sel').value      = '';
+  // no password field
   document.getElementById('login-err').style.display   = 'none';
   document.getElementById('pg-wait').style.display     = 'none';
   document.getElementById('pg-upload').style.display   = 'block';
