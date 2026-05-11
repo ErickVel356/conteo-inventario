@@ -275,8 +275,8 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
       <p style="font-size:.85rem;color:#888">Selecciona tu nombre para continuar</p>
     </div>
     <div style="margin-bottom:1rem">
-      <label style="font-size:.85rem;color:#555;display:block;margin-bottom:6px;font-weight:500">¿Quién eres?</label>
-      <select id="login-name-sel" style="display:block;width:100%;padding:12px 36px 12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:8px;background:#fff;min-height:48px;-webkit-appearance:none;appearance:none">
+      <label style="font-size:.85rem;color:#555;display:block;margin-bottom:6px">¿Quién eres?</label>
+      <select id="login-name-sel" style="display:block;width:100%;padding:12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:8px;background:#fff;min-height:48px;-webkit-appearance:none">
         <option value="">— Selecciona tu nombre —</option>
         <option>Erick Vela</option><option>Steven Palencia</option>
         <option>Edmar Guzman</option><option>Ever Garcia</option>
@@ -298,7 +298,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
     <h1 style="margin:0">Conteo físico de inventario</h1>
     <div style="display:flex;align-items:center;gap:8px">
       <span id="user-badge" style="font-size:.8rem;background:#f0f0ee;padding:5px 12px;border-radius:20px;color:#555"></span>
-      <button onclick="doLogout()" style="font-size:.8rem;padding:5px 12px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888" id="btn-logout">Salir</button>
+      <button onclick="doLogout()" style="font-size:.8rem;padding:5px 12px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888">Salir</button>
     </div>
   </div>
   <div class="sub" id="fecha"></div>
@@ -341,13 +341,10 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
       <input type="file" id="cost-input" accept=".xlsx,.xls,.csv" style="display:none">
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:8px">
-      <div style="display:flex;background:#f0f0ee;border-radius:12px;padding:4px;gap:4px" id="tab-pill-bar">
-        <button id="tab-btn-conteo"   onclick="switchTab('conteo')"   style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:#1a1a1a;color:#fff">📋 Conteo</button>
-        <button id="tab-btn-reporte"  onclick="switchTab('reporte')"  style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777">📊 Reporte</button>
-        <button id="tab-btn-asign"    onclick="switchTab('asign')"    style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777;display:none">👥 Asignaciones</button>
-      </div>
-      <button id="btn-reset" style="padding:8px 14px;font-size:.8rem;border:1px solid #ddd;border-radius:8px;background:#fff;color:#888;cursor:pointer;min-height:40px">↺ Nuevo día</button>
+    <div class="tabs">
+      <button class="tab on" id="tab-btn-conteo">📋 Conteo</button>
+      <button class="tab" id="tab-btn-reporte">📊 Reporte</button>
+      <button class="tab tab-right" id="btn-reset">↺ Nuevo día</button>
     </div>
 
     <!-- TAB CONTEO -->
@@ -356,11 +353,6 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
         <label>Contenedor:</label>
         <select id="sel-cont"></select>
         <span class="prog" id="prog-text"></span>
-        <span id="self-assign-wrap" style="display:none">
-          <button id="btn-self-assign" style="padding:6px 14px;font-size:.8rem;background:#e8f4fd;color:#1565c0;border:1px solid #b3d7f7;border-radius:8px;cursor:pointer;min-height:36px">
-            📋 Registrarme en este conteo
-          </button>
-        </span>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -465,13 +457,48 @@ document.getElementById('fecha').textContent =
 
 
 // ── Login ──────────────────────────────────────────────────────────────────
-// old login replaced
-// old login replaced
+// old login removed
+// old login removed
 // old login-name listener removed
 
-function doLogin() { /* replaced */ }
+function doLogin() {
+  var name = document.getElementById('login-name').value.trim();
+  var pass = document.getElementById('login-pass').value.trim();
+  var err  = document.getElementById('login-err');
 
+  if(!name) { showLoginErr('Por favor ingresa tu nombre.'); return; }
 
+  // Check if supervisor
+  var sup = null;
+  for(var i=0;i<USERS.length;i++) {
+    if(USERS[i].name.toLowerCase()===name.toLowerCase() && USERS[i].pass===pass) {
+      sup=USERS[i]; break;
+    }
+  }
+
+  if(pass && !sup) { showLoginErr('Contraseña incorrecta para ese nombre.'); return; }
+
+  currentUser = sup ? {name:sup.name, role:'supervisor'} : {name:name, role:'contador'};
+
+  document.getElementById('pg-login').style.display    = 'none';
+  document.getElementById('main-wrap').style.display   = '';
+
+  // Show user badge
+  document.getElementById('user-badge').textContent =
+    currentUser.name + ' · ' + (currentUser.role==='supervisor'?'Supervisor':'Contador');
+
+  // Hide upload zone for counters (supervisor loads teorico)
+  if(currentUser.role === 'contador') {
+    document.getElementById('pg-upload').style.display = 'none';
+    document.getElementById('pg-wait').style.display   = 'block';
+  }
+}
+
+function showLoginErr(msg) {
+  var el = document.getElementById('login-err');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
 
 // ── File handling ──────────────────────────────────────────────────────────
 var dz = document.getElementById('dropzone');
@@ -613,13 +640,7 @@ function mergeSheet(rows, type) {
   var cFalt    = findCol(hdr, ['faltantes']);
   var cSobr    = findCol(hdr, ['sobrantes']);
   var cDan     = findCol(hdr, ['dañado','danado']);
-  var cOrigen   = findCol(hdr, ['origen']);
-  var cIngreso  = findCol(hdr, ['# ingreso','ingreso']);
-  var cDocSap   = findCol(hdr, ['doc. sap','doc sap','sap']);
-  var cTipo     = findCol(hdr, ['tipo']);
-  var cUnidad   = findCol(hdr, ['unidad']);
-  var cUnidades = findCol(hdr, ['unidades']);
-  var cDestino  = findCol(hdr, ['destino']);
+  var cOrigen  = findCol(hdr, ['origen']);
 
   // Track which conts this sheet touches
   var newConts = {};
@@ -725,7 +746,7 @@ function updateStatusBar() {
       var dotCls = done===tConts.length ? 'dot-ok' : done>0 ? 'dot-partial' : 'dot-empty';
       html += '<div class="status-chip"><span class="dot '+dotCls+'"></span>'
         + type + ': ' + tConts.length + ' contenedores · ' + done + '/' + tConts.length + ' contados'
-        + (currentUser&&currentUser.role!=='contador' ? '<span class="chip-action" data-type="'+type+'" id="reload-'+type+'">Actualizar</span>' : '') + '</div>';
+        + '<span class="chip-action" data-type="'+type+'" id="reload-'+type+'">Actualizar</span></div>';
     }
   });
   bar.innerHTML = html;
@@ -1323,7 +1344,18 @@ document.getElementById('btn-hall-save').addEventListener('click', function(){
   showMsg2('ok', 'Hallazgo guardado para ' + currentHallazgo.cont + '. Total: ' + hallazgos.length + ' hallazgo(s).');
 });
 
-function doLogout() { /* replaced */ }
+function doLogout() {
+  if(!confirm('¿Cerrar sesión?')) return;
+  currentUser = null;
+  teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
+  document.getElementById('main-wrap').style.display   = 'none';
+  document.getElementById('pg-login').style.display    = 'flex';
+  document.getElementById('login-name-sel').value      = '';
+  // no password field
+  document.getElementById('login-err').style.display   = 'none';
+  document.getElementById('pg-wait').style.display     = 'none';
+  document.getElementById('pg-upload').style.display   = 'block';
+}
 
 function showMsg(type,html){
   var cls=type==='ok'?'msg-ok':type==='err'?'msg-err':'msg-info';
@@ -1335,273 +1367,111 @@ function escH(s){
 </script>
 
 <script>
-// ── Login ─────────────────────────────────────────────────────────────────
 var currentUser = null;
 var SUP = ['Erick Vela','Steven Palencia','Edmar Guzman','Ever Garcia','Mario Hernandez','Oscar Ramirez','Vivi Gil'];
+var pollInterval = null;
+var lastVersion  = -1;
+var asignaciones = {};
+var historial    = [];
+var isSyncing    = false;
 
+// ── Login ──────────────────────────────────────────────────────────────
 document.getElementById('btn-login-enter').addEventListener('click', function() {
   var n = document.getElementById('login-name-sel').value;
-  if(!n) { var e=document.getElementById('login-err'); e.textContent='Selecciona tu nombre.'; e.style.display='block'; return; }
+  if(!n) { document.getElementById('login-err').textContent='Selecciona tu nombre.'; document.getElementById('login-err').style.display='block'; return; }
   var isSup = SUP.indexOf(n) >= 0;
-  currentUser = {name:n, role: isSup?'supervisor':'contador'};
+  currentUser = {name:n, role:isSup?'supervisor':'contador'};
+  lastVersion  = -1;
   document.getElementById('pg-login').style.display  = 'none';
   document.getElementById('main-wrap').style.display = '';
-  document.getElementById('user-badge').textContent  = (isSup?'🔑 ':'📋 ') + n;
-  startPolling();
-});
-
-document.getElementById('btn-logout').addEventListener('click', function() {
-  if(!confirm('¿Cerrar sesión?')) return;
-  stopPolling();
-  currentUser=null; teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
-  document.getElementById('main-wrap').style.display='none';
-  document.getElementById('pg-login').style.display='flex';
-  document.getElementById('login-name-sel').value='';
-  document.getElementById('login-err').style.display='none';
-  document.getElementById('upload-msg').innerHTML='';
-  document.getElementById('fileinput').value='';
-  document.getElementById('pg-main').style.display='none';
-  document.getElementById('pg-upload').style.display='';
-  document.getElementById('pg-wait').style.display='none';
-});
-</script>
-
-<script>
-// ══════════════════════════════════════════════════════════════════════════
-// POLLING CLIENT — syncs every 3 seconds via HTTP
-// ══════════════════════════════════════════════════════════════════════════
-var pollInterval  = null;
-var lastVersion   = -1;
-var asignaciones  = {};
-var historial     = [];
-var isSyncing     = false;
-
-function startPolling() {
+  document.getElementById('user-badge').textContent  = (isSup?'🔑 ':'📋 ')+n;
+  if(!isSup) { document.getElementById('pg-upload').style.display='none'; document.getElementById('pg-wait').style.display=''; }
   pollNow();
   pollInterval = setInterval(pollNow, 3000);
-}
-function stopPolling() {
-  if(pollInterval) { clearInterval(pollInterval); pollInterval=null; }
-}
+});
 
+// ── Polling ────────────────────────────────────────────────────────────
 function pollNow() {
   if(isSyncing) return;
+  if(currentUser) fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:currentUser.name})}).catch(function(){});
   isSyncing = true;
   fetch('/api/state')
-    .then(function(r){ return r.json(); })
-    .then(function(s) {
+    .then(function(r){return r.json();})
+    .then(function(s){
       isSyncing = false;
-      var badge = document.getElementById('ws-status');
-      if(badge) { badge.textContent='🟢 En línea'; badge.style.color='#1e7e34'; }
-
-      if(s.version === lastVersion) return; // nothing changed
+      if(s.version === lastVersion) return;
       lastVersion = s.version;
-
       teorico      = s.teorico      || {};
       fisico       = s.fisico       || {};
       asignaciones = s.asignaciones || {};
       historial    = s.historial    || [];
-
       rebuildContsList();
-
       if(Object.keys(teorico).length > 0) {
         document.getElementById('pg-upload').style.display = 'none';
         document.getElementById('pg-wait').style.display   = 'none';
         document.getElementById('pg-main').style.display   = '';
         buildSelect();
-        // Only re-render conteo if not actively typing
         var active = document.activeElement;
-        var typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA');
-        if(!typing) renderConteo();
+        if(!(active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'))) renderConteo();
         updateStatusBar();
-        setTimeout(injectAsignacionesTab, 100);
-        // Refresh reporte if visible
-        var rep = document.getElementById('tab-reporte');
-        if(rep && rep.style.display !== 'none') buildReporte();
-        // Refresh asign if visible
-        var asn = document.getElementById('tab-asign');
-        if(asn && asn.style.display !== 'none') renderAsignaciones();
-      } else if(currentUser && currentUser.role === 'contador') {
+        // Inject asign tab if supervisor
+        if(currentUser && currentUser.role !== 'contador') {
+          var tabBar = document.querySelector('.tabs');
+          if(tabBar && !document.getElementById('tab-btn-asign')) {
+            var abtn = document.createElement('button');
+            abtn.className='tab'; abtn.id='tab-btn-asign'; abtn.textContent='👥 Asignaciones';
+            abtn.addEventListener('click', function(){ switchTab('asign'); });
+            tabBar.insertBefore(abtn, document.getElementById('btn-reset'));
+          }
+          if(!document.getElementById('tab-asign')) {
+            var adiv = document.createElement('div');
+            adiv.id='tab-asign'; adiv.style.display='none';
+            var tc = document.getElementById('tab-conteo');
+            tc.parentNode.insertBefore(adiv, tc.nextSibling);
+          }
+        }
+      } else if(currentUser && currentUser.role==='contador') {
         document.getElementById('pg-upload').style.display = 'none';
         document.getElementById('pg-wait').style.display   = '';
       }
     })
-    .catch(function(e) {
-      isSyncing = false;
-      var badge = document.getElementById('ws-status');
-      if(badge) { badge.textContent='🔴 Sin conexión'; badge.style.color='#c0392b'; }
-    });
+    .catch(function(){ isSyncing=false; });
 }
 
-// ── Patch saveConteo to POST to server ───────────────────────────────────
-var _origSaveConteo = saveConteo;
+// ── Server patches ─────────────────────────────────────────────────────
+handleFile = function(fileObj) {
+  showMsg('info','Subiendo '+fileObj.name+'...');
+  var form=new FormData(); form.append('file',fileObj); form.append('usuario',currentUser?currentUser.name:'—');
+  fetch('/api/upload',{method:'POST',body:form})
+    .then(function(r){return r.json();})
+    .then(function(d){ if(d.ok){showMsg('ok',fileObj.name+' cargado.');lastVersion=-1;pollNow();}else showMsg('err','Error: '+d.error); })
+    .catch(function(e){showMsg('err','Error: '+e.message);});
+};
+
+loadCostFile = function(fileObj) {
+  var form=new FormData(); form.append('file',fileObj);
+  fetch('/api/costos',{method:'POST',body:form}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok)setCostStatus('ok',fileObj.name+' — '+d.count+' SKUs'); else setCostStatus('err',d.error);
+    return fetch('/api/costos');
+  }).then(function(r){return r.json();}).then(function(d){costos=d;}).catch(function(e){setCostStatus('err',e.message);});
+};
+
 saveConteo = function() {
   if(!teorico[current]) return;
-  var items = teorico[current].items;
-  var data  = items.map(function(_,i){
+  var data = teorico[current].items.map(function(_,i){
     var fv=parseFloat((document.getElementById('fi'+i)||{}).value);
     var dv=parseFloat((document.getElementById('da'+i)||{}).value);
     return {fisico:isNaN(fv)?0:fv, daniado:isNaN(dv)?0:dv};
   });
   fisico[current] = data;
   updateProg(); updateStatusBar();
-
-  fetch('/api/conteo', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, data:data, usuario:currentUser?currentUser.name:'—'})
-  }).then(function(r){ return r.json(); })
-    .then(function(d){ if(d.ok){ lastVersion=d.version; } })
-    .catch(function(e){ console.warn('Save error:',e); });
-
-  var btn=document.getElementById('btn-save'), orig=btn.textContent;
-  btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
+  fetch('/api/conteo',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current,data:data,usuario:currentUser?currentUser.name:'—'})})
+    .then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;});
+  var btn=document.getElementById('btn-save'),orig=btn.textContent;
+  btn.textContent='✓ Guardado';btn.style.background='#1e7e34';btn.style.borderColor='#1e7e34';
   setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
 };
-
-// ── Patch file upload ─────────────────────────────────────────────────────
-var _origHandleFile = handleFile;
-handleFile = function(fileObj) {
-  showMsg('info', 'Subiendo ' + fileObj.name + '...');
-  var form = new FormData();
-  form.append('file', fileObj);
-  form.append('usuario', currentUser ? currentUser.name : '—');
-  fetch('/api/upload', {method:'POST', body:form})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok){ showMsg('ok', fileObj.name + ' cargado.'); lastVersion=-1; pollNow(); }
-      else showMsg('err','Error: '+d.error);
-    })
-    .catch(function(e){ showMsg('err','Error: '+e.message); });
-};
-
-// ── Patch loadCostFile ────────────────────────────────────────────────────
-var _origLoadCostFile = loadCostFile;
-loadCostFile = function(fileObj) {
-  var form = new FormData();
-  form.append('file', fileObj);
-  fetch('/api/costos',{method:'POST',body:form})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok) setCostStatus('ok',fileObj.name+' — '+d.count+' SKUs');
-      else setCostStatus('err',d.error);
-      return fetch('/api/costos');
-    })
-    .then(function(r){return r.json();})
-    .then(function(d){costos=d;})
-    .catch(function(e){setCostStatus('err',e.message);});
-};
-
-// ── Asignaciones via API ──────────────────────────────────────────────────
-function addAsign(cont, ci) {
-  var sel=document.getElementById('sel-asign-'+ci);
-  var name=sel?sel.value:''; if(!name)return;
-  if(!asignaciones[cont])asignaciones[cont]=[];
-  if(asignaciones[cont].indexOf(name)<0) asignaciones[cont].push(name);
-  fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont,name,action:'add',usuario:currentUser?currentUser.name:'—'})})
-    .then(function(){lastVersion=-1;pollNow();});
-  renderAsignaciones();
-}
-function removeAsign(cont,name) {
-  if(!asignaciones[cont])return;
-  asignaciones[cont]=asignaciones[cont].filter(function(n){return n!==name;});
-  fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont,name,action:'remove',usuario:currentUser?currentUser.name:'—'})})
-    .then(function(){lastVersion=-1;pollNow();});
-  renderAsignaciones();
-}
-
-// ── Tab switching ─────────────────────────────────────────────────────────
-function switchTab(name) {
-  ['conteo','reporte','asign'].forEach(function(t) {
-    var el=document.getElementById('tab-'+t);
-    var btn=document.getElementById('tab-btn-'+t);
-    if(el) el.style.display=(t===name)?'':'none';
-    if(btn){btn.style.background=(t===name)?'#1a1a1a':'transparent';btn.style.color=(t===name)?'#fff':'#777';}
-  });
-  if(name==='asign') { if(typeof renderAsignaciones==='function') renderAsignaciones(); }
-  if(name==='reporte') { if(typeof buildReporte==='function') buildReporte(); }
-}
-
-// ── Self-assign ───────────────────────────────────────────────────────────
-function updateSelfAssignBtn() {
-  var wrap=document.getElementById('self-assign-wrap'); if(!wrap)return;
-  var isCont=currentUser&&currentUser.role==='contador';
-  if(!isCont||!current){wrap.style.display='none';return;}
-  wrap.style.display=(asignaciones[current]||[]).indexOf(currentUser.name)<0?'':'none';
-}
-document.getElementById('btn-self-assign').addEventListener('click',function(){
-  if(!current||!currentUser)return;
-  if(!asignaciones[current])asignaciones[current]=[];
-  if(asignaciones[current].indexOf(currentUser.name)<0) asignaciones[current].push(currentUser.name);
-  fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont:current,name:currentUser.name,action:'self'})})
-    .then(function(){lastVersion=-1;pollNow();});
-  document.getElementById('self-assign-wrap').style.display='none';
-});
-var _origRenderConteo=renderConteo;
-renderConteo=function(){_origRenderConteo();updateSelfAssignBtn();};
-
-// ── Asignaciones tab ──────────────────────────────────────────────────────
-var CONTADORES_LIST=['Carlos Sandoval','Israel Gatica','Nelson Diaz','Julio Yoc',
-  'Ronald Gomez','William Garzona','Alexander Grijalva','Jaqueline Perez',
-  'Jeffry Telon','Bianca Montenegro','Vivi Gil','Edmar Guzman','Ever Garcia',
-  'Mario Hernandez','Oscar Ramirez'];
-
-function injectAsignacionesTab(){
-  var btn=document.getElementById('tab-btn-asign');
-  if(btn)btn.style.display='';
-  if(!document.getElementById('tab-asign')){
-    var tc=document.getElementById('tab-conteo');
-    var div=document.createElement('div');
-    div.id='tab-asign';div.style.display='none';
-    tc.parentNode.insertBefore(div,tc.nextSibling);
-  }
-}
-
-function renderAsignaciones(){
-  var div=document.getElementById('tab-asign'); if(!div)return;
-  var isSup=currentUser&&currentUser.role!=='contador';
-  var html='<div style="margin-bottom:1.5rem">';
-  html+='<button id="toggle-asign-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px">'
-      +'<span style="font-size:.9rem;font-weight:600">Asignación de contenedores</span>'
-      +'<span id="toggle-asign-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
-  html+='<div id="asign-body">';
-  if(!conts||conts.length===0){html+='<p style="color:#aaa;font-size:.875rem">Carga el teórico primero.</p>';}
-  else {
-    html+='<div style="overflow-x:auto;border:1px solid #e0e0e0;border-radius:8px;background:#fff;margin-bottom:1rem">';
-    html+='<table style="width:100%;border-collapse:collapse;font-size:.875rem">';
-    html+='<thead><tr style="background:#f5f5f3"><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Contenedor</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Tipo</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Asignado a</th><th style="padding:10px 12px;text-align:center;border-bottom:1px solid #e0e0e0">Estado</th>'+(isSup?'<th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Acción</th>':'')+'</tr></thead><tbody>';
-    conts.forEach(function(c,ci){
-      var asign=asignaciones[c]||[],counted=fisico[c]!==null,type=teorico[c]?teorico[c].type:'';
-      var badge=counted?'<span style="background:#eafaf1;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:.75rem">✓ Contado</span>':'<span style="background:#f2f2f2;color:#999;padding:2px 8px;border-radius:10px;font-size:.75rem">Pendiente</span>';
-      html+='<tr style="border-bottom:1px solid #f0f0ee"><td style="padding:10px 12px">'+c+'</td><td style="padding:10px 12px;color:#888;font-size:.8rem">'+type+'</td><td style="padding:10px 12px">';
-      if(asign.length>0)html+=asign.map(function(a){return '<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f4fd;color:#1565c0;padding:3px 10px;border-radius:10px;font-size:.8rem;margin:2px">'+a+(isSup?' <button data-cont="'+encodeURIComponent(c)+'" data-name="'+encodeURIComponent(a)+'" class="btn-remove-asign" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:.9rem;padding:0;min-width:20px">×</button>':'')+'</span>';}).join('');
-      else html+='<span style="color:#ccc;font-size:.8rem">Sin asignar</span>';
-      html+='</td><td style="padding:10px 12px;text-align:center">'+badge+'</td>';
-      if(isSup)html+='<td style="padding:10px 12px"><select id="sel-asign-'+ci+'" style="padding:6px 10px;font-size:.8rem;border:1px solid #ccc;border-radius:6px;background:#fff;min-height:36px;max-width:160px"><option value="">+ Agregar</option>'+CONTADORES_LIST.filter(function(n){return asign.indexOf(n)<0;}).map(function(n){return '<option value="'+n+'">'+n+'</option>';}).join('')+'</select><button data-cont="'+encodeURIComponent(c)+'" data-ci="'+ci+'" class="btn-add-asign" style="margin-left:6px;padding:6px 12px;font-size:.8rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;min-height:36px">Asignar</button></td>';
-      html+='</tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-  html+='</div>';
-  html+='<button id="toggle-hist-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px"><span style="font-size:.9rem;font-weight:600">Historial del día</span><span id="toggle-hist-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
-  html+='<div id="hist-body"><div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
-  if(!historial||historial.length===0)html+='<p style="padding:1rem;color:#aaa;font-size:.875rem;text-align:center">Sin actividad aún.</p>';
-  else historial.slice().reverse().forEach(function(h){html+='<div style="padding:8px 12px;border-bottom:1px solid #f0f0ee;font-size:.825rem"><span style="color:#888">'+h.hora+'</span> · <strong>'+h.usuario+'</strong> · '+h.accion+(h.detalle?' <span style="color:#888">— '+h.detalle+'</span>':'')+'</div>';});
-  html+='</div></div></div>';
-  div.innerHTML=html;
-  div.querySelectorAll('.btn-remove-asign').forEach(function(btn){btn.addEventListener('click',function(){removeAsign(decodeURIComponent(this.dataset.cont),decodeURIComponent(this.dataset.name));});});
-  div.querySelectorAll('.btn-add-asign').forEach(function(btn){btn.addEventListener('click',function(){addAsign(decodeURIComponent(this.dataset.cont),parseInt(this.dataset.ci));});});
-  ['asign','hist'].forEach(function(k){
-    var hdr=div.querySelector('#toggle-'+k+'-hdr'),body=div.querySelector('#'+k+'-body'),ico=div.querySelector('#toggle-'+k+'-ico');
-    if(!hdr||!body)return;
-    hdr.addEventListener('click',function(){var h=body.style.display==='none';body.style.display=h?'':'none';if(ico)ico.textContent=h?'▼ contraer':'► expandir';});
-  });
-}
-
-var _origRebuild=rebuildContsList;
-rebuildContsList=function(){_origRebuild();setTimeout(injectAsignacionesTab,100);};
 </script>
 </body>
 </html>
