@@ -379,6 +379,7 @@ function mergeSheet(rows,type){
 
 // ── Start ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-loadState().then(() => {
-  app.listen(PORT, () => console.log('Conteo app on port ' + PORT));
-});
+// Always start server — even if Supabase fails
+app.listen(PORT, () => console.log('Conteo app on port ' + PORT));
+// Load state after server is up
+loadState().catch(e => console.log('State load failed (non-fatal):', e.message));
