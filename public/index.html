@@ -295,7 +295,13 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 </div>
 <div class="wrap" id="main-wrap" style="display:none">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;flex-wrap:wrap;gap:8px">
-    <h1 style="margin:0">Conteo físico de inventario</h1>
+    <div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="btn-back-to-menu" style="background:none;border:none;cursor:pointer;font-size:1.1rem;min-height:44px;min-width:36px;padding:0;color:#1565c0">←</button>
+        <h1 style="margin:0">Conteo físico de inventario</h1>
+      </div>
+      <p id="hamilton-section-label" style="font-size:.8rem;color:#888;margin:0 0 0 44px"></p>
+    </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span id="user-badge" style="font-size:.8rem;background:#f0f0ee;padding:5px 12px;border-radius:20px;color:#555"></span>
       <button onclick="doLogout()" style="font-size:.8rem;padding:5px 12px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888" id="btn-logout">Salir</button>
@@ -385,6 +391,98 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
         <button class="btn" id="btn-hallazgo" style="border-color:#e67e22;color:#e67e22">⚠ Crear hallazgo</button>
         <button class="btn btn-dark" id="btn-save">Guardar conteo ✓</button>
       </div>
+
+<!-- MENU SCREEN -->
+<div id="pg-menu" style="display:none;min-height:100vh;background:#f5f5f3;padding:1.5rem 1rem">
+  <div style="max-width:500px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+      <div>
+        <h2 style="font-size:1.2rem;font-weight:600;margin-bottom:2px">Bienvenido</h2>
+        <p id="menu-username" style="font-size:.875rem;color:#888"></p>
+      </div>
+      <button id="btn-menu-logout" style="font-size:.8rem;padding:7px 14px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;color:#888;min-height:36px">Salir</button>
+    </div>
+    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem;margin-bottom:1rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem">
+        <div style="width:36px;height:36px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.1rem">📦</div>
+        <div>
+          <p style="font-size:.95rem;font-weight:600;margin:0">Conteos Hamilton</p>
+          <p style="font-size:.8rem;color:#888;margin:0">Embarques y Traslados</p>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="menu-btn-embarques" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.2rem">🚢</span>
+          <div><div style="font-weight:600">Embarques</div><div style="font-size:.78rem;color:#888;font-weight:400">México · China</div></div>
+        </button>
+        <button id="menu-btn-traslados" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.2rem">🚛</span>
+          <div><div style="font-weight:600">Traslados de otras bodegas</div><div style="font-size:.78rem;color:#888;font-weight:400">Bodega de origen según ubicación</div></div>
+        </button>
+        <button id="menu-btn-traslados-cdg" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.2rem">✅</span>
+          <div><div style="font-weight:600">Traslados Hamilton (CDG)</div><div style="font-size:.78rem;color:#888;font-weight:400">Validados en CDG · pendientes de revisión</div></div>
+        </button>
+      </div>
+    </div>
+    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem">
+        <div style="width:36px;height:36px;background:#1565c0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.1rem">🏭</div>
+        <div>
+          <p style="font-size:.95rem;font-weight:600;margin:0">Conteos CDG</p>
+          <p style="font-size:.8rem;color:#888;margin:0">Envíos a Hamilton</p>
+        </div>
+      </div>
+      <button id="menu-btn-cdg" style="width:100%;padding:12px;font-size:.9rem;font-weight:500;background:#e8f4fd;border:1.5px solid #b3d7f7;border-radius:8px;cursor:pointer;min-height:48px;color:#1565c0">📋 Envíos a Hamilton</button>
+    </div>
+  </div>
+</div>
+
+<!-- CDG SCREEN -->
+<div id="pg-cdg" style="display:none" class="wrap">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.25rem">
+    <button id="btn-cdg-back" style="background:none;border:none;cursor:pointer;font-size:1.2rem;min-height:44px;min-width:44px;-webkit-appearance:none">←</button>
+    <h2 style="font-size:1.1rem;font-weight:600;margin:0">Conteos CDG — Envíos a Hamilton</h2>
+  </div>
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:1.25rem;margin-bottom:1rem">
+    <p style="font-size:.875rem;font-weight:500;margin-bottom:10px">Iniciar nuevo conteo</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:180px">
+        <label style="font-size:.8rem;color:#666;display:block;margin-bottom:4px">Número de traslado asignado por bodega</label>
+        <input id="cdg-cont-id" type="text" placeholder="ej: U25-159300" style="width:100%;padding:10px 12px;font-size:1rem;border:1px solid #ccc;border-radius:8px;min-height:44px;-webkit-appearance:none">
+      </div>
+      <button id="btn-cdg-nuevo" style="padding:10px 18px;font-size:.9rem;font-weight:500;background:#1a1a1a;color:#fff;border:none;border-radius:8px;cursor:pointer;min-height:44px">Iniciar</button>
+    </div>
+  </div>
+  <div id="cdg-conteo-wrap" style="display:none">
+    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:1.25rem;margin-bottom:1rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
+        <div>
+          <p style="font-size:.8rem;color:#888;margin:0">Traslado</p>
+          <p id="cdg-cont-label" style="font-size:1rem;font-weight:600;margin:0"></p>
+        </div>
+        <button id="btn-cdg-add-item" style="padding:8px 14px;font-size:.85rem;background:#f5f5f3;border:1px solid #ddd;border-radius:8px;cursor:pointer;min-height:40px">+ SKU</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>SKU</th><th>Descripción</th><th class="tc">Cantidad</th><th class="tc"></th>
+          </tr></thead>
+          <tbody id="cdg-items-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-bottom:1.5rem">
+      <button id="btn-cdg-save" class="btn">💾 Guardar borrador</button>
+      <button id="btn-cdg-finalizar" class="btn btn-green">✓ Finalizar → Traslados</button>
+    </div>
+  </div>
+  <div id="cdg-history-wrap">
+    <p style="font-size:.875rem;font-weight:500;margin-bottom:.75rem">Conteos CDG del día</p>
+    <div id="cdg-history-list"></div>
+  </div>
+</div>
+
 
       <!-- Hallazgo modal -->
       <div id="modal-hallazgo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:1rem">
@@ -807,52 +905,65 @@ function renderConteo() {
   if(!teorico[current]) return;
   var items = teorico[current].items || [];
   var saved = fisico[current];
+  var locks = window.serverLocks || {};
   var html  = '';
   for(var i=0; i<items.length; i++) {
-    var it    = items[i];
-    var sv    = saved ? saved[i] : null;
-    var fval  = sv!==null && sv!==undefined ? (sv.fisico!==undefined ? sv.fisico : sv) : '';
-    var dval  = sv!==null && sv!==undefined && sv.daniado!==undefined ? sv.daniado : '';
-    var total = (fval!=='' && dval!=='') ? Number(fval)+Number(dval) : fval!=='' ? Number(fval) : '';
-    var diff  = total!=='' ? total - it.qty : null;
-    var dc    = diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
-    var dv    = diff===null?'&mdash;':(diff>0?'+':'')+diff;
+    var it   = items[i];
+    var sv   = saved && saved[i] ? saved[i] : null;
+    var fval = sv ? (sv.fisico  !== undefined ? sv.fisico  : '') : '';
+    var dval = sv ? (sv.daniado !== undefined ? sv.daniado : '') : '';
+    var total= (fval!==''&&dval!=='') ? (Number(fval)+Number(dval)) : (fval!=='' ? Number(fval) : '');
+    var diff = total!=='' ? total-it.qty : null;
+    var dc   = diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
+    var dv   = diff===null?'&mdash;':(diff>0?'+':'')+diff;
+    var lockKey       = current+':'+i;
+    var lock          = locks[lockKey];
+    var myName        = currentUser ? currentUser.name : '';
+    var lockedByOther = lock && lock.user!==myName && lock.expires>Date.now();
+    var lockedByMe    = lock && lock.user===myName;
+    var lastInfo = '';
+    if(sv && sv.lastUser) {
+      var ago = sv.lastAt ? Math.round((Date.now()-sv.lastAt)/1000) : null;
+      var agoStr = ago!==null ? (ago<60?ago+'s':Math.round(ago/60)+'min') : '';
+      lastInfo = '<div style="font-size:.7rem;color:#888;margin-top:2px">✏️ '+escH(sv.lastUser)+(agoStr?' · '+agoStr:'')+'</div>';
+    }
+    var lockBadge = lockedByOther ? '<div style="font-size:.7rem;color:#e67e22;margin-top:2px">🔒 '+escH(lock.user)+'</div>' : '';
+    var dis  = lockedByOther ? 'disabled' : '';
+    var fBorder = lockedByMe ? '2px solid #1e7e34' : lockedByOther ? '1px solid #e0c96e' : '1px solid #ccc';
+    var fBg     = lockedByMe ? '#eafaf1' : lockedByOther ? '#fffef0' : '#fff';
+    var inpStyle = 'width:80px;padding:8px 6px;font-size:.9rem;border:'+fBorder+';border-radius:8px;background:'+fBg+';text-align:center;min-height:44px;-webkit-appearance:none';
     html += '<tr>'
       +'<td>'+escH(it.sku||'—')+'</td>'
       +'<td>'+escH(it.desc||'—')+'</td>'
       +'<td class="tc">'+it.qty+'</td>'
-      +'<td class="tc"><input type="text" placeholder="ej: 8*6+3" id="calc'+i+'" value="" style="width:100px;padding:6px 8px;font-size:.85rem;border:1px solid #e0c96e;border-radius:6px;background:#fffef0;text-align:center;min-height:44px"></td>'
-      +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" style="min-height:44px"></td>'
-      +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" style="min-height:44px"></td>'
+      +'<td class="tc"><input type="text" class="calc-inp" id="calc'+i+'" placeholder="8*6+3" '+dis+'></td>'
+      +'<td class="tc"><div><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" style="'+inpStyle+'" '+dis+'>'+lastInfo+lockBadge+'</div></td>'
+      +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" style="width:80px;padding:8px 6px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;text-align:center;min-height:44px;-webkit-appearance:none" '+dis+'></td>'
       +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
       +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
       +'</tr>';
   }
-  document.getElementById('tbody-conteo').innerHTML = html ||
-    '<tr><td colspan="5" class="empty">Sin items</td></tr>';
+  document.getElementById('tbody-conteo').innerHTML = html || '<tr><td colspan="8" class="empty">Sin items</td></tr>';
   updateProg();
-
   for(var j=0; j<items.length; j++) {
-    (function(idx){
-      // Calculadora
-      var calc = document.getElementById('calc'+idx);
-      if(calc) calc.addEventListener('input', function(){
-        var expr = this.value.replace(/[^0-9+\-*/().\s]/g,'');
-        if(!expr) return;
-        try {
-          var result = Math.round(eval(expr) * 100) / 100;
-          if(!isNaN(result) && isFinite(result)) {
-            document.getElementById('fi'+idx).value = result;
-            updateTotDiff(idx);
-          }
-        } catch(e) {}
+    (function(idx) {
+      var ci=document.getElementById('calc'+idx);
+      if(ci) ci.addEventListener('input',function(){
+        var expr=this.value.replace(/[^0-9+\-*/().\s]/g,'');
+        try{var r=Math.round(eval(expr)*100)/100;if(!isNaN(r)&&isFinite(r)){document.getElementById('fi'+idx).value=r;updateTD(idx);scheduleFieldSave(idx);}}catch(e){}
       });
-      // Físico
-      var fi = document.getElementById('fi'+idx);
-      if(fi) fi.addEventListener('input', function(){ updateTotDiff(idx); });
-      // Dañado
-      var da = document.getElementById('da'+idx);
-      if(da) da.addEventListener('input', function(){ updateTotDiff(idx); });
+      var fi=document.getElementById('fi'+idx);
+      if(fi){
+        fi.addEventListener('focus',function(){acquireLock(idx);});
+        fi.addEventListener('blur', function(){scheduleFieldSave(idx);});
+        fi.addEventListener('input',function(){updateTD(idx);scheduleFieldSave(idx);});
+      }
+      var da=document.getElementById('da'+idx);
+      if(da){
+        da.addEventListener('focus',function(){acquireLock(idx);});
+        da.addEventListener('blur', function(){scheduleFieldSave(idx);});
+        da.addEventListener('input',function(){updateTD(idx);scheduleFieldSave(idx);});
+      }
     })(j);
   }
 }
@@ -891,6 +1002,7 @@ function saveConteo() {
   }).then(function(r){ return r.json(); })
     .then(function(d){ if(d.ok) lastVersion = d.version; })
     .catch(function(e){ console.warn('Save error:', e); });
+  if(typeof releaseAllLocks==='function') releaseAllLocks();
   var btn=document.getElementById('btn-save'), orig=btn.textContent;
   btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
   setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
@@ -1318,19 +1430,20 @@ document.getElementById('btn-login-enter').addEventListener('click', function() 
   if(!n) { var e=document.getElementById('login-err'); e.textContent='Selecciona tu nombre.'; e.style.display='block'; return; }
   var isSup = SUP.indexOf(n) >= 0;
   currentUser = {name:n, role: isSup?'supervisor':'contador'};
-  lastVersion = -1; // force full sync on login
-  document.getElementById('pg-login').style.display  = 'none';
-  document.getElementById('main-wrap').style.display = '';
-  document.getElementById('user-badge').textContent  = (isSup?'🔑 ':'📋 ') + n;
+  lastVersion = -1;
+  document.getElementById('pg-login').style.display = 'none';
+  document.getElementById('menu-username').textContent = (isSup?'🔑 Supervisor':'📋 Contador') + ' — ' + n;
+  document.getElementById('pg-menu').style.display   = '';
   startPolling();
 });
 
 document.getElementById('btn-logout').addEventListener('click', function() {
   if(!confirm('¿Cerrar sesión?')) return;
   stopPolling();
-  // Hide active users bar
   var bar = document.getElementById('active-users-bar');
   if(bar) bar.style.display = 'none';
+  document.getElementById('pg-menu').style.display = 'none';
+  document.getElementById('pg-cdg').style.display  = 'none';
   currentUser=null; teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
   document.getElementById('main-wrap').style.display='none';
   document.getElementById('pg-login').style.display='flex';
@@ -1373,7 +1486,7 @@ function pollNow() {
     }).catch(function(){});
   }
   isSyncing = true;
-  fetch('/api/state')
+  fetch('/api/state?cdg=1')
     .then(function(r){ return r.json(); })
     .then(function(s) {
       isSyncing = false;
@@ -1389,6 +1502,24 @@ function pollNow() {
       historial    = s.historial    || [];
 
       rebuildContsList();
+
+      // Sync field locks from server
+      if(s.locks) {
+        window.serverLocks = {};
+        Object.keys(s.locks).forEach(function(k){ window.serverLocks[k]=s.locks[k]; });
+        // Re-render conteo to show lock states (only if not typing)
+        var active=document.activeElement;
+        if(!(active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'))) {
+          if(document.getElementById('tab-conteo')&&document.getElementById('tab-conteo').style.display!=='none') renderConteo();
+        }
+      }
+
+      // Mark CDG-validated traslados (anti-duplicate)
+      if(s.cdg) {
+        Object.keys(s.cdg).forEach(function(cdgId){
+          if(teorico[cdgId]) teorico[cdgId].cdgValidated = true;
+        });
+      }
 
       // Update active users display (supervisors only)
       if(s.activeUsers && currentUser && currentUser.role !== 'contador') {
@@ -1564,6 +1695,292 @@ function renderAsignaciones(){
 
 var _origRebuild=rebuildContsList;
 rebuildContsList=function(){_origRebuild();setTimeout(injectAsignacionesTab,100);};
+
+// ══════════════════════════════════════════════════════════════════════════
+// MENU + CDG LOGIC
+// ══════════════════════════════════════════════════════════════════════════
+var cdgItems     = [];
+var cdgCurrentId = null;
+var menuFilter   = null; // 'Embarques' | 'Traslados' | null (all)
+
+function showMenu() {
+  document.getElementById('pg-menu').style.display   = '';
+  document.getElementById('pg-cdg').style.display    = 'none';
+  document.getElementById('main-wrap').style.display = 'none';
+}
+
+function goToHamilton(filter) {
+  menuFilter = filter;
+  // Update back button label
+  var labels = {
+    'Embarques':       '🚢 Embarques',
+    'Traslados-otras': '🚛 Traslados de otras bodegas',
+    'Traslados-cdg':   '✅ Traslados Hamilton (CDG)'
+  };
+  // Show Hamilton section label
+  var lbl = document.getElementById('hamilton-section-label');
+  if(lbl) lbl.textContent = labels[filter] || filter;
+  document.getElementById('pg-menu').style.display   = 'none';
+  document.getElementById('main-wrap').style.display = '';
+  rebuildContsList();
+  buildSelect(filter);
+  renderConteo();
+  updateStatusBar();
+  setTimeout(injectAsignacionesTab, 100);
+}
+
+// Helper: classify a container
+function classifyContainer(c) {
+  var t = teorico[c];
+  if(!t) return 'other';
+  if(t.type === 'Embarques') return 'Embarques';
+  if(t.type === 'Traslados') {
+    if(t.fromCDG) return 'Traslados-cdg'; // created by CDG
+    // Check if it was validated by CDG (exists in CDG state)
+    if(t.cdgValidated) return 'Traslados-cdg';
+    return 'Traslados-otras';
+  }
+  return 'other';
+}
+
+// Get origin label for embarques
+function getEmbarqueOrigen(c) {
+  var t = teorico[c]; if(!t||!t.items||!t.items.length) return '';
+  var raw = t.items[0].raw || {};
+  var prov = String(raw.nomProv||raw.codProv||'').toUpperCase();
+  if(prov.indexOf('LONGTAI')>=0 || prov.indexOf('CHINA')>=0) return '🇨🇳 China';
+  if(prov.indexOf('TRUPER')>=0 || prov.indexOf('MEXICO')>=0 || prov.indexOf('MÉXICO')>=0) return '🇲🇽 México';
+  return '';
+}
+
+// Get bodega label for traslados (will be updated when ubicaciones are known)
+function getTraslado0rigen(c) {
+  var t = teorico[c]; if(!t||!t.items||!t.items.length) return '';
+  var raw = t.items[0].raw || {};
+  var origen = String(raw.origen||'');
+  // TODO: Map ubicacion prefix to bodega name when list is provided
+  // For now show raw origen
+  return origen ? '📍 '+origen : '';
+}
+
+function goToCDG() {
+  document.getElementById('pg-menu').style.display = 'none';
+  document.getElementById('pg-cdg').style.display  = '';
+  loadCDGHistory();
+}
+
+// Override buildSelect to support filter
+var _origBuildSelect = buildSelect;
+buildSelect = function(filter) {
+  var sel = document.getElementById('sel-cont'); if(!sel) return;
+  var show = filter
+    ? conts.filter(function(c){ return classifyContainer(c) === filter; })
+    : conts;
+  var html = '';
+  if(show.length === 0) { sel.innerHTML='<option value="">Sin contenedores</option>'; return; }
+  show.forEach(function(c){
+    var extra = '';
+    if(filter==='Embarques') extra = getEmbarqueOrigen(c) ? ' ('+getEmbarqueOrigen(c)+')' : '';
+    else if(filter==='Traslados-otras') extra = getTraslado0rigen(c) ? ' — '+getTraslado0rigen(c) : '';
+    else if(filter==='Traslados-cdg') extra = teorico[c]&&teorico[c].fromCDG ? ' ✓CDG' : ' — pendiente CDG';
+    html += '<option value="'+escH(c)+'">'+escH(c)+extra+'</option>';
+  });
+  sel.innerHTML = html;
+  sel.value = show[0];
+};
+
+// Menu button listeners
+document.getElementById('menu-btn-embarques').addEventListener('click',     function(){ goToHamilton('Embarques'); });
+document.getElementById('menu-btn-traslados').addEventListener('click',     function(){ goToHamilton('Traslados-otras'); });
+document.getElementById('menu-btn-traslados-cdg').addEventListener('click', function(){ goToHamilton('Traslados-cdg'); });
+document.getElementById('menu-btn-cdg').addEventListener('click', goToCDG);
+document.getElementById('btn-menu-logout').addEventListener('click', function(){
+  document.getElementById('btn-logout').click();
+});
+document.getElementById('btn-cdg-back').addEventListener('click', showMenu);
+document.getElementById('btn-back-to-menu').addEventListener('click', function(){
+  document.getElementById('main-wrap').style.display = 'none';
+  showMenu();
+});
+
+// Update logout to show login not menu
+var _origLogout = document.getElementById('btn-logout');
+
+// ── CDG Logic ─────────────────────────────────────────────────────────────
+document.getElementById('btn-cdg-nuevo').addEventListener('click', function() {
+  var id = document.getElementById('cdg-cont-id').value.trim();
+  if(!id){ alert('Ingresa el número de traslado.'); return; }
+  cdgCurrentId = id;
+  cdgItems     = [];
+  document.getElementById('cdg-cont-label').textContent = id;
+  document.getElementById('cdg-conteo-wrap').style.display = '';
+  renderCDGItems();
+});
+
+document.getElementById('btn-cdg-add-item').addEventListener('click', function() {
+  cdgItems.push({sku:'', desc:'', qty:0});
+  renderCDGItems();
+  // Focus last SKU input
+  var inputs = document.querySelectorAll('.cdg-sku-inp');
+  if(inputs.length) inputs[inputs.length-1].focus();
+});
+
+function renderCDGItems() {
+  var tbody = document.getElementById('cdg-items-body');
+  var html  = '';
+  cdgItems.forEach(function(item, i) {
+    html += '<tr>'
+      + '<td><input type="text" class="cdg-sku-inp" data-i="'+i+'" value="'+escH(item.sku)+'" placeholder="SKU" style="width:90px;padding:6px 8px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;min-height:40px"></td>'
+      + '<td><input type="text" class="cdg-desc-inp" data-i="'+i+'" value="'+escH(item.desc)+'" placeholder="Descripción" style="width:100%;padding:6px 8px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;min-height:40px"></td>'
+      + '<td class="tc"><input type="number" class="cdg-qty-inp" data-i="'+i+'" value="'+item.qty+'" min="0" style="width:70px;padding:6px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;text-align:center;min-height:40px"></td>'
+      + '<td class="tc"><button class="cdg-del-btn" data-i="'+i+'" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:1.1rem;min-height:40px;min-width:36px">×</button></td>'
+      + '</tr>';
+  });
+  tbody.innerHTML = html || '<tr><td colspan="4" class="empty">Agrega items con el botón + SKU</td></tr>';
+
+  tbody.querySelectorAll('.cdg-sku-inp').forEach(function(inp){
+    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].sku = this.value; });
+  });
+  tbody.querySelectorAll('.cdg-desc-inp').forEach(function(inp){
+    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].desc = this.value; });
+  });
+  tbody.querySelectorAll('.cdg-qty-inp').forEach(function(inp){
+    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].qty = parseFloat(this.value)||0; });
+  });
+  tbody.querySelectorAll('.cdg-del-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){ cdgItems.splice(+this.dataset.i,1); renderCDGItems(); });
+  });
+}
+
+function getCDGPayload() {
+  return cdgItems.filter(function(it){ return it.sku && it.qty > 0; });
+}
+
+document.getElementById('btn-cdg-save').addEventListener('click', function() {
+  if(!cdgCurrentId) return;
+  var items = getCDGPayload();
+  fetch('/api/cdg/save', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({contId:cdgCurrentId, items:items, usuario:currentUser?currentUser.name:'—'})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok){ showMsg2('ok','CDG guardado como borrador.'); loadCDGHistory(); }
+    });
+});
+
+document.getElementById('btn-cdg-finalizar').addEventListener('click', function() {
+  if(!cdgCurrentId) return;
+  var items = getCDGPayload();
+  if(!items.length){ alert('Agrega al menos un SKU con cantidad.'); return; }
+  if(!confirm('¿Finalizar conteo '+cdgCurrentId+' y enviarlo a Traslados? Esta acción no se puede deshacer.')) return;
+  fetch('/api/cdg/finalizar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({contId:cdgCurrentId, items:items, traslado:cdgCurrentId, usuario:currentUser?currentUser.name:'—'})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok){
+        alert('✓ Conteo finalizado. Traslado '+d.traslado+' ya aparece en Conteos Hamilton → Traslados.');
+        cdgCurrentId = null; cdgItems = [];
+        document.getElementById('cdg-conteo-wrap').style.display = 'none';
+        document.getElementById('cdg-cont-id').value = '';
+        lastVersion = -1; pollNow();
+        loadCDGHistory();
+      }
+    });
+});
+
+function loadCDGHistory() {
+  fetch('/api/cdg')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      var list = document.getElementById('cdg-history-list');
+      var keys = Object.keys(data);
+      if(!keys.length){
+        list.innerHTML = '<p style="color:#aaa;font-size:.875rem;text-align:center;padding:1rem">Sin conteos CDG hoy.</p>';
+        document.getElementById('cdg-history-wrap').style.display = '';
+        return;
+      }
+      var html = '<div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
+      keys.forEach(function(id){
+        var c = data[id];
+        var badge = c.status==='closed'
+          ? '<span style="background:#eafaf1;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:.75rem">✓ Finalizado</span>'
+          : '<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">Borrador</span>';
+        html += '<div style="padding:10px 14px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
+          + '<div><strong>'+escH(id)+'</strong> <span style="color:#888;font-size:.8rem">'+c.items.length+' SKUs · '+escH(c.autor||'—')+'</span></div>'
+          + '<div style="display:flex;align-items:center;gap:8px">'+badge
+          + (c.status==='open' ? '<button data-id="'+escH(id)+'" class="cdg-resume-btn" style="padding:4px 12px;font-size:.8rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;min-height:32px">Continuar</button>' : '')
+          + '</div></div>';
+      });
+      html += '</div>';
+      list.innerHTML = html;
+      document.getElementById('cdg-history-wrap').style.display = '';
+
+      list.querySelectorAll('.cdg-resume-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = this.dataset.id;
+          cdgCurrentId = id;
+          cdgItems = (data[id].items||[]).slice();
+          document.getElementById('cdg-cont-label').textContent = id;
+          document.getElementById('cdg-conteo-wrap').style.display = '';
+          renderCDGItems();
+        });
+      });
+    });
+}
+
+// Update pollNow to show menu after login (not main-wrap directly)
+// Override the part that shows pg-main — only show if user came from Hamilton menu
+var _pollShowMain = false;
+
+
+// ── Field locking + auto-save ─────────────────────────────────────────────
+var serverLocks     = {};
+var fieldSaveTimers = {};
+var currentLocks    = {};
+
+function acquireLock(idx) {
+  if(!current||!currentUser) return;
+  var key=current+':'+idx;
+  if(currentLocks[key]) return;
+  fetch('/api/lock',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current,idx:idx,user:currentUser.name})})
+    .then(function(r){return r.json();})
+    .then(function(d){ if(d.ok){currentLocks[key]=true;setTimeout(function(){releaseLock(idx);},90000);} });
+}
+
+function releaseLock(idx) {
+  if(!current||!currentUser) return;
+  var key=current+':'+idx;
+  delete currentLocks[key];
+  fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current,idx:idx,user:currentUser.name})}).catch(function(){});
+}
+
+function releaseAllLocks() {
+  Object.keys(currentLocks).forEach(function(key){
+    var p=key.split(':'); if(p.length>=2) releaseLock(parseInt(p[1]));
+  });
+  currentLocks={};
+}
+
+function scheduleFieldSave(idx) {
+  if(fieldSaveTimers[idx]) clearTimeout(fieldSaveTimers[idx]);
+  fieldSaveTimers[idx]=setTimeout(function(){saveField(idx);},2500);
+}
+
+function saveField(idx) {
+  if(!current||!currentUser) return;
+  var fv=parseFloat((document.getElementById('fi'+idx)||{}).value);
+  var dv=parseFloat((document.getElementById('da'+idx)||{}).value);
+  if(isNaN(fv)&&isNaN(dv)) return;
+  fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current,idx:idx,fisico:isNaN(fv)?undefined:fv,daniado:isNaN(dv)?undefined:dv,usuario:currentUser.name})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.ok){lastVersion=d.version;releaseLock(idx);}})
+    .catch(function(e){console.warn('Field save:',e);});
+}
+
+window.addEventListener('beforeunload',function(){releaseAllLocks();});
+
 </script>
 </body>
 </html>
