@@ -295,16 +295,10 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 </div>
 <div class="wrap" id="main-wrap" style="display:none">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;flex-wrap:wrap;gap:8px">
-    <div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <button id="btn-back-to-menu" style="background:none;border:none;cursor:pointer;font-size:1.1rem;min-height:44px;min-width:36px;padding:0;color:#1565c0">←</button>
-        <h1 style="margin:0">Conteo físico de inventario</h1>
-      </div>
-      <p id="hamilton-section-label" style="font-size:.8rem;color:#888;margin:0 0 0 44px"></p>
-    </div>
+    <h1 style="margin:0">Conteo físico de inventario</h1>
     <div style="display:flex;align-items:center;gap:8px">
       <span id="user-badge" style="font-size:.8rem;background:#f0f0ee;padding:5px 12px;border-radius:20px;color:#555"></span>
-      <button onclick="doLogout()" style="font-size:.8rem;padding:5px 12px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888" id="btn-logout">Salir</button>
+      <button onclick="doLogout()" style="font-size:.8rem;padding:5px 12px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888">Salir</button>
     </div>
   </div>
   <div class="sub" id="fecha"></div>
@@ -338,11 +332,6 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 
     <!-- Status bar showing loaded sheets -->
     <div class="status-bar" id="status-bar"></div>
-    <!-- Active users — supervisors only -->
-    <div id="active-users-bar" style="display:none;margin-bottom:1rem;padding:8px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;font-size:.8rem;color:#555;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span style="color:#999">👥 En línea:</span>
-      <span id="active-users-list" style="color:#1a1a1a"></span>
-    </div>
 
     <!-- Cost file loader -->
     <div id="cost-bar">
@@ -352,11 +341,16 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
       <input type="file" id="cost-input" accept=".xlsx,.xls,.csv" style="display:none">
     </div>
 
+    <!-- Active users bar (supervisors only) -->
+    <div id="active-users-bar" style="display:none;margin-bottom:1rem;padding:8px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;font-size:.8rem;color:#555;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="color:#999">👥 En línea:</span>
+      <span id="active-users-list"></span>
+    </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:8px">
-      <div style="display:flex;background:#f0f0ee;border-radius:12px;padding:4px;gap:4px" id="tab-pill-bar">
-        <button id="tab-btn-conteo"   onclick="switchTab('conteo')"   style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:#1a1a1a;color:#fff">📋 Conteo</button>
-        <button id="tab-btn-reporte"  onclick="switchTab('reporte')"  style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777">📊 Reporte</button>
-        <button id="tab-btn-asign"    onclick="switchTab('asign')"    style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777;display:none">👥 Asignaciones</button>
+      <div style="display:flex;background:#f0f0ee;border-radius:12px;padding:4px;gap:4px">
+        <button id="tab-btn-conteo"  onclick="switchTab('conteo')"  style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:#1a1a1a;color:#fff">📋 Conteo</button>
+        <button id="tab-btn-reporte" onclick="switchTab('reporte')" style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777">📊 Reporte</button>
+        <button id="tab-btn-asign"   onclick="switchTab('asign')"   style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777;display:none">👥 Asignaciones</button>
       </div>
       <button id="btn-reset" style="padding:8px 14px;font-size:.8rem;border:1px solid #ddd;border-radius:8px;background:#fff;color:#888;cursor:pointer;min-height:40px">↺ Nuevo día</button>
     </div>
@@ -368,9 +362,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
         <select id="sel-cont"></select>
         <span class="prog" id="prog-text"></span>
         <span id="self-assign-wrap" style="display:none">
-          <button id="btn-self-assign" style="padding:6px 14px;font-size:.8rem;background:#e8f4fd;color:#1565c0;border:1px solid #b3d7f7;border-radius:8px;cursor:pointer;min-height:36px">
-            📋 Registrarme en este conteo
-          </button>
+          <button id="btn-self-assign" style="padding:6px 14px;font-size:.8rem;background:#e8f4fd;color:#1565c0;border:1px solid #b3d7f7;border-radius:8px;cursor:pointer;min-height:36px">📋 Registrarme en este conteo</button>
         </span>
       </div>
       <div class="tbl-wrap">
@@ -391,98 +383,6 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
         <button class="btn" id="btn-hallazgo" style="border-color:#e67e22;color:#e67e22">⚠ Crear hallazgo</button>
         <button class="btn btn-dark" id="btn-save">Guardar conteo ✓</button>
       </div>
-
-<!-- MENU SCREEN -->
-<div id="pg-menu" style="display:none;min-height:100vh;background:#f5f5f3;padding:1.5rem 1rem">
-  <div style="max-width:500px;margin:0 auto">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
-      <div>
-        <h2 style="font-size:1.2rem;font-weight:600;margin-bottom:2px">Bienvenido</h2>
-        <p id="menu-username" style="font-size:.875rem;color:#888"></p>
-      </div>
-      <button id="btn-menu-logout" style="font-size:.8rem;padding:7px 14px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;color:#888;min-height:36px">Salir</button>
-    </div>
-    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem;margin-bottom:1rem">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem">
-        <div style="width:36px;height:36px;background:#1a1a1a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.1rem">📦</div>
-        <div>
-          <p style="font-size:.95rem;font-weight:600;margin:0">Conteos Hamilton</p>
-          <p style="font-size:.8rem;color:#888;margin:0">Embarques y Traslados</p>
-        </div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <button id="menu-btn-embarques" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
-          <span style="font-size:1.2rem">🚢</span>
-          <div><div style="font-weight:600">Embarques</div><div style="font-size:.78rem;color:#888;font-weight:400">México · China</div></div>
-        </button>
-        <button id="menu-btn-traslados" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
-          <span style="font-size:1.2rem">🚛</span>
-          <div><div style="font-weight:600">Traslados de otras bodegas</div><div style="font-size:.78rem;color:#888;font-weight:400">Bodega de origen según ubicación</div></div>
-        </button>
-        <button id="menu-btn-traslados-cdg" style="width:100%;padding:12px 16px;font-size:.9rem;font-weight:500;background:#f5f5f3;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;min-height:48px;text-align:left;display:flex;align-items:center;gap:10px">
-          <span style="font-size:1.2rem">✅</span>
-          <div><div style="font-weight:600">Traslados Hamilton (CDG)</div><div style="font-size:.78rem;color:#888;font-weight:400">Validados en CDG · pendientes de revisión</div></div>
-        </button>
-      </div>
-    </div>
-    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem">
-        <div style="width:36px;height:36px;background:#1565c0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.1rem">🏭</div>
-        <div>
-          <p style="font-size:.95rem;font-weight:600;margin:0">Conteos CDG</p>
-          <p style="font-size:.8rem;color:#888;margin:0">Envíos a Hamilton</p>
-        </div>
-      </div>
-      <button id="menu-btn-cdg" style="width:100%;padding:12px;font-size:.9rem;font-weight:500;background:#e8f4fd;border:1.5px solid #b3d7f7;border-radius:8px;cursor:pointer;min-height:48px;color:#1565c0">📋 Envíos a Hamilton</button>
-    </div>
-  </div>
-</div>
-
-<!-- CDG SCREEN -->
-<div id="pg-cdg" style="display:none" class="wrap">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.25rem">
-    <button id="btn-cdg-back" style="background:none;border:none;cursor:pointer;font-size:1.2rem;min-height:44px;min-width:44px;-webkit-appearance:none">←</button>
-    <h2 style="font-size:1.1rem;font-weight:600;margin:0">Conteos CDG — Envíos a Hamilton</h2>
-  </div>
-  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:1.25rem;margin-bottom:1rem">
-    <p style="font-size:.875rem;font-weight:500;margin-bottom:10px">Iniciar nuevo conteo</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-      <div style="flex:1;min-width:180px">
-        <label style="font-size:.8rem;color:#666;display:block;margin-bottom:4px">Número de traslado asignado por bodega</label>
-        <input id="cdg-cont-id" type="text" placeholder="ej: U25-159300" style="width:100%;padding:10px 12px;font-size:1rem;border:1px solid #ccc;border-radius:8px;min-height:44px;-webkit-appearance:none">
-      </div>
-      <button id="btn-cdg-nuevo" style="padding:10px 18px;font-size:.9rem;font-weight:500;background:#1a1a1a;color:#fff;border:none;border-radius:8px;cursor:pointer;min-height:44px">Iniciar</button>
-    </div>
-  </div>
-  <div id="cdg-conteo-wrap" style="display:none">
-    <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:1.25rem;margin-bottom:1rem">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
-        <div>
-          <p style="font-size:.8rem;color:#888;margin:0">Traslado</p>
-          <p id="cdg-cont-label" style="font-size:1rem;font-weight:600;margin:0"></p>
-        </div>
-        <button id="btn-cdg-add-item" style="padding:8px 14px;font-size:.85rem;background:#f5f5f3;border:1px solid #ddd;border-radius:8px;cursor:pointer;min-height:40px">+ SKU</button>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr>
-            <th>SKU</th><th>Descripción</th><th class="tc">Cantidad</th><th class="tc"></th>
-          </tr></thead>
-          <tbody id="cdg-items-body"></tbody>
-        </table>
-      </div>
-    </div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-bottom:1.5rem">
-      <button id="btn-cdg-save" class="btn">💾 Guardar borrador</button>
-      <button id="btn-cdg-finalizar" class="btn btn-green">✓ Finalizar → Traslados</button>
-    </div>
-  </div>
-  <div id="cdg-history-wrap">
-    <p style="font-size:.875rem;font-weight:500;margin-bottom:.75rem">Conteos CDG del día</p>
-    <div id="cdg-history-list"></div>
-  </div>
-</div>
-
 
       <!-- Hallazgo modal -->
       <div id="modal-hallazgo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:1rem">
@@ -568,13 +468,48 @@ document.getElementById('fecha').textContent =
 
 
 // ── Login ──────────────────────────────────────────────────────────────────
-// old login replaced
-// old login replaced
-// old login-name listener removed
+// login handled below
+// login handled below
+document.getElementById('login-name').addEventListener('keydown', function(e){ if(e.key==='Enter') doLogin(); });
 
-function doLogin() { /* replaced */ }
+function doLogin() {
+  var name = document.getElementById('login-name').value.trim();
+  var pass = document.getElementById('login-pass').value.trim();
+  var err  = document.getElementById('login-err');
 
+  if(!name) { showLoginErr('Por favor ingresa tu nombre.'); return; }
 
+  // Check if supervisor
+  var sup = null;
+  for(var i=0;i<USERS.length;i++) {
+    if(USERS[i].name.toLowerCase()===name.toLowerCase() && USERS[i].pass===pass) {
+      sup=USERS[i]; break;
+    }
+  }
+
+  if(pass && !sup) { showLoginErr('Contraseña incorrecta para ese nombre.'); return; }
+
+  currentUser = sup ? {name:sup.name, role:'supervisor'} : {name:name, role:'contador'};
+
+  document.getElementById('pg-login').style.display    = 'none';
+  document.getElementById('main-wrap').style.display   = '';
+
+  // Show user badge
+  document.getElementById('user-badge').textContent =
+    currentUser.name + ' · ' + (currentUser.role==='supervisor'?'Supervisor':'Contador');
+
+  // Hide upload zone for counters (supervisor loads teorico)
+  if(currentUser.role === 'contador') {
+    document.getElementById('pg-upload').style.display = 'none';
+    document.getElementById('pg-wait').style.display   = 'block';
+  }
+}
+
+function showLoginErr(msg) {
+  var el = document.getElementById('login-err');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
 
 // ── File handling ──────────────────────────────────────────────────────────
 var dz = document.getElementById('dropzone');
@@ -590,17 +525,19 @@ document.getElementById('fileinput').addEventListener('change', function(){
 });
 
 function handleFile(fileObj) {
-  showMsg('info', 'Subiendo ' + fileObj.name + '...');
-  var form = new FormData();
-  form.append('file', fileObj);
-  form.append('usuario', currentUser ? currentUser.name : '—');
-  fetch('/api/upload', { method:'POST', body:form })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok){ showMsg('ok', fileObj.name + ' cargado correctamente.'); lastVersion=-1; pollNow(); }
-      else showMsg('err', 'Error: ' + d.error);
-    })
-    .catch(function(e){ showMsg('err', 'Error de red: ' + e.message); });
+  var name = fileObj.name;
+  var ext  = name.split('.').pop().toLowerCase();
+  showMsg('info', 'Leyendo <strong>' + name + '</strong>...');
+  var reader = new FileReader();
+  if(ext === 'csv') {
+    reader.onload  = function(ev){ processCSV(ev.target.result, name); };
+    reader.onerror = function(){ showMsg('err', 'No se pudo leer el archivo.'); };
+    reader.readAsText(fileObj);
+  } else {
+    reader.onload  = function(ev){ processXLSX(ev.target.result, name).catch(function(e){ showMsg('err','Error: '+e.message); }); };
+    reader.onerror = function(){ showMsg('err', 'No se pudo leer el archivo.'); };
+    reader.readAsArrayBuffer(fileObj);
+  }
 }
 
 async function processXLSX(buffer, name) {
@@ -714,13 +651,7 @@ function mergeSheet(rows, type) {
   var cFalt    = findCol(hdr, ['faltantes']);
   var cSobr    = findCol(hdr, ['sobrantes']);
   var cDan     = findCol(hdr, ['dañado','danado']);
-  var cOrigen   = findCol(hdr, ['origen']);
-  var cIngreso  = findCol(hdr, ['# ingreso','ingreso']);
-  var cDocSap   = findCol(hdr, ['doc. sap','doc sap','sap']);
-  var cTipo     = findCol(hdr, ['tipo']);
-  var cUnidad   = findCol(hdr, ['unidad']);
-  var cUnidades = findCol(hdr, ['unidades']);
-  var cDestino  = findCol(hdr, ['destino']);
+  var cOrigen  = findCol(hdr, ['origen']);
 
   // Track which conts this sheet touches
   var newConts = {};
@@ -826,7 +757,7 @@ function updateStatusBar() {
       var dotCls = done===tConts.length ? 'dot-ok' : done>0 ? 'dot-partial' : 'dot-empty';
       html += '<div class="status-chip"><span class="dot '+dotCls+'"></span>'
         + type + ': ' + tConts.length + ' contenedores · ' + done + '/' + tConts.length + ' contados'
-        + (currentUser&&currentUser.role!=='contador' ? '<span class="chip-action" data-type="'+type+'" id="reload-'+type+'">Actualizar</span>' : '') + '</div>';
+        + '<span class="chip-action" data-type="'+type+'" id="reload-'+type+'">Actualizar</span></div>';
     }
   });
   bar.innerHTML = html;
@@ -974,24 +905,17 @@ function updateTotDiff(idx) {
 function saveConteo() {
   if(!teorico[current]) return;
   var items = teorico[current].items;
-  var data  = items.map(function(_,i){
+  fisico[current] = items.map(function(_,i){
     var fv = parseFloat((document.getElementById('fi'+i)||{}).value);
     var dv = parseFloat((document.getElementById('da'+i)||{}).value);
     return { fisico: isNaN(fv)?0:fv, daniado: isNaN(dv)?0:dv };
   });
-  fisico[current] = data;
   updateProg();
   updateStatusBar();
-  fetch('/api/conteo', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, data:data, usuario:currentUser?currentUser.name:'—'})
-  }).then(function(r){ return r.json(); })
-    .then(function(d){ if(d.ok) lastVersion = d.version; })
-    .catch(function(e){ console.warn('Save error:', e); });
-  var btn=document.getElementById('btn-save'), orig=btn.textContent;
+  var btn=document.getElementById('btn-save');
+  var orig=btn.textContent;
   btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
-  setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
+  setTimeout(function(){ btn.textContent=orig; btn.style.background=''; btn.style.borderColor=''; },1500);
 }
 
 function updateProg() {
@@ -1270,18 +1194,54 @@ document.getElementById('cost-input').addEventListener('change', function(){
 });
 
 function loadCostFile(fileObj) {
-  var form = new FormData();
-  form.append('file', fileObj);
-  fetch('/api/costos', { method:'POST', body:form })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok) setCostStatus('ok', fileObj.name + ' — ' + d.count + ' SKUs');
-      else setCostStatus('err', d.error);
-      return fetch('/api/costos');
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(d){ costos = d; })
-    .catch(function(e){ setCostStatus('err', e.message); });
+  var name = fileObj.name;
+  var reader = new FileReader();
+  reader.onload = async function(ev) {
+    try {
+      var wb    = await XLSX.readAsync(ev.target.result);
+      // Find the right sheet — prefer one with 'existencias' or 'sap' in name
+      var sheetName = wb.SheetNames[0];
+      for(var s=0; s<wb.SheetNames.length; s++) {
+        var nl = wb.SheetNames[s].toLowerCase();
+        if(nl.indexOf('existencia')>=0 || nl.indexOf('sap')>=0 || nl.indexOf('costo')>=0) {
+          sheetName = wb.SheetNames[s]; break;
+        }
+      }
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, defval:'', raw:false});
+      if(!rows || rows.length < 2) { setCostStatus('err','Archivo vacío.'); return; }
+
+      var hdr     = rows[0].map(function(h){ return norm(h); });
+      var colSku  = findCol(hdr, ['articulo','artículo','sku','codigo','código']);
+      var colCost = findCol(hdr, ['costo promedio','costo_promedio','precio promedio','costo']);
+
+      if(colSku < 0 || colCost < 0) {
+        setCostStatus('err','No se encontraron columnas SKU/Costo. Detectadas: ' + rows[0].join(' | '));
+        return;
+      }
+
+      // Accumulate sum+count per SKU then average
+      var raw_costos = {}; // { sku: {sum, count} }
+      for(var i=1; i<rows.length; i++) {
+        var sku  = String(rows[i][colSku]||'').trim();
+        var cost = parseFloat(String(rows[i][colCost]).replace(',','.'));
+        if(sku && !isNaN(cost) && cost > 0) {
+          if(!raw_costos[sku]) raw_costos[sku] = {sum:0, count:0};
+          raw_costos[sku].sum   += cost;
+          raw_costos[sku].count += 1;
+        }
+      }
+      costos = {};
+      var count = 0;
+      Object.keys(raw_costos).forEach(function(sku) {
+        costos[sku] = raw_costos[sku].sum / raw_costos[sku].count;
+        count++;
+      });
+      setCostStatus('ok', name + ' — ' + count + ' SKUs cargados (costo promedio por SKU)');
+    } catch(err) {
+      setCostStatus('err', 'Error: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(fileObj);
 }
 
 function getCosto(sku) {
@@ -1395,7 +1355,18 @@ document.getElementById('btn-hall-save').addEventListener('click', function(){
   showMsg2('ok', 'Hallazgo guardado para ' + currentHallazgo.cont + '. Total: ' + hallazgos.length + ' hallazgo(s).');
 });
 
-function doLogout() { /* replaced */ }
+function doLogout() {
+  if(!confirm('¿Cerrar sesión?')) return;
+  currentUser = null;
+  teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
+  document.getElementById('main-wrap').style.display   = 'none';
+  document.getElementById('pg-login').style.display    = 'flex';
+  document.getElementById('login-name').value          = '';
+  document.getElementById('login-pass').value          = '';
+  document.getElementById('login-err').style.display   = 'none';
+  document.getElementById('pg-wait').style.display     = 'none';
+  document.getElementById('pg-upload').style.display   = 'block';
+}
 
 function showMsg(type,html){
   var cls=type==='ok'?'msg-ok':type==='err'?'msg-err':'msg-info';
@@ -1416,70 +1387,61 @@ document.getElementById('btn-login-enter').addEventListener('click', function() 
   if(!n) { var e=document.getElementById('login-err'); e.textContent='Selecciona tu nombre.'; e.style.display='block'; return; }
   var isSup = SUP.indexOf(n) >= 0;
   currentUser = {name:n, role: isSup?'supervisor':'contador'};
-  lastVersion = -1;
-  document.getElementById('pg-login').style.display = 'none';
-  document.getElementById('menu-username').textContent = (isSup?'🔑 Supervisor':'📋 Contador') + ' — ' + n;
-  document.getElementById('pg-menu').style.display   = '';
+  lastVersion  = -1;
+  document.getElementById('pg-login').style.display  = 'none';
+  document.getElementById('main-wrap').style.display = '';
+  document.getElementById('user-badge').textContent  = (isSup?'🔑 ':'📋 ') + n;
+  if(!isSup) {
+    document.getElementById('pg-upload').style.display = 'none';
+    document.getElementById('pg-wait').style.display   = '';
+  }
   startPolling();
 });
 
 document.getElementById('btn-logout').addEventListener('click', function() {
   if(!confirm('¿Cerrar sesión?')) return;
   stopPolling();
+  currentUser=null; teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
+  document.getElementById('main-wrap').style.display = 'none';
+  document.getElementById('pg-login').style.display  = 'flex';
+  document.getElementById('login-name-sel').value    = '';
+  document.getElementById('login-err').style.display = 'none';
+  document.getElementById('upload-msg').innerHTML    = '';
+  document.getElementById('fileinput').value         = '';
+  document.getElementById('pg-main').style.display   = 'none';
+  document.getElementById('pg-upload').style.display = '';
+  document.getElementById('pg-wait').style.display   = 'none';
   var bar = document.getElementById('active-users-bar');
   if(bar) bar.style.display = 'none';
-  document.getElementById('pg-menu').style.display = 'none';
-  document.getElementById('pg-cdg').style.display  = 'none';
-  currentUser=null; teorico={}; fisico={}; conts=[]; current=null; loadedSheets={};
-  document.getElementById('main-wrap').style.display='none';
-  document.getElementById('pg-login').style.display='flex';
-  document.getElementById('login-name-sel').value='';
-  document.getElementById('login-err').style.display='none';
-  document.getElementById('upload-msg').innerHTML='';
-  document.getElementById('fileinput').value='';
-  document.getElementById('pg-main').style.display='none';
-  document.getElementById('pg-upload').style.display='';
-  document.getElementById('pg-wait').style.display='none';
 });
 </script>
 
 <script>
-// ══════════════════════════════════════════════════════════════════════════
-// POLLING CLIENT — syncs every 3 seconds via HTTP
-// ══════════════════════════════════════════════════════════════════════════
-var pollInterval  = null;
-var lastVersion   = -1;
-var asignaciones  = {};
-var historial     = [];
-var isSyncing     = false;
+// ── Polling client ────────────────────────────────────────────────────────
+var pollInterval = null;
+var lastVersion  = -1;
+var asignaciones = {};
+var historial    = [];
+var isSyncing    = false;
 
-function startPolling() {
-  pollNow();
-  pollInterval = setInterval(pollNow, 3000);
-}
-function stopPolling() {
-  if(pollInterval) { clearInterval(pollInterval); pollInterval=null; }
-}
+function startPolling() { pollNow(); pollInterval = setInterval(pollNow, 3000); }
+function stopPolling()  { if(pollInterval){ clearInterval(pollInterval); pollInterval=null; } }
 
 function pollNow() {
   if(isSyncing) return;
-  // Send heartbeat with current user
   if(currentUser) {
-    fetch('/api/heartbeat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name: currentUser.name})
-    }).catch(function(){});
+    fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:currentUser.name})}).catch(function(){});
   }
   isSyncing = true;
-  fetch('/api/state?cdg=1')
+  fetch('/api/state')
     .then(function(r){ return r.json(); })
     .then(function(s) {
       isSyncing = false;
       var badge = document.getElementById('ws-status');
-      if(badge) { badge.textContent='🟢 En línea'; badge.style.color='#1e7e34'; }
+      if(badge){ badge.textContent='🟢'; badge.style.color='#1e7e34'; }
 
-      if(s.version === lastVersion) return; // nothing changed
+      if(s.version === lastVersion) return;
       lastVersion = s.version;
 
       teorico      = s.teorico      || {};
@@ -1489,43 +1451,34 @@ function pollNow() {
 
       rebuildContsList();
 
-      // Mark CDG-validated traslados (anti-duplicate)
-      if(s.cdg) {
-        Object.keys(s.cdg).forEach(function(cdgId){
-          if(teorico[cdgId]) teorico[cdgId].cdgValidated = true;
-        });
-      }
-
-      // Update active users display (supervisors only)
+      // Active users (supervisors only)
       if(s.activeUsers && currentUser && currentUser.role !== 'contador') {
         var bar  = document.getElementById('active-users-bar');
         var list = document.getElementById('active-users-list');
-        if(bar && list) {
-          bar.style.display = s.activeUsers.length > 0 ? 'flex' : 'none';
-          list.innerHTML = s.activeUsers.map(function(name) {
-            var dot = '<span style="display:inline-block;width:7px;height:7px;background:#1e7e34;border-radius:50%;margin-right:4px"></span>';
-            return '<span style="background:#f0f0ee;padding:2px 10px;border-radius:12px;margin:2px">' + dot + name + '</span>';
+        if(bar && list && s.activeUsers.length > 0) {
+          bar.style.display = 'flex';
+          list.innerHTML = s.activeUsers.map(function(name){
+            return '<span style="background:#f0f0ee;padding:2px 10px;border-radius:12px;margin:2px"><span style="display:inline-block;width:7px;height:7px;background:#1e7e34;border-radius:50%;margin-right:4px"></span>'+name+'</span>';
           }).join('');
-        }
+        } else if(bar) bar.style.display = 'none';
       }
 
       if(Object.keys(teorico).length > 0) {
+        var inHamilton = document.getElementById('main-wrap').style.display !== 'none';
         document.getElementById('pg-upload').style.display = 'none';
         document.getElementById('pg-wait').style.display   = 'none';
-        document.getElementById('pg-main').style.display   = '';
-        buildSelect();
-        // Only re-render conteo if not actively typing
-        var active = document.activeElement;
-        var typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA');
-        if(!typing) renderConteo();
-        updateStatusBar();
-        setTimeout(injectAsignacionesTab, 100);
-        // Refresh reporte if visible
-        var rep = document.getElementById('tab-reporte');
-        if(rep && rep.style.display !== 'none') buildReporte();
-        // Refresh asign if visible
-        var asn = document.getElementById('tab-asign');
-        if(asn && asn.style.display !== 'none') renderAsignaciones();
+        if(inHamilton) {
+          document.getElementById('pg-main').style.display = '';
+          buildSelect();
+          var active = document.activeElement;
+          if(!(active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'))) renderConteo();
+          updateStatusBar();
+          setTimeout(injectAsignacionesTab, 100);
+          var rep = document.getElementById('tab-reporte');
+          if(rep && rep.style.display !== 'none') buildReporte();
+          var asn = document.getElementById('tab-asign');
+          if(asn && asn.style.display !== 'none') renderAsignaciones();
+        }
       } else if(currentUser && currentUser.role === 'contador') {
         document.getElementById('pg-upload').style.display = 'none';
         document.getElementById('pg-wait').style.display   = '';
@@ -1534,16 +1487,27 @@ function pollNow() {
     .catch(function(e) {
       isSyncing = false;
       var badge = document.getElementById('ws-status');
-      if(badge) { badge.textContent='🔴 Sin conexión'; badge.style.color='#c0392b'; }
+      if(badge){ badge.textContent='🔴'; badge.style.color='#c0392b'; }
     });
 }
 
-// saveConteo handled directly above
+// Patch handleFile to use server
+var _origHandleFile = handleFile;
+handleFile = function(fileObj) {
+  showMsg('info', 'Subiendo ' + fileObj.name + '...');
+  var form = new FormData();
+  form.append('file', fileObj);
+  form.append('usuario', currentUser ? currentUser.name : '—');
+  fetch('/api/upload', {method:'POST', body:form})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok){ showMsg('ok', fileObj.name + ' cargado.'); lastVersion=-1; pollNow(); }
+      else showMsg('err','Error: '+d.error);
+    })
+    .catch(function(e){ showMsg('err','Error: '+e.message); });
+};
 
-// handleFile handled directly above
-
-// ── Patch loadCostFile ────────────────────────────────────────────────────
-var _origLoadCostFile = loadCostFile;
+// Patch loadCostFile to use server
 loadCostFile = function(fileObj) {
   var form = new FormData();
   form.append('file', fileObj);
@@ -1559,31 +1523,51 @@ loadCostFile = function(fileObj) {
     .catch(function(e){setCostStatus('err',e.message);});
 };
 
-// ── Asignaciones via API ──────────────────────────────────────────────────
-function addAsign(cont, ci) {
-  var sel=document.getElementById('sel-asign-'+ci);
-  var name=sel?sel.value:''; if(!name)return;
+// Patch saveConteo to use server
+var _origSaveConteo = saveConteo;
+saveConteo = function() {
+  if(!teorico[current]) return;
+  var items = teorico[current].items;
+  var data  = items.map(function(_,i){
+    var fv=parseFloat((document.getElementById('fi'+i)||{}).value);
+    var dv=parseFloat((document.getElementById('da'+i)||{}).value);
+    return {fisico:isNaN(fv)?0:fv, daniado:isNaN(dv)?0:dv};
+  });
+  fisico[current] = data;
+  updateProg(); updateStatusBar();
+  fetch('/api/conteo',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current,data:data,usuario:currentUser?currentUser.name:'—'})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.ok) lastVersion=d.version;})
+    .catch(function(e){console.warn('Save error:',e);});
+  var btn=document.getElementById('btn-save'), orig=btn.textContent;
+  btn.textContent='✓ Guardado'; btn.style.background='#1e7e34'; btn.style.borderColor='#1e7e34';
+  setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';},1500);
+};
+
+// Asignaciones
+function addAsign(cont,ci){
+  var sel=document.getElementById('sel-asign-'+ci), name=sel?sel.value:''; if(!name)return;
   if(!asignaciones[cont])asignaciones[cont]=[];
   if(asignaciones[cont].indexOf(name)<0) asignaciones[cont].push(name);
   fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont,name,action:'add',usuario:currentUser?currentUser.name:'—'})})
+    body:JSON.stringify({cont:cont,name:name,action:'add',usuario:currentUser?currentUser.name:'—'})})
     .then(function(){lastVersion=-1;pollNow();});
   renderAsignaciones();
 }
-function removeAsign(cont,name) {
+function removeAsign(cont,name){
   if(!asignaciones[cont])return;
   asignaciones[cont]=asignaciones[cont].filter(function(n){return n!==name;});
   fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont,name,action:'remove',usuario:currentUser?currentUser.name:'—'})})
+    body:JSON.stringify({cont:cont,name:name,action:'remove',usuario:currentUser?currentUser.name:'—'})})
     .then(function(){lastVersion=-1;pollNow();});
   renderAsignaciones();
 }
 
-// ── Tab switching ─────────────────────────────────────────────────────────
-function switchTab(name) {
-  ['conteo','reporte','asign'].forEach(function(t) {
-    var el=document.getElementById('tab-'+t);
-    var btn=document.getElementById('tab-btn-'+t);
+// Tab switching
+function switchTab(name){
+  ['conteo','reporte','asign'].forEach(function(t){
+    var el=document.getElementById('tab-'+t), btn=document.getElementById('tab-btn-'+t);
     if(el) el.style.display=(t===name)?'':'none';
     if(btn){btn.style.background=(t===name)?'#1a1a1a':'transparent';btn.style.color=(t===name)?'#fff':'#777';}
   });
@@ -1591,8 +1575,59 @@ function switchTab(name) {
   if(name==='reporte') { if(typeof buildReporte==='function') buildReporte(); }
 }
 
-// ── Self-assign ───────────────────────────────────────────────────────────
-function updateSelfAssignBtn() {
+// Asignaciones tab
+var CONTADORES_LIST=['Carlos Sandoval','Israel Gatica','Nelson Diaz','Julio Yoc',
+  'Ronald Gomez','William Garzona','Alexander Grijalva','Jaqueline Perez',
+  'Jeffry Telon','Bianca Montenegro','Vivi Gil','Edmar Guzman','Ever Garcia',
+  'Mario Hernandez','Oscar Ramirez'];
+
+function injectAsignacionesTab(){
+  var btn=document.getElementById('tab-btn-asign'); if(btn) btn.style.display='';
+  if(!document.getElementById('tab-asign')){
+    var tc=document.getElementById('tab-conteo');
+    var div=document.createElement('div'); div.id='tab-asign'; div.style.display='none';
+    tc.parentNode.insertBefore(div,tc.nextSibling);
+  }
+}
+
+function renderAsignaciones(){
+  var div=document.getElementById('tab-asign'); if(!div)return;
+  var isSup=currentUser&&currentUser.role!=='contador';
+  var html='<div style="margin-bottom:1.5rem">';
+  html+='<button id="toggle-asign-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px"><span style="font-size:.9rem;font-weight:600">Asignación de contenedores</span><span id="toggle-asign-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
+  html+='<div id="asign-body">';
+  if(!conts||!conts.length){html+='<p style="color:#aaa;font-size:.875rem">Carga el teórico primero.</p>';}
+  else{
+    html+='<div style="overflow-x:auto;border:1px solid #e0e0e0;border-radius:8px;background:#fff;margin-bottom:1rem"><table style="width:100%;border-collapse:collapse;font-size:.875rem"><thead><tr style="background:#f5f5f3"><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Contenedor</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Tipo</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Asignado a</th><th style="padding:10px 12px;text-align:center;border-bottom:1px solid #e0e0e0">Estado</th>'+(isSup?'<th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Acción</th>':'')+'</tr></thead><tbody>';
+    conts.forEach(function(c,ci){
+      var asign=asignaciones[c]||[],counted=fisico[c]!==null,type=teorico[c]?teorico[c].type:'';
+      var badge=counted?'<span style="background:#eafaf1;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:.75rem">✓ Contado</span>':'<span style="background:#f2f2f2;color:#999;padding:2px 8px;border-radius:10px;font-size:.75rem">Pendiente</span>';
+      html+='<tr style="border-bottom:1px solid #f0f0ee"><td style="padding:10px 12px">'+c+'</td><td style="padding:10px 12px;color:#888;font-size:.8rem">'+type+'</td><td style="padding:10px 12px">';
+      html+=asign.length?asign.map(function(a){return '<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f4fd;color:#1565c0;padding:3px 10px;border-radius:10px;font-size:.8rem;margin:2px">'+a+(isSup?' <button data-cont="'+encodeURIComponent(c)+'" data-name="'+encodeURIComponent(a)+'" class="btn-remove-asign" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:.9rem;padding:0;min-width:20px">×</button>':'')+'</span>';}).join(''):'<span style="color:#ccc;font-size:.8rem">Sin asignar</span>';
+      html+='</td><td style="padding:10px 12px;text-align:center">'+badge+'</td>';
+      if(isSup) html+='<td style="padding:10px 12px"><select id="sel-asign-'+ci+'" style="padding:6px 10px;font-size:.8rem;border:1px solid #ccc;border-radius:6px;background:#fff;min-height:36px;max-width:160px"><option value="">+ Agregar</option>'+CONTADORES_LIST.filter(function(n){return asign.indexOf(n)<0;}).map(function(n){return '<option value="'+n+'">'+n+'</option>';}).join('')+'</select><button data-cont="'+encodeURIComponent(c)+'" data-ci="'+ci+'" class="btn-add-asign" style="margin-left:6px;padding:6px 12px;font-size:.8rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;min-height:36px">Asignar</button></td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  html+='<button id="toggle-hist-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px"><span style="font-size:.9rem;font-weight:600">Historial del día</span><span id="toggle-hist-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
+  html+='<div id="hist-body"><div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
+  if(!historial||!historial.length) html+='<p style="padding:1rem;color:#aaa;font-size:.875rem;text-align:center">Sin actividad aún.</p>';
+  else historial.slice().reverse().forEach(function(h){html+='<div style="padding:8px 12px;border-bottom:1px solid #f0f0ee;font-size:.825rem"><span style="color:#888">'+h.hora+'</span> · <strong>'+h.usuario+'</strong> · '+h.accion+(h.detalle?' <span style="color:#888">— '+h.detalle+'</span>':'')+'</div>';});
+  html+='</div></div></div>';
+  div.innerHTML=html;
+  div.querySelectorAll('.btn-remove-asign').forEach(function(btn){btn.addEventListener('click',function(){removeAsign(decodeURIComponent(this.dataset.cont),decodeURIComponent(this.dataset.name));});});
+  div.querySelectorAll('.btn-add-asign').forEach(function(btn){btn.addEventListener('click',function(){addAsign(decodeURIComponent(this.dataset.cont),parseInt(this.dataset.ci));});});
+  ['asign','hist'].forEach(function(k){
+    var hdr=div.querySelector('#toggle-'+k+'-hdr'),body=div.querySelector('#'+k+'-body'),ico=div.querySelector('#toggle-'+k+'-ico');
+    if(!hdr||!body)return;
+    hdr.addEventListener('click',function(){var h=body.style.display==='none';body.style.display=h?'':'none';if(ico)ico.textContent=h?'▼ contraer':'► expandir';});
+  });
+}
+
+// Self-assign
+function updateSelfAssignBtn(){
   var wrap=document.getElementById('self-assign-wrap'); if(!wrap)return;
   var isCont=currentUser&&currentUser.role==='contador';
   if(!isCont||!current){wrap.style.display='none';return;}
@@ -1607,305 +1642,23 @@ document.getElementById('btn-self-assign').addEventListener('click',function(){
     .then(function(){lastVersion=-1;pollNow();});
   document.getElementById('self-assign-wrap').style.display='none';
 });
+
 var _origRenderConteo=renderConteo;
 renderConteo=function(){_origRenderConteo();updateSelfAssignBtn();};
-
-// ── Asignaciones tab ──────────────────────────────────────────────────────
-var CONTADORES_LIST=['Carlos Sandoval','Israel Gatica','Nelson Diaz','Julio Yoc',
-  'Ronald Gomez','William Garzona','Alexander Grijalva','Jaqueline Perez',
-  'Jeffry Telon','Bianca Montenegro','Vivi Gil','Edmar Guzman','Ever Garcia',
-  'Mario Hernandez','Oscar Ramirez'];
-
-function injectAsignacionesTab(){
-  var btn=document.getElementById('tab-btn-asign');
-  if(btn)btn.style.display='';
-  if(!document.getElementById('tab-asign')){
-    var tc=document.getElementById('tab-conteo');
-    var div=document.createElement('div');
-    div.id='tab-asign';div.style.display='none';
-    tc.parentNode.insertBefore(div,tc.nextSibling);
-  }
-}
-
-function renderAsignaciones(){
-  var div=document.getElementById('tab-asign'); if(!div)return;
-  var isSup=currentUser&&currentUser.role!=='contador';
-  var html='<div style="margin-bottom:1.5rem">';
-  html+='<button id="toggle-asign-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px">'
-      +'<span style="font-size:.9rem;font-weight:600">Asignación de contenedores</span>'
-      +'<span id="toggle-asign-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
-  html+='<div id="asign-body">';
-  if(!conts||conts.length===0){html+='<p style="color:#aaa;font-size:.875rem">Carga el teórico primero.</p>';}
-  else {
-    html+='<div style="overflow-x:auto;border:1px solid #e0e0e0;border-radius:8px;background:#fff;margin-bottom:1rem">';
-    html+='<table style="width:100%;border-collapse:collapse;font-size:.875rem">';
-    html+='<thead><tr style="background:#f5f5f3"><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Contenedor</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Tipo</th><th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Asignado a</th><th style="padding:10px 12px;text-align:center;border-bottom:1px solid #e0e0e0">Estado</th>'+(isSup?'<th style="padding:10px 12px;border-bottom:1px solid #e0e0e0">Acción</th>':'')+'</tr></thead><tbody>';
-    conts.forEach(function(c,ci){
-      var asign=asignaciones[c]||[],counted=fisico[c]!==null,type=teorico[c]?teorico[c].type:'';
-      var badge=counted?'<span style="background:#eafaf1;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:.75rem">✓ Contado</span>':'<span style="background:#f2f2f2;color:#999;padding:2px 8px;border-radius:10px;font-size:.75rem">Pendiente</span>';
-      html+='<tr style="border-bottom:1px solid #f0f0ee"><td style="padding:10px 12px">'+c+'</td><td style="padding:10px 12px;color:#888;font-size:.8rem">'+type+'</td><td style="padding:10px 12px">';
-      if(asign.length>0)html+=asign.map(function(a){return '<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f4fd;color:#1565c0;padding:3px 10px;border-radius:10px;font-size:.8rem;margin:2px">'+a+(isSup?' <button data-cont="'+encodeURIComponent(c)+'" data-name="'+encodeURIComponent(a)+'" class="btn-remove-asign" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:.9rem;padding:0;min-width:20px">×</button>':'')+'</span>';}).join('');
-      else html+='<span style="color:#ccc;font-size:.8rem">Sin asignar</span>';
-      html+='</td><td style="padding:10px 12px;text-align:center">'+badge+'</td>';
-      if(isSup)html+='<td style="padding:10px 12px"><select id="sel-asign-'+ci+'" style="padding:6px 10px;font-size:.8rem;border:1px solid #ccc;border-radius:6px;background:#fff;min-height:36px;max-width:160px"><option value="">+ Agregar</option>'+CONTADORES_LIST.filter(function(n){return asign.indexOf(n)<0;}).map(function(n){return '<option value="'+n+'">'+n+'</option>';}).join('')+'</select><button data-cont="'+encodeURIComponent(c)+'" data-ci="'+ci+'" class="btn-add-asign" style="margin-left:6px;padding:6px 12px;font-size:.8rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;min-height:36px">Asignar</button></td>';
-      html+='</tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-  html+='</div>';
-  html+='<button id="toggle-hist-hdr" style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem;background:none;border:none;cursor:pointer;padding:0;min-height:44px"><span style="font-size:.9rem;font-weight:600">Historial del día</span><span id="toggle-hist-ico" style="font-size:.75rem;color:#888">▼ contraer</span></button>';
-  html+='<div id="hist-body"><div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
-  if(!historial||historial.length===0)html+='<p style="padding:1rem;color:#aaa;font-size:.875rem;text-align:center">Sin actividad aún.</p>';
-  else historial.slice().reverse().forEach(function(h){html+='<div style="padding:8px 12px;border-bottom:1px solid #f0f0ee;font-size:.825rem"><span style="color:#888">'+h.hora+'</span> · <strong>'+h.usuario+'</strong> · '+h.accion+(h.detalle?' <span style="color:#888">— '+h.detalle+'</span>':'')+'</div>';});
-  html+='</div></div></div>';
-  div.innerHTML=html;
-  div.querySelectorAll('.btn-remove-asign').forEach(function(btn){btn.addEventListener('click',function(){removeAsign(decodeURIComponent(this.dataset.cont),decodeURIComponent(this.dataset.name));});});
-  div.querySelectorAll('.btn-add-asign').forEach(function(btn){btn.addEventListener('click',function(){addAsign(decodeURIComponent(this.dataset.cont),parseInt(this.dataset.ci));});});
-  ['asign','hist'].forEach(function(k){
-    var hdr=div.querySelector('#toggle-'+k+'-hdr'),body=div.querySelector('#'+k+'-body'),ico=div.querySelector('#toggle-'+k+'-ico');
-    if(!hdr||!body)return;
-    hdr.addEventListener('click',function(){var h=body.style.display==='none';body.style.display=h?'':'none';if(ico)ico.textContent=h?'▼ contraer':'► expandir';});
-  });
-}
-
 var _origRebuild=rebuildContsList;
 rebuildContsList=function(){_origRebuild();setTimeout(injectAsignacionesTab,100);};
 
-// ══════════════════════════════════════════════════════════════════════════
-// MENU + CDG LOGIC
-// ══════════════════════════════════════════════════════════════════════════
-var cdgItems     = [];
-var cdgCurrentId = null;
-var menuFilter   = null; // 'Embarques' | 'Traslados' | null (all)
-
-function showMenu() {
-  document.getElementById('pg-menu').style.display   = '';
-  document.getElementById('pg-cdg').style.display    = 'none';
-  document.getElementById('main-wrap').style.display = 'none';
-}
-
-function goToHamilton(filter) {
-  menuFilter = filter;
-  // Update back button label
-  var labels = {
-    'Embarques':       '🚢 Embarques',
-    'Traslados-otras': '🚛 Traslados de otras bodegas',
-    'Traslados-cdg':   '✅ Traslados Hamilton (CDG)'
-  };
-  // Show Hamilton section label
-  var lbl = document.getElementById('hamilton-section-label');
-  if(lbl) lbl.textContent = labels[filter] || filter;
-  document.getElementById('pg-menu').style.display   = 'none';
-  document.getElementById('main-wrap').style.display = '';
-  rebuildContsList();
-  buildSelect(filter);
-  renderConteo();
-  updateStatusBar();
-  setTimeout(injectAsignacionesTab, 100);
-}
-
-// Helper: classify a container
-function classifyContainer(c) {
-  var t = teorico[c];
-  if(!t) return 'other';
-  if(t.type === 'Embarques') return 'Embarques';
-  if(t.type === 'Traslados') {
-    if(t.fromCDG) return 'Traslados-cdg'; // created by CDG
-    // Check if it was validated by CDG (exists in CDG state)
-    if(t.cdgValidated) return 'Traslados-cdg';
-    return 'Traslados-otras';
-  }
-  return 'other';
-}
-
-// Get origin label for embarques
-function getEmbarqueOrigen(c) {
-  var t = teorico[c]; if(!t||!t.items||!t.items.length) return '';
-  var raw = t.items[0].raw || {};
-  var prov = String(raw.nomProv||raw.codProv||'').toUpperCase();
-  if(prov.indexOf('LONGTAI')>=0 || prov.indexOf('CHINA')>=0) return '🇨🇳 China';
-  if(prov.indexOf('TRUPER')>=0 || prov.indexOf('MEXICO')>=0 || prov.indexOf('MÉXICO')>=0) return '🇲🇽 México';
-  return '';
-}
-
-// Get bodega label for traslados (will be updated when ubicaciones are known)
-function getTraslado0rigen(c) {
-  var t = teorico[c]; if(!t||!t.items||!t.items.length) return '';
-  var raw = t.items[0].raw || {};
-  var origen = String(raw.origen||'');
-  // TODO: Map ubicacion prefix to bodega name when list is provided
-  // For now show raw origen
-  return origen ? '📍 '+origen : '';
-}
-
-function goToCDG() {
-  document.getElementById('pg-menu').style.display = 'none';
-  document.getElementById('pg-cdg').style.display  = '';
-  loadCDGHistory();
-}
-
-// Override buildSelect to support filter
-var _origBuildSelect = buildSelect;
-buildSelect = function(filter) {
-  var sel = document.getElementById('sel-cont'); if(!sel) return;
-  var show = filter
-    ? conts.filter(function(c){ return classifyContainer(c) === filter; })
-    : conts;
-  var html = '';
-  if(show.length === 0) { sel.innerHTML='<option value="">Sin contenedores</option>'; return; }
-  show.forEach(function(c){
-    var extra = '';
-    if(filter==='Embarques') extra = getEmbarqueOrigen(c) ? ' ('+getEmbarqueOrigen(c)+')' : '';
-    else if(filter==='Traslados-otras') extra = getTraslado0rigen(c) ? ' — '+getTraslado0rigen(c) : '';
-    else if(filter==='Traslados-cdg') extra = teorico[c]&&teorico[c].fromCDG ? ' ✓CDG' : ' — pendiente CDG';
-    html += '<option value="'+escH(c)+'">'+escH(c)+extra+'</option>';
-  });
-  sel.innerHTML = html;
-  sel.value = show[0];
-};
-
-// Menu button listeners
-document.getElementById('menu-btn-embarques').addEventListener('click',     function(){ goToHamilton('Embarques'); });
-document.getElementById('menu-btn-traslados').addEventListener('click',     function(){ goToHamilton('Traslados-otras'); });
-document.getElementById('menu-btn-traslados-cdg').addEventListener('click', function(){ goToHamilton('Traslados-cdg'); });
-document.getElementById('menu-btn-cdg').addEventListener('click', goToCDG);
-document.getElementById('btn-menu-logout').addEventListener('click', function(){
-  document.getElementById('btn-logout').click();
-});
-document.getElementById('btn-cdg-back').addEventListener('click', showMenu);
-document.getElementById('btn-back-to-menu').addEventListener('click', function(){
-  document.getElementById('main-wrap').style.display = 'none';
-  showMenu();
-});
-
-// Update logout to show login not menu
-var _origLogout = document.getElementById('btn-logout');
-
-// ── CDG Logic ─────────────────────────────────────────────────────────────
-document.getElementById('btn-cdg-nuevo').addEventListener('click', function() {
-  var id = document.getElementById('cdg-cont-id').value.trim();
-  if(!id){ alert('Ingresa el número de traslado.'); return; }
-  cdgCurrentId = id;
-  cdgItems     = [];
-  document.getElementById('cdg-cont-label').textContent = id;
-  document.getElementById('cdg-conteo-wrap').style.display = '';
-  renderCDGItems();
-});
-
-document.getElementById('btn-cdg-add-item').addEventListener('click', function() {
-  cdgItems.push({sku:'', desc:'', qty:0});
-  renderCDGItems();
-  // Focus last SKU input
-  var inputs = document.querySelectorAll('.cdg-sku-inp');
-  if(inputs.length) inputs[inputs.length-1].focus();
-});
-
-function renderCDGItems() {
-  var tbody = document.getElementById('cdg-items-body');
-  var html  = '';
-  cdgItems.forEach(function(item, i) {
-    html += '<tr>'
-      + '<td><input type="text" class="cdg-sku-inp" data-i="'+i+'" value="'+escH(item.sku)+'" placeholder="SKU" style="width:90px;padding:6px 8px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;min-height:40px"></td>'
-      + '<td><input type="text" class="cdg-desc-inp" data-i="'+i+'" value="'+escH(item.desc)+'" placeholder="Descripción" style="width:100%;padding:6px 8px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;min-height:40px"></td>'
-      + '<td class="tc"><input type="number" class="cdg-qty-inp" data-i="'+i+'" value="'+item.qty+'" min="0" style="width:70px;padding:6px;font-size:.9rem;border:1px solid #ccc;border-radius:6px;text-align:center;min-height:40px"></td>'
-      + '<td class="tc"><button class="cdg-del-btn" data-i="'+i+'" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:1.1rem;min-height:40px;min-width:36px">×</button></td>'
-      + '</tr>';
-  });
-  tbody.innerHTML = html || '<tr><td colspan="4" class="empty">Agrega items con el botón + SKU</td></tr>';
-
-  tbody.querySelectorAll('.cdg-sku-inp').forEach(function(inp){
-    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].sku = this.value; });
-  });
-  tbody.querySelectorAll('.cdg-desc-inp').forEach(function(inp){
-    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].desc = this.value; });
-  });
-  tbody.querySelectorAll('.cdg-qty-inp').forEach(function(inp){
-    inp.addEventListener('input', function(){ cdgItems[+this.dataset.i].qty = parseFloat(this.value)||0; });
-  });
-  tbody.querySelectorAll('.cdg-del-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){ cdgItems.splice(+this.dataset.i,1); renderCDGItems(); });
-  });
-}
-
-function getCDGPayload() {
-  return cdgItems.filter(function(it){ return it.sku && it.qty > 0; });
-}
-
-document.getElementById('btn-cdg-save').addEventListener('click', function() {
-  if(!cdgCurrentId) return;
-  var items = getCDGPayload();
-  fetch('/api/cdg/save', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({contId:cdgCurrentId, items:items, usuario:currentUser?currentUser.name:'—'})})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok){ showMsg2('ok','CDG guardado como borrador.'); loadCDGHistory(); }
-    });
-});
-
-document.getElementById('btn-cdg-finalizar').addEventListener('click', function() {
-  if(!cdgCurrentId) return;
-  var items = getCDGPayload();
-  if(!items.length){ alert('Agrega al menos un SKU con cantidad.'); return; }
-  if(!confirm('¿Finalizar conteo '+cdgCurrentId+' y enviarlo a Traslados? Esta acción no se puede deshacer.')) return;
-  fetch('/api/cdg/finalizar', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({contId:cdgCurrentId, items:items, traslado:cdgCurrentId, usuario:currentUser?currentUser.name:'—'})})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.ok){
-        alert('✓ Conteo finalizado. Traslado '+d.traslado+' ya aparece en Conteos Hamilton → Traslados.');
-        cdgCurrentId = null; cdgItems = [];
-        document.getElementById('cdg-conteo-wrap').style.display = 'none';
-        document.getElementById('cdg-cont-id').value = '';
-        lastVersion = -1; pollNow();
-        loadCDGHistory();
-      }
-    });
-});
-
-function loadCDGHistory() {
-  fetch('/api/cdg')
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      var list = document.getElementById('cdg-history-list');
-      var keys = Object.keys(data);
-      if(!keys.length){
-        list.innerHTML = '<p style="color:#aaa;font-size:.875rem;text-align:center;padding:1rem">Sin conteos CDG hoy.</p>';
-        document.getElementById('cdg-history-wrap').style.display = '';
-        return;
-      }
-      var html = '<div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
-      keys.forEach(function(id){
-        var c = data[id];
-        var badge = c.status==='closed'
-          ? '<span style="background:#eafaf1;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:.75rem">✓ Finalizado</span>'
-          : '<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">Borrador</span>';
-        html += '<div style="padding:10px 14px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
-          + '<div><strong>'+escH(id)+'</strong> <span style="color:#888;font-size:.8rem">'+c.items.length+' SKUs · '+escH(c.autor||'—')+'</span></div>'
-          + '<div style="display:flex;align-items:center;gap:8px">'+badge
-          + (c.status==='open' ? '<button data-id="'+escH(id)+'" class="cdg-resume-btn" style="padding:4px 12px;font-size:.8rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;min-height:32px">Continuar</button>' : '')
-          + '</div></div>';
-      });
-      html += '</div>';
-      list.innerHTML = html;
-      document.getElementById('cdg-history-wrap').style.display = '';
-
-      list.querySelectorAll('.cdg-resume-btn').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var id = this.dataset.id;
-          cdgCurrentId = id;
-          cdgItems = (data[id].items||[]).slice();
-          document.getElementById('cdg-cont-label').textContent = id;
-          document.getElementById('cdg-conteo-wrap').style.display = '';
-          renderCDGItems();
-        });
-      });
-    });
-}
-
-// Update pollNow to show menu after login (not main-wrap directly)
-// Override the part that shows pg-main — only show if user came from Hamilton menu
-var _pollShowMain = false;
-
+document.getElementById('fecha').textContent =
+  new Date().toLocaleDateString('es',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 </script>
+
 </body>
-</html>
+</html>    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;flex-wrap:wrap;gap:8px">
+    <h1 style="margin:0">Conteo físico de inventario</h1>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span id="ws-status" style="font-size:.75rem;color:#999"></span>
+      <span id="user-badge" style="font-size:.8rem;background:#f0f0ee;padding:5px 12px;border-radius:20px;color:#555"></span>
+      <button id="btn-logout" style="font-size:.8rem;padding:7px 14px;border:1px solid #ddd;border-radius:20px;background:#fff;cursor:pointer;min-height:36px;color:#888">Salir</button>
+    </div>
+  </div>
+  
