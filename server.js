@@ -2,61 +2,150 @@ const express = require('express');
 const multer  = require('multer');
 const XLSX    = require('xlsx');
 const path    = require('path');
+const https   = require('https');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── State ────────────────────────────────────────────────────────────────
+// ── Supabase config (set via environment variables in Render) ─────────────
+const SUPABASE_URL = process.env.SUPABASE_URL;       // https://xxx.supabase.co
+const SUPABASE_KEY = process.env.SUPABASE_KEY;       // service_role key
+
+// ── Simple Supabase REST client ───────────────────────────────────────────
+function supabase(method, table, body, query) {
+  return new Promise((resolve, reject) => {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return resolve(null); // No Supabase configured — use memory only
+    }
+    const url  = new URL(`${SUPABASE_URL}/rest/v1/${table}${query||''}`);
+    const data = body ? JSON.stringify(body) : null;
+    const opts = {
+      hostname: url.hostname,
+      path:     url.pathname + url.search,
+      method,
+      headers: {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+        'Prefer':        'return=representation'
+      }
+    };
+    if(data) opts.headers['Content-Length'] = Buffer.byteLength(data);
+    const req = https.request(opts, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        try { resolve(raw ? JSON.parse(raw) : null); }
+        catch(e) { resolve(null); }
+      });
+    });
+    req.on('error', reject);
+    if(data) req.write(data);
+    req.end();
+  });
+}
+
+async function dbGet(key) {
+  const rows = await supabase('GET', 'app_state', null, `?key=eq.${key}&select=value`);
+  if(rows && rows.length > 0) {
+    try { return JSON.parse(rows[0].value); } catch(e) { return null; }
+  }
+  return null;
+}
+
+async function dbSet(key, value) {
+  const data = { key, value: JSON.stringify(value) };
+  // Upsert
+  await supabase('POST', 'app_state', data, '?on_conflict=key');
+}
+
+// ── In-memory state ───────────────────────────────────────────────────────
 let state = {
   teorico:      {},
   fisico:       {},
   asignaciones: {},
   historial:    [],
   costos:       {},
+  cdg:          {},
   date:         new Date().toDateString(),
   version:      0
 };
-
-// Active users: { name: lastSeenTimestamp }
 let activeUsers = {};
-const ACTIVE_TIMEOUT = 15000; // 15 seconds
+const ACTIVE_TIMEOUT = 15000;
 
-function getActiveUsers() {
-  const now = Date.now();
-  // Remove users not seen in last 15s
-  Object.keys(activeUsers).forEach(name => {
-    if(now - activeUsers[name] > ACTIVE_TIMEOUT) delete activeUsers[name];
-  });
-  return Object.keys(activeUsers);
+// ── Load state from Supabase on startup ───────────────────────────────────
+async function loadState() {
+  try {
+    const saved = await dbGet('daily_state');
+    if(saved && saved.date === new Date().toDateString()) {
+      state = { ...state, ...saved };
+      console.log('State restored from Supabase ✓');
+    } else {
+      console.log('New day or no saved state — starting fresh');
+    }
+  } catch(e) {
+    console.log('Could not load from Supabase:', e.message);
+  }
+}
+
+// ── Save state to Supabase (debounced) ───────────────────────────────────
+let saveTimer = null;
+function scheduleSave() {
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await dbSet('daily_state', {
+        teorico:      state.teorico,
+        fisico:       state.fisico,
+        asignaciones: state.asignaciones,
+        historial:    state.historial.slice(-100),
+        cdg:          state.cdg,
+        date:         state.date,
+        version:      state.version
+      });
+    } catch(e) { console.log('Save error:', e.message); }
+  }, 1000); // save 1s after last change
 }
 
 function resetIfNewDay() {
   const today = new Date().toDateString();
   if(state.date !== today) {
     state = { teorico:{}, fisico:{}, asignaciones:{}, historial:[],
-              costos:{}, date:today, version:0 };
+              costos:{}, cdg:{}, date:today, version:0 };
+    scheduleSave();
   }
 }
 
 function addHistorial(usuario, accion, detalle) {
   state.historial.push({
-    hora: new Date().toLocaleTimeString('es'), usuario, accion, detalle: detalle||''
+    hora: new Date().toLocaleTimeString('es'), usuario, accion, detalle:detalle||''
   });
   if(state.historial.length > 200) state.historial.shift();
   state.version++;
+  scheduleSave();
 }
 
 function publicState() {
-  return { teorico:state.teorico, fisico:state.fisico,
-           asignaciones:state.asignaciones, historial:state.historial.slice(-50),
-           date:state.date, version:state.version,
-           activeUsers: getActiveUsers() };
+  return {
+    teorico:      state.teorico,
+    fisico:       state.fisico,
+    asignaciones: state.asignaciones,
+    historial:    state.historial.slice(-50),
+    cdg:          state.cdg,
+    date:         state.date,
+    version:      state.version,
+    activeUsers:  getActiveUsers()
+  };
 }
 
-// ── Polling API ──────────────────────────────────────────────────────────
-// Client polls this every 3 seconds with its current version
-// Heartbeat — client sends name, server tracks as active
+function getActiveUsers() {
+  const now = Date.now();
+  Object.keys(activeUsers).forEach(n => { if(now - activeUsers[n] > ACTIVE_TIMEOUT) delete activeUsers[n]; });
+  return Object.keys(activeUsers);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────
 app.post('/api/heartbeat', (req, res) => {
   const { name } = req.body;
   if(name) activeUsers[name] = Date.now();
@@ -65,12 +154,9 @@ app.post('/api/heartbeat', (req, res) => {
 
 app.get('/api/state', (req, res) => {
   resetIfNewDay();
-  const s = publicState();
-  s.activeUsers = getActiveUsers();
-  res.json(s);
+  res.json(publicState());
 });
 
-// Save conteo
 app.post('/api/conteo', (req, res) => {
   resetIfNewDay();
   const { cont, data, usuario } = req.body;
@@ -80,77 +166,108 @@ app.post('/api/conteo', (req, res) => {
   res.json({ ok:true, version:state.version });
 });
 
-// Asignaciones
 app.post('/api/asign', (req, res) => {
   resetIfNewDay();
   const { cont, name, action, usuario } = req.body;
   if(!cont) return res.status(400).json({ ok:false });
   if(!state.asignaciones[cont]) state.asignaciones[cont] = [];
-  if(action === 'add') {
+  if(action==='add') {
     if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
-    addHistorial(usuario||'—', 'Asignación', cont + ' → ' + name);
-  } else if(action === 'remove') {
-    state.asignaciones[cont] = state.asignaciones[cont].filter(n => n !== name);
-    addHistorial(usuario||'—', 'Asignación removida', cont + ' ← ' + name);
-  } else if(action === 'self') {
+    addHistorial(usuario||'—', 'Asignación', cont+' → '+name);
+  } else if(action==='remove') {
+    state.asignaciones[cont] = state.asignaciones[cont].filter(n=>n!==name);
+    addHistorial(usuario||'—', 'Asignación removida', cont+' ← '+name);
+  } else if(action==='self') {
     if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
     addHistorial(name, 'Auto-asignación', cont);
   }
   state.version++;
+  scheduleSave();
   res.json({ ok:true, version:state.version });
 });
 
-// Upload teorico
-const upload = multer({ storage: multer.memoryStorage() });
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  try {
-    resetIfNewDay();
-    const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
-    const usuario = req.body.usuario || '—';
-    let loaded = [];
-    wb.SheetNames.forEach(sheetName => {
-      const nl   = sheetName.toLowerCase();
-      const type = nl.includes('traslado') ? 'Traslados' : nl.includes('embarque') ? 'Embarques' : null;
-      if(!type) return;
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:'', raw:false });
-      const count = mergeSheet(rows, type);
-      if(count > 0) { loaded.push(sheetName+' ('+count+')'); addHistorial(usuario,'Teórico cargado',type+' — '+count+' contenedores'); }
-    });
-    if(loaded.length === 0) {
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'', raw:false });
-      const count = mergeSheet(rows, 'General');
-      if(count > 0) { loaded.push(wb.SheetNames[0]+'('+count+')'); addHistorial(usuario,'Teórico cargado',loaded.join()); }
-    }
-    state.version++;
-    res.json({ ok:true, loaded });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+// CDG
+app.get('/api/cdg', (req,res) => res.json(state.cdg||{}));
+
+app.post('/api/cdg/save', (req,res) => {
+  const { contId, items, usuario } = req.body;
+  if(!contId) return res.status(400).json({ok:false});
+  if(!state.cdg[contId]) state.cdg[contId]={items:[],status:'open',autor:usuario,fecha:new Date().toLocaleDateString('es')};
+  state.cdg[contId].items=items; state.cdg[contId].lastEditor=usuario;
+  addHistorial(usuario,'CDG guardado',contId);
+  state.version++; scheduleSave();
+  res.json({ok:true,version:state.version});
 });
 
-// Upload costos
-app.post('/api/costos', upload.single('file'), (req, res) => {
+app.post('/api/cdg/finalizar', (req,res) => {
+  const { contId, items, usuario, traslado } = req.body;
+  if(!contId) return res.status(400).json({ok:false});
+  state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado};
+  const num=traslado||contId;
+  if(!state.teorico[num]) {
+    state.teorico[num]={type:'Traslados',fromCDG:true,cdgRef:contId,
+      items:items.map(i=>({sku:i.sku,desc:i.desc,qty:i.qty,
+        raw:{origen:'CDG',status:'CDG Validado',fecha:new Date().toLocaleDateString('es')}}))};
+    state.fisico[num]=null;
+  } else {
+    state.teorico[num].cdgValidated=true;
+  }
+  addHistorial(usuario,'CDG finalizado → Traslado',contId+' → '+num);
+  state.version++; scheduleSave();
+  res.json({ok:true,traslado:num,version:state.version});
+});
+
+// Costos
+const upload = multer({ storage: multer.memoryStorage() });
+app.post('/api/costos', upload.single('file'), (req,res) => {
   try {
-    const wb   = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
-    const sn   = wb.SheetNames.find(n=>n.toLowerCase().includes('existencia')||n.toLowerCase().includes('sap'))||wb.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'', raw:false });
-    const hdr  = rows[0].map(h=>norm(String(h)));
-    const cSku = findCol(hdr,['articulo','artículo','sku','codigo']);
-    const cCost= findCol(hdr,['costo promedio','costo']);
-    if(cSku<0||cCost<0) return res.status(400).json({ ok:false, error:'Columnas no encontradas' });
-    const raw = {};
-    rows.slice(1).forEach(row => {
-      const sku=String(row[cSku]||'').trim(), cost=parseFloat(String(row[cCost]).replace(',','.'));
+    const wb=XLSX.read(req.file.buffer,{type:'buffer',raw:false});
+    const sn=wb.SheetNames.find(n=>n.toLowerCase().includes('existencia')||n.toLowerCase().includes('sap'))||wb.SheetNames[0];
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:'',raw:false});
+    const hdr=rows[0].map(h=>norm(String(h)));
+    const cSku=findCol(hdr,['articulo','artículo','sku','codigo']);
+    const cCost=findCol(hdr,['costo promedio','costo']);
+    if(cSku<0||cCost<0) return res.status(400).json({ok:false,error:'Columnas no encontradas'});
+    const raw={};
+    rows.slice(1).forEach(row=>{
+      const sku=String(row[cSku]||'').trim(),cost=parseFloat(String(row[cCost]).replace(',','.'));
       if(sku&&!isNaN(cost)&&cost>0){if(!raw[sku])raw[sku]={sum:0,n:0};raw[sku].sum+=cost;raw[sku].n++;}
     });
-    state.costos={};let cnt=0;
+    state.costos={}; let cnt=0;
     Object.keys(raw).forEach(sku=>{state.costos[sku]=raw[sku].sum/raw[sku].n;cnt++;});
-    res.json({ ok:true, count:cnt });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+    res.json({ok:true,count:cnt});
+  } catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/costos',(req,res)=>res.json(state.costos));
+
+// Upload teorico
+app.post('/api/upload', upload.single('file'), (req,res) => {
+  try {
+    resetIfNewDay();
+    const wb=XLSX.read(req.file.buffer,{type:'buffer',raw:false});
+    const usuario=req.body.usuario||'—';
+    let loaded=[];
+    wb.SheetNames.forEach(sn=>{
+      const nl=sn.toLowerCase();
+      const type=nl.includes('traslado')?'Traslados':nl.includes('embarque')?'Embarques':null;
+      if(!type) return;
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:'',raw:false});
+      const count=mergeSheet(rows,type);
+      if(count>0){loaded.push(sn+'('+count+')');addHistorial(usuario,'Teórico cargado',type+' — '+count+' contenedores');}
+    });
+    if(loaded.length===0){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:'',raw:false});
+      const count=mergeSheet(rows,'General');
+      if(count>0) loaded.push(wb.SheetNames[0]+'('+count+')');
+      addHistorial(usuario,'Teórico cargado',loaded.join());
+    }
+    state.version++; scheduleSave();
+    res.json({ok:true,loaded});
+  } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 
-app.get('/api/costos', (req,res) => res.json(state.costos));
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+// ── Helpers ───────────────────────────────────────────────────────────────
+function norm(s){return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
 function findCol(hdr,terms){
   for(const t of terms){const i=hdr.findIndex(h=>h===norm(t));if(i>=0)return i;}
   for(const t of terms){const i=hdr.findIndex(h=>h.includes(norm(t)));if(i>=0)return i;}
@@ -191,11 +308,19 @@ function mergeSheet(rows,type){
         unidades:g(row,ex.cUnidades),destino:g(row,ex.cDestino)}});
   });
   Object.keys(newConts).forEach(cont=>{
+    // Don't overwrite CDG-validated containers from teorico upload
+    if(state.teorico[cont]&&state.teorico[cont].fromCDG) {
+      state.teorico[cont].cdgValidated=true;
+      return;
+    }
     state.teorico[cont]={items:newConts[cont],type};
     if(!state.fisico[cont])state.fisico[cont]=null;
   });
   return Object.keys(newConts).length;
 }
 
+// ── Start ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=>console.log('Conteo app on port '+PORT));
+loadState().then(() => {
+  app.listen(PORT, () => console.log('Conteo app on port ' + PORT));
+});
