@@ -71,6 +71,22 @@ let state = {
   date:         new Date().toDateString(),
   version:      0
 };
+
+// Field locks: { "contId:rowIdx": { user, since, expires } }
+let fieldLocks = {};
+const LOCK_TIMEOUT = 90000; // 90 seconds max
+
+function cleanLocks() {
+  const now = Date.now();
+  Object.keys(fieldLocks).forEach(k => {
+    if(fieldLocks[k].expires < now) delete fieldLocks[k];
+  });
+}
+
+function getLocks() {
+  cleanLocks();
+  return fieldLocks;
+}
 let activeUsers = {};
 const ACTIVE_TIMEOUT = 15000;
 
@@ -135,7 +151,8 @@ function publicState() {
     cdg:          state.cdg,
     date:         state.date,
     version:      state.version,
-    activeUsers:  getActiveUsers()
+    activeUsers:  getActiveUsers(),
+    locks:        getLocks()
   };
 }
 
@@ -239,6 +256,47 @@ app.post('/api/costos', upload.single('file'), (req,res) => {
   } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 app.get('/api/costos',(req,res)=>res.json(state.costos));
+
+// ── Field locking ─────────────────────────────────────────────────────────
+app.post('/api/lock', (req, res) => {
+  cleanLocks();
+  const { cont, idx, user } = req.body;
+  const key = cont + ':' + idx;
+  const existing = fieldLocks[key];
+  // Already locked by someone else and not expired
+  if(existing && existing.user !== user && existing.expires > Date.now()) {
+    return res.json({ ok:false, lockedBy: existing.user, since: existing.since });
+  }
+  fieldLocks[key] = { user, since: Date.now(), expires: Date.now() + 90000 };
+  state.version++;
+  res.json({ ok:true });
+});
+
+app.post('/api/unlock', (req, res) => {
+  const { cont, idx, user } = req.body;
+  const key = cont + ':' + idx;
+  if(fieldLocks[key] && fieldLocks[key].user === user) delete fieldLocks[key];
+  state.version++;
+  res.json({ ok:true });
+});
+
+// Auto-save single field
+app.post('/api/conteo/field', (req, res) => {
+  resetIfNewDay();
+  const { cont, idx, fisico, daniado, usuario } = req.body;
+  if(cont === undefined || idx === undefined) return res.status(400).json({ok:false});
+  if(!state.fisico[cont]) state.fisico[cont] = [];
+  if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
+  state.fisico[cont][idx] = {
+    fisico:   fisico  !== undefined ? fisico  : (state.fisico[cont][idx]||{}).fisico||0,
+    daniado:  daniado !== undefined ? daniado : (state.fisico[cont][idx]||{}).daniado||0,
+    lastUser: usuario,
+    lastAt:   Date.now()
+  };
+  state.version++;
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
+});
 
 // Upload teorico
 app.post('/api/upload', upload.single('file'), (req,res) => {
