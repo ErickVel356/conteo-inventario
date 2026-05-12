@@ -69,8 +69,7 @@ let state = {
   costos:       {},
   cdg:          {},
   date:         new Date().toDateString(),
-  version:      0,
-  locks:        {}
+  version:      0
 };
 
 // Field locks: { "contId:rowIdx": { user, since, expires } }
