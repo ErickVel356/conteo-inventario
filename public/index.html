@@ -492,7 +492,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <span style="font-size:.875rem;color:#666">📦 Costos SAP:</span>
         <span id="cost-status" style="font-size:.8rem;color:#999">No cargado</span>
         <button class="btn btn-sm" id="btn-load-cost">Cargar costos</button>
-        <input type="file" id="cost-input" accept=".xlsx,.xls,.csv">
+        <input type="file" id="cost-input" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
 
       <!-- Tab pills -->
@@ -1420,6 +1420,8 @@ function loadCostFile(fileObj){
     .then(function(d){
       if(d.ok){
         flashMsg('status-bar','ok','✓ Costos cargados: '+d.count+' SKUs');
+        var cs=document.getElementById('cost-status'); if(cs){cs.textContent='✓ '+d.count+' SKUs';cs.style.color='#1e7e34';}
+        var btn=document.getElementById('btn-load-cost'); if(btn) btn.textContent='Actualizar costos';
         return fetch('/api/costos');
       } else { flashMsg('status-bar','err','Error costos: '+d.error); }
     })
@@ -1606,6 +1608,18 @@ function pollNow() {
 
       rebuildContsList();
       updateSubmenúCounts();
+
+      // Auto-load costos from server if not loaded
+      if(!Object.keys(costos).length) {
+        fetch('/api/costos').then(function(r){return r.json();})
+          .then(function(d){
+            if(d && Object.keys(d).length > 0) {
+              costos = d;
+              var el = document.getElementById('cost-status');
+              if(el){ el.textContent='✓ Costos cargados'; el.style.color='#1e7e34'; }
+            }
+          }).catch(function(){});
+      }
 
       // Re-render current view if not typing
       var active = document.activeElement;
