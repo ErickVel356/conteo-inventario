@@ -178,14 +178,22 @@ app.get('/api/state', (req, res) => {
 app.post('/api/state/save', (req, res) => {
   resetIfNewDay();
   const { teorico: t, fisico: f, asignaciones: a, historial: h } = req.body;
-  if(t && Object.keys(t).length > 0) state.teorico = t;
+  // Merge teorico: add new containers but never remove existing ones
+  if(t && Object.keys(t).length > 0) {
+    Object.keys(t).forEach(cont => {
+      if(!state.teorico[cont]) state.teorico[cont] = t[cont];
+    });
+  }
   if(f) {
-    // Merge fisico preserving lastUser/lastAt from field saves
+    // Merge fisico: server data wins over client (server has field-saves)
     Object.keys(f).forEach(cont => {
-      if(!state.fisico[cont]) state.fisico[cont] = f[cont];
-      else if(Array.isArray(f[cont])) {
+      if(!state.fisico[cont]) {
+        state.fisico[cont] = f[cont];
+      } else if(Array.isArray(f[cont])) {
         f[cont].forEach((item, i) => {
-          if(item && (!state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
+          // Only use client data if server has nothing for this cell
+          if(item && item.lastAt && (!state.fisico[cont] || !state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
+            if(!state.fisico[cont]) state.fisico[cont] = [];
             state.fisico[cont][i] = item;
           }
         });
@@ -397,7 +405,9 @@ function mergeSheet(rows,type){
       return;
     }
     state.teorico[cont]={items:newConts[cont],type};
-    if(!state.fisico[cont])state.fisico[cont]=null;
+    // Preserve existing fisico data — never overwrite conteo work
+    if(!state.fisico[cont]) state.fisico[cont]=null;
+    // else: keep existing fisico[cont] as-is
   });
   return Object.keys(newConts).length;
 }
