@@ -174,6 +174,31 @@ app.get('/api/state', (req, res) => {
   res.json(publicState());
 });
 
+// Full state save (from client doServerSave)
+app.post('/api/state/save', (req, res) => {
+  resetIfNewDay();
+  const { teorico: t, fisico: f, asignaciones: a, historial: h } = req.body;
+  if(t && Object.keys(t).length > 0) state.teorico = t;
+  if(f) {
+    // Merge fisico preserving lastUser/lastAt from field saves
+    Object.keys(f).forEach(cont => {
+      if(!state.fisico[cont]) state.fisico[cont] = f[cont];
+      else if(Array.isArray(f[cont])) {
+        f[cont].forEach((item, i) => {
+          if(item && (!state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
+            state.fisico[cont][i] = item;
+          }
+        });
+      }
+    });
+  }
+  if(a) state.asignaciones = a;
+  if(h) { state.historial = h; }
+  state.version++;
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
+});
+
 app.post('/api/conteo', (req, res) => {
   resetIfNewDay();
   const { cont, data, usuario } = req.body;
