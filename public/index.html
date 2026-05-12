@@ -306,21 +306,18 @@ textarea.field-inp{resize:vertical;min-height:72px}
 .collapsible-hdr .ch-ico{font-size:.75rem;color:#aaa}
 .collapsible-body{padding-top:.75rem}
 
-/* ── TABLET / MOBILE RESPONSIVE ──────────────────────────────────── */
+/* ── TABLET / MOBILE ─────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .wrap { padding: .75rem !important; }
-  .topbar { padding: .5rem .75rem !important; }
   h1 { font-size: 1rem !important; }
   table { font-size: .8rem !important; }
   th, td { padding: 6px 7px !important; }
-  input[type=number] { width: 60px !important; padding: 6px 4px !important; }
-  .calc-inp { width: 70px !important; }
-  .metrics-grid { grid-template-columns: repeat(2,1fr) !important; }
+  input[type=number] { width: 58px !important; font-size: .85rem !important; }
+  .calc-inp { width: 66px !important; font-size: .8rem !important; }
 }
 @media (max-width: 480px) {
-  .tab-pill button { padding: 6px 10px !important; font-size: .78rem !important; }
-  input[type=number] { width: 52px !important; }
-  .calc-inp { width: 60px !important; }
+  .tab-pill button { padding: 6px 9px !important; font-size: .77rem !important; }
+  input[type=number] { width: 50px !important; }
 }
 </style>
 </head>
@@ -516,14 +513,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <button class="btn btn-sm btn-blue" id="btn-self-assign">📋 Registrarme en este conteo</button>
           </span>
         </div>
-        <div 
-    <!-- SKU Search -->
-    <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px">
-      <input id="sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..." 
-        style="flex:1;padding:9px 14px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none;background:#fff;max-width:400px">
+        <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <input id="sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..."
+        style="flex:1;max-width:380px;padding:9px 14px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none;background:#fff">
       <span id="sku-search-count" style="font-size:.78rem;color:#888"></span>
     </div>
-    class="tbl-wrap">
+    <div class="tbl-wrap">
           <table>
             <thead><tr>
               <th>SKU</th><th>Nombre / Descripción</th>
@@ -1097,8 +1092,6 @@ function setLock(idx){
   locks[key]={quien:currentUser.name,at:Date.now()};
   // Auto-release after 90s
   setTimeout(function(){if(locks[key]&&locks[key].quien===currentUser.name)delete locks[key];},90000);
-  // Also lock on server
-  if(typeof acquireLock==='function') acquireLock(idx);
 }
 
 function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
@@ -1584,23 +1577,8 @@ function pollNow() {
       if(s.activeUsers && typeof updateOnlineBarFromServer === 'function') {
         updateOnlineBarFromServer(s.activeUsers);
       }
-      // Sync locks - bridge server format (cont:idx) to local format (cont_idx)
-      if(s.locks) {
-        window.serverLocks = s.locks;
-        // Populate local locks variable from server
-        Object.keys(s.locks).forEach(function(key) {
-          var lock = s.locks[key];
-          var localKey = key.replace(':', '_');
-          if(lock.user !== (currentUser ? currentUser.name : '')) {
-            locks[localKey] = {quien: lock.user, at: lock.expires - 90000};
-          }
-        });
-        // Remove expired local locks that are no longer in server
-        Object.keys(locks).forEach(function(lk) {
-          var serverKey = lk.replace('_', ':');
-          if(!s.locks[serverKey]) delete locks[lk];
-        });
-      }
+      // Sync locks
+      if(s.locks) window.serverLocks = s.locks;
 
       if(s.version === lastVersion) return;
       lastVersion = s.version;
@@ -1618,29 +1596,31 @@ function pollNow() {
       var active = document.activeElement;
       var typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA');
 
-      rebuildContsList();
-      updateSubmenúCounts();
-
       if(Object.keys(teorico).length > 0) {
-        // If user is on wait screen, send them to menu
+        // Show conteo sections if previously waiting
         var wait = document.getElementById('pg-wait');
         if(wait && wait.classList.contains('active')) {
           navTo('pg-menu','📦 Conteo de Inventario');
         }
         if(!typing) {
+          // Re-render current conteo if visible
           var pgConteo = document.getElementById('pg-conteo');
           if(pgConteo && pgConteo.classList.contains('active')) renderConteo();
+          // Re-render asign if visible
           var pgAsign = document.getElementById('pg-asign');
           if(pgAsign && pgAsign.classList.contains('active') && typeof renderAsignaciones==='function') renderAsignaciones();
+          // Re-render reporte if visible
           var pgRep = document.getElementById('pg-reporte');
           if(pgRep && pgRep.classList.contains('active') && typeof buildReporte==='function') buildReporte();
         } else {
+          // Even while typing, update lock badges
           updateLockBadges();
         }
       } else if(currentUser && currentUser.role === 'contador') {
-        var pgMenu2 = document.getElementById('pg-menu');
-        if(pgMenu2 && pgMenu2.classList.contains('active')) {
-          navTo('pg-wait', '⏳ Esperando teórico...');
+        var pgWait = document.getElementById('pg-wait');
+        var pgMenu = document.getElementById('pg-menu');
+        if(pgMenu && pgMenu.classList.contains('active') && pgWait) {
+          navTo('pg-wait', 'Esperando teórico...');
         }
       }
     })
@@ -1848,10 +1828,11 @@ window.addEventListener('beforeunload', function(){ releaseAllLocks(); });
 // We need to intercept asign-specific changes and POST to /api/asign instead
 // Patch is applied: when historial shows asign action, send to server
 
+</script>
 
+
+<script>
 // ── SKU Search ────────────────────────────────────────────────────────────
-var skuSearchActive = false;
-
 document.getElementById('sku-search').addEventListener('input', function() {
   var q = this.value.trim().toLowerCase();
   var rows = document.querySelectorAll('#tbody-conteo tr');
@@ -1864,19 +1845,16 @@ document.getElementById('sku-search').addEventListener('input', function() {
     if(match) shown++;
   });
   var cnt = document.getElementById('sku-search-count');
-  if(cnt) cnt.textContent = q ? shown + ' resultado' + (shown !== 1 ? 's' : '') : '';
+  if(cnt) cnt.textContent = q ? (shown + ' resultado' + (shown!==1?'s':'')) : '';
 });
 
-// Clear search on container change
-var _selCont = document.getElementById('sel-cont');
-if(_selCont) {
-  _selCont.addEventListener('change', function() {
-    var srch = document.getElementById('sku-search');
-    if(srch) { srch.value = ''; }
-    var cnt = document.getElementById('sku-search-count');
-    if(cnt) cnt.textContent = '';
-  });
-}
+// Clear search when switching containers
+document.getElementById('sel-cont').addEventListener('change', function() {
+  var s = document.getElementById('sku-search');
+  if(s) s.value = '';
+  var c = document.getElementById('sku-search-count');
+  if(c) c.textContent = '';
+});
 </script>
 
 </body>
