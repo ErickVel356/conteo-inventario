@@ -436,7 +436,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
       <div style="display:flex;background:#f0f0ee;border-radius:12px;padding:4px;gap:4px" id="tab-pill-bar">
         <button id="tab-btn-conteo"   onclick="switchTab('conteo')"   style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:#1a1a1a;color:#fff">📋 Conteo</button>
         <button id="tab-btn-reporte"  onclick="switchTab('reporte')"  style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777">📊 Reporte</button>
-        <button id="tab-btn-asign"    onclick="switchTab('asign')"    style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777;display:none">👥 Asignaciones</button>
+        <button id="tab-btn-asign"    onclick="switchTab('asign'); if(typeof renderAsignaciones==='function') renderAsignaciones();"    style="padding:8px 18px;font-size:.875rem;font-weight:500;border:none;border-radius:8px;cursor:pointer;min-height:40px;background:transparent;color:#777;display:none">👥 Asignaciones</button>
       </div>
       <button id="btn-reset" style="padding:8px 14px;font-size:.8rem;border:1px solid #ddd;border-radius:8px;background:#fff;color:#888;cursor:pointer;min-height:40px">↺ Nuevo día</button>
     </div>
@@ -970,6 +970,7 @@ function saveConteo() {
   fisico[current] = data;
   updateProg();
   updateStatusBar();
+  if(typeof releaseAllLocks==='function') releaseAllLocks();
   fetch('/api/conteo', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -1238,7 +1239,7 @@ document.getElementById('tab-btn-reporte').addEventListener('click', function(){
   buildReporte();
 });
 document.getElementById('sel-cont').addEventListener('change', renderConteo);
-document.getElementById('btn-save').addEventListener('click', saveConteo);
+document.getElementById('btn-save').addEventListener('click', function(){ saveConteo(); });
 document.getElementById('btn-export').addEventListener('click', exportExcel);
 document.getElementById('btn-reset').addEventListener('click', function(){
   if(!confirm('¿Comenzar un nuevo día? Se borrará todo el conteo actual.')) return;
@@ -1483,6 +1484,7 @@ function stopPolling() {
 
 function pollNow() {
   if(isSyncing) return;
+  if(currentUser) fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:currentUser.name})}).catch(function(){});
   isSyncing = true;
   fetch('/api/state')
     .then(function(r){ return r.json(); })
@@ -1688,10 +1690,11 @@ rebuildContsList=function(){_origRebuild();setTimeout(injectAsignacionesTab,100)
 
 <script>
 // ── Menu + CDG + Locking ───────────────────────────────────────────────────
-var menuFilter    = null;
+window.serverLocks = window.serverLocks || {};
+var menuFilter = null;
 var cdgItems      = [];
 var cdgCurrentId  = null;
-var serverLocks   = window.serverLocks || {};
+// serverLocks initialized below
 var myLocks       = {};
 var saveTimers    = {};
 
@@ -1828,7 +1831,7 @@ renderConteo = function() {
   var myName=currentUser?currentUser.name:'';
   for(var i=0;i<items.length;i++){
     var key=current+':'+i;
-    var lock=serverLocks[key];
+    var lock=window.serverLocks[key];
     var lockedByOther=lock&&lock.user!==myName&&lock.expires>now;
     var lockedByMe=lock&&lock.user===myName&&lock.expires>now;
     var fi=document.getElementById('fi'+i);
@@ -1885,11 +1888,7 @@ renderConteo = function() {
 };
 
 // Patch saveConteo to release locks
-var _origSaveConteo = saveConteo;
-saveConteo = function() {
-  releaseAllLocks();
-  _origSaveConteo();
-};
+// saveConteo handled above
 
 // ── CDG ───────────────────────────────────────────────────────────────────
 document.getElementById('btn-cdg-init').addEventListener('click',function(){
