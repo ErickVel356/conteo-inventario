@@ -1577,8 +1577,23 @@ function pollNow() {
       if(s.activeUsers && typeof updateOnlineBarFromServer === 'function') {
         updateOnlineBarFromServer(s.activeUsers);
       }
-      // Sync locks
-      if(s.locks) window.serverLocks = s.locks;
+      // Sync locks - bridge server (cont:idx) to local (cont_idx)
+      if(s.locks) {
+        window.serverLocks = s.locks;
+        var myName = currentUser ? currentUser.name : '';
+        Object.keys(s.locks).forEach(function(key) {
+          var lock = s.locks[key];
+          var localKey = key.replace(':', '_');
+          if(lock.user !== myName) {
+            locks[localKey] = {quien: lock.user, at: Date.now() - 1000};
+          }
+        });
+        Object.keys(locks).forEach(function(lk) {
+          if(locks[lk].quien !== myName && !s.locks[lk.replace('_',':')]) {
+            delete locks[lk];
+          }
+        });
+      }
 
       if(s.version === lastVersion) return;
       lastVersion = s.version;
@@ -1739,8 +1754,12 @@ function saveField(idx) {
 var _origAfterLogin = afterLogin;
 afterLogin = function() {
   lastVersion = -1;
-  _origAfterLogin();
+  // Start polling FIRST to get server data
+  // then call original afterLogin once we have data
   startPolling();
+  // Also call original afterLogin immediately for UI setup
+  // but override with server data when poll returns
+  _origAfterLogin();
 };
 
 // Patch logout to stop polling
