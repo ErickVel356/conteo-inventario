@@ -1531,13 +1531,20 @@ function pollNow() {
           buildSelect(window.menuFilter||null);
           var active = document.activeElement;
           var typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA');
-          if(!typing) renderConteo();
+          if(!typing) {
+            renderConteo();
+          } else {
+            // Even while typing, update lock badges for other fields
+            updateLockBadges();
+          }
           updateStatusBar();
           setTimeout(injectAsignacionesTab, 100);
           var rep = document.getElementById('tab-reporte');
           if(rep && rep.style.display !== 'none') buildReporte();
           var asn = document.getElementById('tab-asign');
-          if(asn && asn.style.display !== 'none') renderAsignaciones();
+          if(asn && asn.style.display !== 'none') {
+            if(typeof renderAsignaciones==='function') renderAsignaciones();
+          }
         }
       } else if(currentUser && currentUser.role === 'contador') {
         var inMenu = document.getElementById('pg-menu').style.display !== 'none';
@@ -1832,8 +1839,8 @@ renderConteo = function() {
   for(var i=0;i<items.length;i++){
     var key=current+':'+i;
     var lock=window.serverLocks[key];
-    var lockedByOther=lock&&lock.user!==myName&&lock.expires>now;
-    var lockedByMe=lock&&lock.user===myName&&lock.expires>now;
+    var lockedByOther=lock&&lock.user!==myName;
+    var lockedByMe=lock&&lock.user===myName;
     var fi=document.getElementById('fi'+i);
     var da=document.getElementById('da'+i);
     if(fi && lockedByOther){
@@ -1981,6 +1988,34 @@ function loadCDGHist(){
       });
     });
   });
+}
+
+function updateLockBadges() {
+  if(!teorico[current]) return;
+  var items=teorico[current].items||[];
+  var myName=currentUser?currentUser.name:'';
+  for(var i=0;i<items.length;i++){
+    var key=current+':'+i;
+    var lock=window.serverLocks[key];
+    var fi=document.getElementById('fi'+i);
+    var da=document.getElementById('da'+i);
+    if(!fi) continue;
+    var parent=fi.parentNode; if(!parent) continue;
+    var old=parent.querySelector('.lk'); if(old) old.parentNode.removeChild(old);
+    if(lock && lock.user!==myName){
+      fi.disabled=true; fi.style.background='#fffef0'; fi.style.borderColor='#e0c96e';
+      if(da) da.disabled=true;
+      var badge=document.createElement('div');
+      badge.className='lk'; badge.style.cssText='font-size:.68rem;color:#e67e22;margin-top:2px';
+      badge.textContent='🔒 '+lock.user+' contando...';
+      parent.appendChild(badge);
+    } else if(lock && lock.user===myName){
+      fi.style.borderColor='#1e7e34'; fi.style.borderWidth='2px'; fi.disabled=false;
+    } else {
+      fi.disabled=false; fi.style.background=''; fi.style.borderColor=''; fi.style.borderWidth='';
+      if(da) da.disabled=false;
+    }
+  }
 }
 </script>
 
