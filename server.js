@@ -121,7 +121,7 @@ function scheduleSave() {
         version:      state.version
       });
     } catch(e) { console.log('Save error:', e.message); }
-  }, 1000); // save 1s after last change
+  }, 200); // save 200ms after last change
 }
 
 function resetIfNewDay() {
@@ -323,7 +323,12 @@ app.post('/api/conteo/field', (req, res) => {
     lastAt:   Date.now()
   };
   state.version++;
-  scheduleSave();
+  // Save immediately to Supabase — don't wait for debounce
+  dbSet('daily_state', {
+    teorico:state.teorico, fisico:state.fisico,
+    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
+    cdg:state.cdg, date:state.date, version:state.version
+  }).catch(e=>console.log('Immediate save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
 
