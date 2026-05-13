@@ -1360,7 +1360,12 @@ document.getElementById('btn-self-assign').addEventListener('click',function(){
   if(asignaciones[current].indexOf(currentUser.name)<0){
     asignaciones[current].push(currentUser.name);
     addHist('Se registró en '+current);
-    scheduleSave();
+    // Send to server immediately so all devices see it
+    fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cont:current,name:currentUser.name,action:'self',usuario:currentUser.name})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok){lastVersion=d.version;pollNow();}})
+      .catch(function(e){console.warn('self-assign error:',e);});
   }
   document.getElementById('self-assign-wrap').style.display='none';
   flashMsg('status-bar','ok','📋 Registrado en '+current);
