@@ -883,6 +883,18 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
 document.getElementById('btn-logout').addEventListener('click',function(){
   if(!confirm('¿Cerrar sesión?'))return;
   currentUser=null;
+  // Reset ALL role-specific UI before login screen
+  var tabAsign = document.getElementById('tab-btn-asign');
+  if(tabAsign) tabAsign.style.display='none';
+  var onlineBar = document.getElementById('online-bar');
+  if(onlineBar) onlineBar.style.display='none';
+  var tabAsignContent = document.getElementById('tab-asign');
+  if(tabAsignContent) tabAsignContent.style.display='none';
+  // Reset to conteo tab
+  var tbConteo = document.getElementById('tab-btn-conteo');
+  if(tbConteo) tbConteo.classList.add('on');
+  var tbAsignBtn = document.getElementById('tab-btn-asign');
+  if(tbAsignBtn) tbAsignBtn.classList.remove('on');
   document.getElementById('main-wrap').style.display='none';
   document.getElementById('pg-login').style.display='flex';
   document.getElementById('login-name-sel').value='';
@@ -897,9 +909,20 @@ function afterLogin(){
   _pageStack=[];
   navTo('pg-menu','📦 Conteo de Inventario');
   // Si ya hay teórico cargado, mostrar botones activos
+  var tabAsignEl = document.getElementById('tab-btn-asign');
+  var onlineBarEl = document.getElementById('online-bar');
   if(isSup()){
-    document.getElementById('tab-btn-asign').style.display='';
-    document.getElementById('online-bar').style.display='';
+    if(tabAsignEl)  tabAsignEl.style.display  = '';
+    if(onlineBarEl) onlineBarEl.style.display = '';
+  } else {
+    // Contador: explicitly hide supervisor-only UI
+    if(tabAsignEl)  tabAsignEl.style.display  = 'none';
+    if(onlineBarEl) onlineBarEl.style.display = 'none';
+    // Switch to conteo tab if on asign
+    if(document.getElementById('tab-asign') &&
+       document.getElementById('tab-asign').style.display !== 'none') {
+      if(typeof switchTab === 'function') switchTab('conteo');
+    }
   }
   // Ping propio
   heartbeat();
