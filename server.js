@@ -430,7 +430,16 @@ function findCol(hdr,terms){
 }
 function mergeSheet(rows,type){
   if(!rows||rows.length<2)return 0;
-  const hdr=rows[0].map(h=>norm(h));
+  // Find actual header row (contains 'sku' or 'numero')
+  let hdrRowIdx = 0;
+  for(let ri=0;ri<Math.min(rows.length,10);ri++){
+    const r=rows[ri].map(h=>norm(h));
+    if(r.some(h=>h==='sku'||h.includes('sku'))||r.some(h=>h==='numero'||h==='número')){
+      hdrRowIdx=ri; break;
+    }
+  }
+  const hdr=rows[hdrRowIdx].map(h=>norm(h));
+  const dataRows=rows.slice(hdrRowIdx+1);
   const colCont=findCol(hdr,['numero','número']);
   const colSku=findCol(hdr,['sku']);
   const colQty=findCol(hdr,['cant.','cant','cantidad']);
@@ -450,7 +459,7 @@ function mergeSheet(rows,type){
     cUnidad:findCol(hdr,['unidad']),cUnidades:findCol(hdr,['unidades']),cDestino:findCol(hdr,['destino'])
   };
   const newConts={};
-  rows.slice(1).filter(r=>r.some(c=>String(c).trim()!=='')).forEach(row=>{
+  dataRows.filter(r=>r&&r.some(c=>String(c).trim()!=='')).forEach(row=>{
     const cont=String(row[colCont]||'').trim();if(!cont)return;
     if(!newConts[cont])newConts[cont]=[];
     newConts[cont].push({sku:String(row[colSku]||'').trim(),desc:String(row[colDesc]||'').trim(),
