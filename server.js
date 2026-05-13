@@ -100,6 +100,12 @@ async function loadState() {
     } else {
       console.log('No saved state found — starting fresh');
     }
+    // Also load costos
+    const savedCostos = await dbGet('costos_state');
+    if(savedCostos && savedCostos.costos) {
+      state.costos = savedCostos.costos;
+      console.log('Costos restored:', Object.keys(state.costos).length, 'SKUs');
+    }
   } catch(e) {
     console.log('Could not load from Supabase:', e.message);
   }
@@ -293,6 +299,18 @@ app.post('/api/costos', upload.single('file'), (req,res) => {
     res.json({ok:true,count:cnt});
   } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
+// Save pre-processed costos from client
+app.post('/api/costos-save', (req,res) => {
+  const { costos: c } = req.body;
+  if(c && Object.keys(c).length > 0) {
+    state.costos = c;
+    dbSet('costos_state', {costos: c}).catch(e=>console.log('Costos save error:',e.message));
+    res.json({ok:true, count:Object.keys(c).length});
+  } else {
+    res.json({ok:false});
+  }
+});
+
 app.get('/api/costos',(req,res)=>res.json(state.costos));
 
 // ── Field locking ─────────────────────────────────────────────────────────
