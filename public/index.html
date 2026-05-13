@@ -505,13 +505,42 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
       <!-- TAB CONTEO -->
       <div id="tab-conteo">
+        <!-- Summary card -->
+        <div id="summary-card" style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:.875rem 1rem;margin-bottom:.875rem;display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.5rem">
+            <div>
+              <span style="font-size:.75rem;color:#888">Contenedor</span>
+              <div style="font-size:1rem;font-weight:600" id="sc-cont">—</div>
+            </div>
+            <div><span style="font-size:.75rem;color:#888">Tipo</span><div style="font-size:.85rem" id="sc-tipo">—</div></div>
+            <div><span style="font-size:.75rem;color:#888">Puerta</span><div style="font-size:.85rem" id="sc-puerta">—</div></div>
+            <div><span style="font-size:.75rem;color:#888">Participantes</span><div style="font-size:.85rem" id="sc-partic">—</div></div>
+          </div>
+          <div style="display:flex;gap:1rem;font-size:.82rem;flex-wrap:wrap">
+            <span>📋 Líneas: <strong id="sc-lineas">0</strong></span>
+            <span>✅ Contadas: <strong id="sc-contadas" style="color:#1e7e34">0</strong></span>
+            <span>⏳ Pendientes: <strong id="sc-pendientes" style="color:#b7770d">0</strong></span>
+            <span>⚠️ Diferencias: <strong id="sc-diffs" style="color:#c0392b">0</strong></span>
+          </div>
+        </div>
+
         <div class="sel-wrap">
           <label>Contenedor:</label>
           <select id="sel-cont"></select>
+          <label style="margin-left:8px;font-size:.82rem;color:#666">Puerta:</label>
+          <select id="sel-puerta" style="padding:7px 10px;font-size:.85rem;border:1px solid #ccc;border-radius:8px;min-height:40px;-webkit-appearance:none;background:#fff">
+            <option value="">— Puerta —</option>
+            <option>L001.001</option><option>L002.001</option><option>L003.001</option>
+            <option>L004.001</option><option>L005.001</option><option>L006.001</option>
+            <option>L007.001</option><option>L008.001</option><option>L009.001</option>
+            <option>L010.001</option><option>L011.001</option><option>L012.001</option>
+            <option>L013.001</option><option>L014.001</option><option>L015.001</option>
+          </select>
           <span class="prog" id="prog-text"></span>
           <span id="self-assign-wrap" style="display:none">
             <button class="btn btn-sm btn-blue" id="btn-self-assign">📋 Registrarme en este conteo</button>
           </span>
+          <button id="btn-open-chat" class="btn btn-sm" style="margin-left:auto;min-height:38px;padding:0 12px">💬 Chat</button>
         </div>
         <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <input id="sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..."
@@ -598,12 +627,44 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div class="field-row"><label>Causa</label><textarea class="field-inp" id="hall-causa" rows="2" placeholder="Causa raíz..."></textarea></div>
     <div class="field-row"><label>Efecto</label><textarea class="field-inp" id="hall-efecto" rows="2" placeholder="Impacto en la operación..."></textarea></div>
     <div class="field-row"><label>Recomendación</label><textarea class="field-inp" id="hall-recomendacion" rows="2" placeholder="Acción correctiva..."></textarea></div>
+    <!-- Foto hallazgo -->
+    <div class="field-row" style="margin-top:.5rem">
+      <label>Foto (opcional)</label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button id="btn-hall-foto" class="btn btn-sm" style="min-height:38px">📷 Tomar / Subir foto</button>
+        <input type="file" id="hall-foto-input" accept="image/*" capture="environment" style="display:none">
+        <span id="hall-foto-status" style="font-size:.78rem;color:#888"></span>
+      </div>
+      <div id="hall-foto-preview" style="margin-top:6px;display:none">
+        <img id="hall-foto-img" style="max-width:100%;max-height:150px;border-radius:8px;border:1px solid #e0e0e0">
+        <button id="btn-hall-foto-del" style="display:block;margin-top:4px;font-size:.75rem;color:#c0392b;background:none;border:none;cursor:pointer">× Eliminar foto</button>
+      </div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem">
       <button class="btn" id="btn-hall-cancel" style="flex:1">Cancelar</button>
+      <button class="btn btn-warn" id="btn-hall-mod" style="flex:1;display:none">✏️ Modificar</button>
       <button class="btn btn-dark" id="btn-hall-save" style="flex:2">Guardar hallazgo</button>
     </div>
   </div>
 </div>
+<!-- CHAT MODAL -->
+<div id="modal-chat" class="modal-bg">
+  <div class="modal-box" style="max-width:420px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3 style="margin:0">💬 Chat del equipo</h3>
+      <button id="btn-chat-close" style="background:none;border:none;cursor:pointer;font-size:1.2rem;min-height:44px;min-width:44px">×</button>
+    </div>
+    <div id="chat-messages" style="height:220px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;padding:8px;background:#f9f9f7;margin-bottom:.75rem;font-size:.83rem">
+      <p style="color:#aaa;text-align:center;padding:1rem">Sin mensajes recientes</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="200"
+        style="flex:1;padding:9px 12px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none">
+      <button id="btn-chat-send" class="btn btn-dark" style="min-height:42px;padding:0 14px">Enviar</button>
+    </div>
+  </div>
+</div>
+
 
 <script>
 'use strict';
@@ -1954,5 +2015,281 @@ document.getElementById('sel-cont').addEventListener('change', function() {
 });
 </script>
 
+
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════
+// FEATURE 1: CHAT
+// ══════════════════════════════════════════════════════════════════════════
+var chatMessages = [];
+var CHAT_TTL = 5 * 60 * 1000; // 5 minutes
+
+function sendChat() {
+  var inp = document.getElementById('chat-input');
+  var msg = inp ? inp.value.trim() : '';
+  if(!msg || !currentUser) return;
+  var entry = {id: makeId(), user: currentUser.name, msg: msg, ts: Date.now()};
+  chatMessages.push(entry);
+  inp.value = '';
+  renderChat();
+  // Save to server
+  fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(entry)}).catch(function(){});
+}
+
+function renderChat() {
+  var div = document.getElementById('chat-messages'); if(!div) return;
+  var now = Date.now();
+  // Remove expired
+  chatMessages = chatMessages.filter(function(m){ return now - m.ts < CHAT_TTL; });
+  if(!chatMessages.length) {
+    div.innerHTML = '<p style="color:#aaa;text-align:center;padding:1rem">Sin mensajes recientes</p>';
+    return;
+  }
+  div.innerHTML = chatMessages.map(function(m) {
+    var ago = Math.round((now - m.ts)/1000);
+    var agoStr = ago < 60 ? ago+'s' : Math.round(ago/60)+'min';
+    var isMe = currentUser && m.user === currentUser.name;
+    return '<div style="margin-bottom:6px;text-align:'+(isMe?'right':'left')+'">'
+      +'<span style="font-size:.75rem;color:#888">'+escH(m.user)+' · '+agoStr+'</span>'
+      +'<div style="display:inline-block;background:'+(isMe?'#1a1a1a':'#f0f0ee')+';color:'+(isMe?'#fff':'#1a1a1a')+';padding:5px 10px;border-radius:10px;font-size:.85rem;max-width:85%;text-align:left;margin-top:2px">'
+      +escH(m.msg)+'</div></div>';
+  }).join('');
+  div.scrollTop = div.scrollHeight;
+}
+
+document.getElementById('btn-open-chat').addEventListener('click', function() {
+  document.getElementById('modal-chat').classList.add('open');
+  renderChat();
+});
+document.getElementById('btn-chat-close').addEventListener('click', function() {
+  document.getElementById('modal-chat').classList.remove('open');
+});
+document.getElementById('btn-chat-send').addEventListener('click', sendChat);
+document.getElementById('chat-input').addEventListener('keydown', function(e) {
+  if(e.key === 'Enter') sendChat();
+});
+
+// Poll chat from server
+function syncChat(s) {
+  if(s.chat && Array.isArray(s.chat)) {
+    var now = Date.now();
+    var myIds = chatMessages.map(function(m){ return m.id; });
+    s.chat.forEach(function(m) {
+      if(myIds.indexOf(m.id) < 0 && now - m.ts < CHAT_TTL) chatMessages.push(m);
+    });
+    chatMessages = chatMessages.filter(function(m){ return now - m.ts < CHAT_TTL; });
+    var modal = document.getElementById('modal-chat');
+    if(modal && modal.classList.contains('open')) renderChat();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FEATURE 2: FOTO EN HALLAZGOS
+// ══════════════════════════════════════════════════════════════════════════
+var hallFotoBase64 = null;
+
+document.getElementById('btn-hall-foto').addEventListener('click', function() {
+  document.getElementById('hall-foto-input').click();
+});
+
+document.getElementById('hall-foto-input').addEventListener('change', function() {
+  var file = this.files[0]; if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    hallFotoBase64 = e.target.result;
+    document.getElementById('hall-foto-img').src = hallFotoBase64;
+    document.getElementById('hall-foto-preview').style.display = '';
+    document.getElementById('hall-foto-status').textContent = '✓ ' + file.name;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('btn-hall-foto-del').addEventListener('click', function() {
+  hallFotoBase64 = null;
+  document.getElementById('hall-foto-preview').style.display = 'none';
+  document.getElementById('hall-foto-status').textContent = '';
+  document.getElementById('hall-foto-input').value = '';
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FEATURE 3: MODIFICAR HALLAZGO
+// ══════════════════════════════════════════════════════════════════════════
+var editingHallazgoId = null;
+
+function openHallazgoModal(hallazgoId) {
+  editingHallazgoId = hallazgoId || null;
+  var h = hallazgoId ? hallazgos.find(function(x){ return x.id === hallazgoId; }) : null;
+  document.getElementById('hall-cont-name').textContent = current || '—';
+  document.getElementById('hall-input').value        = h ? (h.quePaso||'') : '';
+  document.getElementById('hall-condicion').value    = h ? (h.condicion||'') : '';
+  document.getElementById('hall-criterio').value     = h ? (h.criterio||'') : '';
+  document.getElementById('hall-causa').value        = h ? (h.causa||'') : '';
+  document.getElementById('hall-efecto').value       = h ? (h.efecto||'') : '';
+  document.getElementById('hall-recomendacion').value= h ? (h.recomendacion||'') : '';
+  hallFotoBase64 = h ? (h.foto||null) : null;
+  var prev = document.getElementById('hall-foto-preview');
+  var img  = document.getElementById('hall-foto-img');
+  if(hallFotoBase64) {
+    img.src = hallFotoBase64;
+    prev.style.display = '';
+  } else {
+    prev.style.display = 'none';
+  }
+  document.getElementById('hall-foto-status').textContent = '';
+  var saveBtn = document.getElementById('btn-hall-save');
+  var modBtn  = document.getElementById('btn-hall-mod');
+  if(h) {
+    saveBtn.textContent = '💾 Guardar cambios';
+    modBtn.style.display = '';
+  } else {
+    saveBtn.textContent = 'Guardar hallazgo';
+    modBtn.style.display = 'none';
+  }
+  document.getElementById('modal-hallazgo').classList.add('open');
+}
+
+// Override btn-hallazgo to use new function
+document.getElementById('btn-hallazgo').removeEventListener('click', arguments[0]);
+document.getElementById('btn-hallazgo').addEventListener('click', function() {
+  openHallazgoModal(null);
+});
+
+// Patch btn-hall-save to include foto + edit support
+var _origHallSave = document.getElementById('btn-hall-save').onclick;
+document.getElementById('btn-hall-save').addEventListener('click', function() {
+  var desc = document.getElementById('hall-input').value.trim();
+  if(!desc){ alert('Describe qué pasó.'); return; }
+  var now = new Date().toLocaleString('es');
+  if(editingHallazgoId) {
+    // Edit existing
+    var idx = hallazgos.findIndex(function(x){ return x.id === editingHallazgoId; });
+    if(idx >= 0) {
+      hallazgos[idx].quePaso       = desc;
+      hallazgos[idx].condicion     = document.getElementById('hall-condicion').value.trim();
+      hallazgos[idx].criterio      = document.getElementById('hall-criterio').value.trim();
+      hallazgos[idx].causa         = document.getElementById('hall-causa').value.trim();
+      hallazgos[idx].efecto        = document.getElementById('hall-efecto').value.trim();
+      hallazgos[idx].recomendacion = document.getElementById('hall-recomendacion').value.trim();
+      hallazgos[idx].foto          = hallFotoBase64;
+      hallazgos[idx].modificadoPor = currentUser.name;
+      hallazgos[idx].modificadoTs  = now;
+    }
+    flashMsg('status-bar','ok','✏️ Hallazgo modificado.');
+  } else {
+    // New hallazgo
+    hallazgos.push({
+      id: makeId(), cont: current, quePaso: desc,
+      condicion:     document.getElementById('hall-condicion').value.trim(),
+      criterio:      document.getElementById('hall-criterio').value.trim(),
+      causa:         document.getElementById('hall-causa').value.trim(),
+      efecto:        document.getElementById('hall-efecto').value.trim(),
+      recomendacion: document.getElementById('hall-recomendacion').value.trim(),
+      foto:          hallFotoBase64,
+      autor:         currentUser.name,
+      ts:            now
+    });
+    flashMsg('status-bar','ok','✅ Hallazgo guardado.');
+  }
+  addHist((editingHallazgoId?'Modificó':'Registró')+' hallazgo en '+current);
+  scheduleSave();
+  document.getElementById('modal-hallazgo').classList.remove('open');
+  editingHallazgoId = null;
+  if(typeof renderHallazgosList==='function') renderHallazgosList();
+}, true);
+
+// ══════════════════════════════════════════════════════════════════════════
+// FEATURE 4: PUERTA DE DESEMBARQUE
+// ══════════════════════════════════════════════════════════════════════════
+var puertas = {}; // { contId: 'L003.001' }
+
+document.getElementById('sel-puerta').addEventListener('change', function() {
+  if(!current) return;
+  puertas[current] = this.value;
+  updateSummaryCard();
+  scheduleSave();
+  fetch('/api/puerta', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cont:current, puerta:this.value, usuario:currentUser?currentUser.name:'—'})
+  }).then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;}).catch(function(){});
+});
+
+function updatePuertaSelector() {
+  var sel = document.getElementById('sel-puerta'); if(!sel) return;
+  sel.value = (current && puertas[current]) ? puertas[current] : '';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FEATURE 5: TARJETA RESUMEN
+// ══════════════════════════════════════════════════════════════════════════
+function updateSummaryCard() {
+  var card = document.getElementById('summary-card'); if(!card) return;
+  if(!current || !teorico[current]) { card.style.display='none'; return; }
+  card.style.display = '';
+  var items  = teorico[current].items || [];
+  var fis    = fisico[current] || [];
+  var tipo   = teorico[current].type || '';
+  var puerta = (puertas[current]) || '—';
+  var partic = (asignaciones[current]||[]).join(', ') || '—';
+  var contadas = 0, diffs = 0;
+  items.forEach(function(item, i) {
+    var fi = fis[i];
+    if(fi && (fi.fisico !== undefined || fi.fisico !== null)) {
+      contadas++;
+      var fv = Number(fi.fisico)||0, dv = Number(fi.daniado)||0;
+      if(fv+dv !== item.qty) diffs++;
+    }
+  });
+  document.getElementById('sc-cont').textContent    = current;
+  document.getElementById('sc-tipo').textContent    = tipo;
+  document.getElementById('sc-puerta').textContent  = puerta;
+  document.getElementById('sc-partic').textContent  = partic;
+  document.getElementById('sc-lineas').textContent  = items.length;
+  document.getElementById('sc-contadas').textContent= contadas;
+  document.getElementById('sc-pendientes').textContent = items.length - contadas;
+  document.getElementById('sc-diffs').textContent   = diffs;
+}
+
+// Patch renderConteo to update summary + puerta
+var _origRC2 = renderConteo;
+renderConteo = function() {
+  _origRC2();
+  updateSummaryCard();
+  updatePuertaSelector();
+};
+
+// Patch sel-cont change
+document.getElementById('sel-cont').addEventListener('change', function() {
+  updateSummaryCard();
+  updatePuertaSelector();
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PATCH POLL: sync chat + puertas from server
+// ══════════════════════════════════════════════════════════════════════════
+var _origPollProcess = null;
+// Extend existing pollNow to handle new state fields
+var _pollNowOrig = pollNow;
+pollNow = function() {
+  _pollNowOrig();
+};
+
+// After state merge, also sync chat + puertas
+// We patch the fetch handler indirectly by extending what happens after version change
+// Since pollNow is complex, we add a separate 3s interval for chat sync
+setInterval(function() {
+  if(!currentUser) return;
+  fetch('/api/state')
+    .then(function(r){ return r.json(); })
+    .then(function(s) {
+      if(s.chat) syncChat(s);
+      if(s.puertas) {
+        Object.assign(puertas, s.puertas);
+        updatePuertaSelector();
+        updateSummaryCard();
+      }
+    }).catch(function(){});
+}, 3000);
+
+</script>
 </body>
 </html>
