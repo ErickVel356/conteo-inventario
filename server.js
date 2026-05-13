@@ -94,11 +94,11 @@ const ACTIVE_TIMEOUT = 15000;
 async function loadState() {
   try {
     const saved = await dbGet('daily_state');
-    if(saved && saved.date === new Date().toDateString()) {
+    if(saved && saved.teorico) {
       state = { ...state, ...saved };
-      console.log('State restored from Supabase ✓');
+      console.log('State restored from Supabase ✓ date:', saved.date);
     } else {
-      console.log('New day or no saved state — starting fresh');
+      console.log('No saved state found — starting fresh');
     }
   } catch(e) {
     console.log('Could not load from Supabase:', e.message);
@@ -125,12 +125,8 @@ function scheduleSave() {
 }
 
 function resetIfNewDay() {
-  const today = new Date().toDateString();
-  if(state.date !== today) {
-    state = { teorico:{}, fisico:{}, asignaciones:{}, historial:[],
-              costos:{}, cdg:{}, date:today, version:0 };
-    scheduleSave();
-  }
+  // No-op: day reset is controlled by client "Nuevo día" button only
+  // This prevents UTC timezone mismatch from wiping Guatemala data
 }
 
 function addHistorial(usuario, accion, detalle) {
