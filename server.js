@@ -102,7 +102,8 @@ async function loadState() {
     }
     // Load puertas and hallazgos
     if(saved && saved.puertas)   state.puertas   = saved.puertas;
-    if(saved && saved.hallazgos) state.hallazgos = saved.hallazgos;
+    if(saved && saved.hallazgos)       state.hallazgos       = saved.hallazgos;
+    if(saved && saved.conteoMetadata) state.conteoMetadata = saved.conteoMetadata;
     // Also load costos
     const savedCostos = await dbGet('costos_state');
     if(savedCostos && savedCostos.costos) {
@@ -221,7 +222,7 @@ app.post('/api/conteo', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Conteo save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -245,7 +246,7 @@ app.post('/api/asign', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Asign save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -286,12 +287,12 @@ app.post('/api/cdg/finalizar', (req,res) => {
   state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado,tipo:tipo||'CDG',fotoGral:fotoGral||null,bloqueado:bloqueado||false};
   const num=traslado||contId;
   if(!state.teorico[num]) {
-    state.teorico[num]={type:'Traslados',fromCDG:true,cdgRef:contId,
+    state.teorico[num]={type:'Traslados',fromCDG:true,cdgRef:contId,cdgValidado:true,cdgBloqueado:true,
       items:items.map(i=>({sku:i.sku,desc:i.desc,qty:i.qty,
         raw:{origen:'CDG',status:'CDG Validado',fecha:new Date().toLocaleDateString('es')}}))};
     state.fisico[num]=null;
   } else {
-    state.teorico[num].cdgValidated=true;
+    state.teorico[num].cdgValidado=true;
   }
   addHistorial(usuario,'CDG finalizado → Traslado',contId+' → '+num);
   state.version++;
@@ -338,6 +339,24 @@ app.post('/api/hallazgo', (req, res) => {
     historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
     hallazgos:state.hallazgos,date:state.date,version:state.version})
     .catch(e=>console.log('Hallazgo save:',e.message));
+  res.json({ok:true,version:state.version});
+});
+
+// Metadata (puerta, fechaIngreso, fechaFurgon, placas per container)
+app.post('/api/metadata', (req, res) => {
+  const { cont, metadata, puerta, usuario } = req.body;
+  if(!cont) return res.status(400).json({ok:false});
+  if(!state.conteoMetadata) state.conteoMetadata = {};
+  if(!state.puertas) state.puertas = {};
+  if(metadata) state.conteoMetadata[cont] = metadata;
+  if(puerta !== undefined) state.puertas[cont] = puerta;
+  addHistorial(usuario||'—', 'Metadata actualizada', cont);
+  state.version++;
+  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
+    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
+    hallazgos:state.hallazgos||[],conteoMetadata:state.conteoMetadata||{},
+    date:state.date,version:state.version})
+    .catch(e=>console.log('Metadata save:',e.message));
   res.json({ok:true,version:state.version});
 });
 
@@ -424,7 +443,7 @@ app.post('/api/conteo/field', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Immediate save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -514,7 +533,7 @@ function mergeSheet(rows,type){
   Object.keys(newConts).forEach(cont=>{
     // Don't overwrite CDG-validated containers from teorico upload
     if(state.teorico[cont]&&state.teorico[cont].fromCDG) {
-      state.teorico[cont].cdgValidated=true;
+      state.teorico[cont].cdgValidado=true;
       return;
     }
     state.teorico[cont]={items:newConts[cont],type};
