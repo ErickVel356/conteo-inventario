@@ -1685,12 +1685,17 @@ function exportExcel(){
   var filtEmb   = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
   var filtTrasl = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
 
-  // Helper: origen description
-  function getOrigenDesc(nomProv){
+  // Helper: origen description (works for both embarques and traslados)
+  function getOrigenDesc(nomProv, origenCod){
+    // Traslado: check origen code first
+    var cod = String(origenCod||'').trim();
+    if(cod === '952.006.01') return 'CDG';
+    if(cod && cod.startsWith('952')) return 'CDG';
+    // Embarque: check provider name
     var p = String(nomProv||'').toUpperCase();
     if(p.indexOf('LONGTAI')>=0||p.indexOf('CHINA')>=0) return 'Truper China';
     if(p.indexOf('TRUPER')>=0) return 'Truper México';
-    return nomProv||'';
+    return nomProv||cod||'';
   }
 
   // Helper: cobertura
@@ -1746,7 +1751,7 @@ function exportExcel(){
           var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
           var raw=item.raw||{},cU=getCosto(item.sku);
           var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
-          sct(drt,1,cont);sct(drt,2,raw.ingreso||'');sct(drt,3,raw.docSap||'');sct(drt,4,raw.fecha||'');sct(drt,5,raw.tipo||'');sct(drt,6,raw.lineas||'');sct(drt,7,raw.status||'');sct(drt,8,item.sku);sct(drt,9,item.desc);sct(drt,11,item.qty);sct(drt,12,raw.unidad||'');sct(drt,13,raw.origen||'');sct(drt,14,raw.destino||'');sct(drt,15,raw.origen||'');sct(drt,16,cm3.fechaIngreso||'');sct(drt,17,cm3.fechaFurgon||'');sct(drt,18,getCobertura(fo));sct(drt,19,puerta3);sct(drt,20,cm3.placas||'');sct(drt,21,tot!==null?tot:'');sct(drt,22,diff!==null?diff:'');sct(drt,23,diff!==null?Math.abs(diff):'');sct(drt,24,fU||'');sct(drt,25,sU||'');sct(drt,26,dv||'');sct(drt,28,eva);sct(drt,29,cU||'');sct(drt,30,cU?cU*item.qty:'');sct(drt,31,tot!==null&&cU?cU*tot:'');sct(drt,32,diff!==null&&cU?cU*diff:'');sct(drt,33,diff!==null&&cU?Math.abs(cU*diff):'');sct(drt,34,cU?cU*fU:'');sct(drt,35,cU?cU*sU:'');sct(drt,36,cU?cU*dv:'');sct(drt,43,fo&&fo.quien?fo.quien:userName);sct(drt,44,ds2.replace(/_/g,'-'));
+          sct(drt,1,cont);sct(drt,2,raw.ingreso||'');sct(drt,3,raw.docSap||'');sct(drt,4,raw.fecha||'');sct(drt,5,raw.tipo||'');sct(drt,6,raw.lineas||'');sct(drt,7,raw.status||'');sct(drt,8,item.sku);sct(drt,9,item.desc);sct(drt,11,item.qty);sct(drt,12,raw.unidad||'');sct(drt,13,raw.origen||'');sct(drt,14,raw.destino||'');sct(drt,15,getOrigenDesc('',raw.origen||''));sct(drt,16,cm3.fechaIngreso||'');sct(drt,17,cm3.fechaFurgon||'');sct(drt,18,getCobertura(fo));sct(drt,19,puerta3);sct(drt,20,cm3.placas||'');sct(drt,21,tot!==null?tot:'');sct(drt,22,diff!==null?diff:'');sct(drt,23,diff!==null?Math.abs(diff):'');sct(drt,24,fU||'');sct(drt,25,sU||'');sct(drt,26,dv||'');sct(drt,28,eva);sct(drt,29,cU||'');sct(drt,30,cU?cU*item.qty:'');sct(drt,31,tot!==null&&cU?cU*tot:'');sct(drt,32,diff!==null&&cU?cU*diff:'');sct(drt,33,diff!==null&&cU?Math.abs(cU*diff):'');sct(drt,34,cU?cU*fU:'');sct(drt,35,cU?cU*sU:'');sct(drt,36,cU?cU*dv:'');sct(drt,43,fo&&fo.quien?fo.quien:userName);sct(drt,44,ds2.replace(/_/g,'-'));
           drt++;
         });
       });
@@ -1934,7 +1939,7 @@ function exportExcel(){
         sc(dr,8,item.sku);sc(dr,9,item.desc);
         sc(dr,11,item.qty);sc(dr,12,raw.unidad||'');
         sc(dr,13,raw.origen||'');sc(dr,14,raw.destino||'');
-        sc(dr,15,raw.origen||'');
+        sc(dr,15,getOrigenDesc('',raw.origen||''));
         sc(dr,16,fechaIngreso);sc(dr,17,fechaFurgon);
         sc(dr,18,getCobertura(fiObj));
         sc(dr,19,puerta);sc(dr,20,placas);
