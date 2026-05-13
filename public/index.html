@@ -1448,10 +1448,9 @@ function loadCostFile(fileObj){
   var cs = document.getElementById('cost-status');
   if(cs){ cs.textContent='Procesando...'; cs.style.color='#888'; }
   var reader = new FileReader();
-  reader.onload = function(ev){
+  reader.onload = async function(ev){
     try{
-      var data = new Uint8Array(ev.target.result);
-      var wb = XLSX.read(data, {type:'array'});
+      var wb = await XLSX.readAsync(ev.target.result);
       var sheetName = wb.SheetNames[0];
       for(var si=0;si<wb.SheetNames.length;si++){
         var nl=wb.SheetNames[si].toLowerCase();
@@ -1463,7 +1462,7 @@ function loadCostFile(fileObj){
       var colSku  = findCol(hdr,['articulo','artículo','sku','codigo','código']);
       var colCost = findCol(hdr,['costo promedio','costo_promedio','precio promedio','costo']);
       if(colSku<0||colCost<0){
-        if(cs)cs.textContent='✗ No se encontraron columnas SKU/Costo';
+        if(cs)cs.textContent='✗ No se encontraron columnas SKU/Costo. Cols: '+rows[0].slice(0,6).join(' | ');
         return;
       }
       var raw_costos={};
@@ -1485,12 +1484,11 @@ function loadCostFile(fileObj){
       if(cs){cs.textContent='✓ '+name+' — '+count+' SKUs';cs.style.color='#1e7e34';}
       var btn=document.getElementById('btn-load-cost'); if(btn) btn.textContent='Actualizar costos';
       flashMsg('status-bar','ok','✓ Costos cargados: '+count+' SKUs');
-      // Save costos to server (small dict, safe to upload)
       fetch('/api/costos-save',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({costos:costos})})
-        .catch(function(){});
+        body:JSON.stringify({costos:costos})}).catch(function(){});
     }catch(err){
       if(cs)cs.textContent='✗ Error: '+err.message;
+      console.error('Cost load error:', err);
     }
   };
   reader.readAsArrayBuffer(fileObj);
