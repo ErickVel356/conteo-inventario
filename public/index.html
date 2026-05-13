@@ -1088,13 +1088,51 @@ function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
     fisico[current][idx]={fisico:fv,daniado:dv,quien:currentUser.name,ts:nowStr(),calcExpr:calcExpr!==null?calcExpr:(prev.calcExpr||'')};
     addHist('Editó físico/dañado en '+current+' (fila '+(idx+1)+')');
     heartbeat();
-    // Save directly to server immediately
-    fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,usuario:currentUser?currentUser.name:'—'})})
+    // Always save directly to Supabase first
+    saveDirectToSupabase();
+    // Also save to server
+    var _payload = JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,usuario:currentUser?currentUser.name:'—'});
+    fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},body:_payload})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(e){console.warn('field save error:',e);});
+      .catch(function(e){
+        // Server down - save directly to Supabase
+        console.warn('Server down, saving directly to Supabase');
+        saveDirectToSupabase();
+      });
   },800);
+}
+
+// Direct Supabase save (bypass server when it's down)
+var SUPABASE_URL = 'https://uzwhcoztwlxkhrmyeybe.supabase.co';
+var SUPABASE_KEY = 'sb_secret_rzgRqwb3PlSYBZRN8AapEw_JLJ1_JYu';
+var _supaTimer = null;
+
+function saveDirectToSupabase() {
+  if(_supaTimer) clearTimeout(_supaTimer);
+  _supaTimer = setTimeout(function(){
+    var payload = JSON.stringify({
+      teorico: teorico, fisico: fisico,
+      asignaciones: asignaciones,
+      historial: (historial||[]).slice(-50),
+      date: 'Tue May 12 2026',
+      version: (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
+    });
+    fetch(SUPABASE_URL + '/rest/v1/app_state', {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({key: 'daily_state', value: payload})
+    }).then(function(){
+      console.log('Direct Supabase save OK');
+    }).catch(function(e){
+      console.warn('Direct Supabase save failed:', e);
+    });
+  }, 500);
 }
 
 function updateTotDiff(idx){
