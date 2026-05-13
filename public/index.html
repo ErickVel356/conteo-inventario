@@ -595,7 +595,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <label style="margin-left:8px;font-size:.82rem;color:#666">Puerta:</label>
           <select id="sel-puerta" style="padding:7px 10px;font-size:.85rem;border:1px solid #ccc;border-radius:8px;min-height:40px;-webkit-appearance:none;background:#fff">
             <option value="">— Puerta —</option>
-            <optgroup label="── Embarques (L) ──">
+            <optgroup id="puerta-grp-L" label="── Embarques (L) ──">
             <option>L001.001</option>
             <option>L002.001</option>
             <option>L003.001</option>
@@ -617,7 +617,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <option>L019.001</option>
             <option>L020.001</option>
             </optgroup>
-            <optgroup label="── Traslados (I) ──">
+            <optgroup id="puerta-grp-I" label="── Traslados (I) ──">
             <option>I001.001</option>
             <option>I002.001</option>
             <option>I003.001</option>
@@ -638,8 +638,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <option>I018.001</option>
             <option>I019.001</option>
             <option>I020.001</option>
-            </optgroup>
-          </select>
+            </optgroup></select>
           <span class="prog" id="prog-text"></span>
           <!-- Conteo metadata -->
           <div id="conteo-meta-wrap" style="display:none;width:100%;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2223,9 +2222,11 @@ function pollNow() {
       // Merge server state into local
       if(s.teorico && Object.keys(s.teorico).length > 0) teorico = s.teorico;
       if(s.fisico)       fisico       = s.fisico;
-      if(s.asignaciones) asignaciones = s.asignaciones;
-      if(s.historial)    historial    = s.historial;
-      if(s.hallazgos)    hallazgos    = s.hallazgos;
+      if(s.asignaciones)    asignaciones    = s.asignaciones;
+      if(s.historial)       historial       = s.historial;
+      if(s.hallazgos)       hallazgos       = s.hallazgos;
+      if(s.conteoMetadata)  conteoMetadata  = s.conteoMetadata;
+      if(s.puertas)         Object.assign(puertas, s.puertas);
 
       rebuildContsList();
       updateSubmenúCounts();
@@ -2526,10 +2527,19 @@ function saveMetadata() {
   var fi = document.getElementById('inp-fecha-ingreso');
   var ff = document.getElementById('inp-fecha-furgon');
   var pl = document.getElementById('inp-placas');
+  var pv = document.getElementById('sel-puerta');
   if(fi) conteoMetadata[current].fechaIngreso = fi.value;
   if(ff) conteoMetadata[current].fechaFurgon  = ff.value;
   if(pl) conteoMetadata[current].placas        = pl.value;
+  if(pv) puertas[current] = pv.value;
   updateSummaryCard();
+  // Save to server immediately
+  fetch('/api/metadata',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current, metadata:conteoMetadata[current],
+      puerta:pv?pv.value:'', usuario:currentUser?currentUser.name:'—'})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.ok)lastVersion=d.version;})
+    .catch(function(){saveDirectToSupabase();});
 }
 
 ['inp-fecha-ingreso','inp-fecha-furgon','inp-placas'].forEach(function(id){
@@ -2792,5 +2802,98 @@ function showCDGHist(tipo) {
 })();
 </script>
 
+
+// CDG Hallazgo Modal
+(function(){
+  var btn = document.getElementById('btn-cdg-hallazgo');
+  var modal = document.getElementById('modal-cdg-hallazgo');
+  var btnCancel = document.getElementById('btn-cdg-hall-cancel');
+  var btnSave   = document.getElementById('btn-cdg-hall-save');
+  if(!btn||!modal) return;
+
+  btn.addEventListener('click', function(){
+    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    var el = document.getElementById('cdg-hall-cont-name');
+    if(el) el.textContent = u25.trim()||'CDG';
+    // Set today as default date
+    var fechaInp = document.getElementById('cdg-hall-fecha');
+    if(fechaInp && !fechaInp.value) {
+      var now = new Date();
+      fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+    }
+    modal.classList.add('open');
+  });
+
+  if(btnCancel) btnCancel.addEventListener('click', function(){ modal.classList.remove('open'); });
+
+  if(btnSave) btnSave.addEventListener('click', function(){
+    var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
+    var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
+    var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
+    var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
+    var u25    = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    if(!desc){ alert('Describe el hallazgo.'); return; }
+    if(!turno){ alert('Selecciona el turno.'); return; }
+    var hall = {
+      id: makeId(), cont: u25.trim(), tipo: 'CDG',
+      fecha: fecha, turno: turno, area: area, desc: desc,
+      autor: currentUser ? currentUser.name : '—',
+      ts: new Date().toLocaleString('es')
+    };
+    hallazgos.push(hall);
+    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({hallazgo:hall, action:'add'})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok)lastVersion=d.version;})
+      .catch(function(){});
+    modal.classList.remove('open');
+    document.getElementById('cdg-hall-desc').value='';
+    document.getElementById('cdg-hall-turno').value='';
+    document.getElementById('cdg-hall-area').value='';
+    flashMsg('status-bar','ok','✅ Hallazgo CDG guardado.');
+  });
+})();
+
 </body>
 </html>
+
+<!-- CDG HALLAZGO MODAL -->
+<div id="modal-cdg-hallazgo" class="modal-bg">
+  <div class="modal-box">
+    <h3>⚠ Crear hallazgo CDG</h3>
+    <p style="font-size:.82rem;color:#888;margin-bottom:.75rem">Conteo: <strong id="cdg-hall-cont-name"></strong></p>
+    <div class="field-row">
+      <label>Fecha</label>
+      <input type="date" class="field-inp" id="cdg-hall-fecha">
+    </div>
+    <div class="field-row">
+      <label>Turno de trabajo</label>
+      <select class="field-inp" id="cdg-hall-turno">
+        <option value="">— Selecciona —</option>
+        <option value="Mañana">1. Mañana</option>
+        <option value="Tarde">2. Tarde</option>
+        <option value="Noche">3. Noche</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <label>Área o proceso</label>
+      <select class="field-inp" id="cdg-hall-area">
+        <option value="">— Selecciona —</option>
+        <option value="Recepción de mercadería">1. Recepción de mercadería</option>
+        <option value="Bodega/Almacenamiento">2. Bodega/Almacenamiento</option>
+        <option value="Desconsolidación/Conteo">3. Desconsolidación/Conteo</option>
+        <option value="Documentación/Aduana">4. Documentación/Aduana</option>
+        <option value="Transporte interno">5. Transporte interno</option>
+        <option value="Otras">6. Otras</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <label>Descripción del hallazgo</label>
+      <textarea class="field-inp" id="cdg-hall-desc" rows="3" placeholder="Describe el hallazgo..."></textarea>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem">
+      <button class="btn" id="btn-cdg-hall-cancel" style="flex:1">Cancelar</button>
+      <button class="btn btn-dark" id="btn-cdg-hall-save" style="flex:2">Guardar hallazgo</button>
+    </div>
+  </div>
+</div>
