@@ -530,11 +530,50 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <label style="margin-left:8px;font-size:.82rem;color:#666">Puerta:</label>
           <select id="sel-puerta" style="padding:7px 10px;font-size:.85rem;border:1px solid #ccc;border-radius:8px;min-height:40px;-webkit-appearance:none;background:#fff">
             <option value="">— Puerta —</option>
-            <option>L001.001</option><option>L002.001</option><option>L003.001</option>
-            <option>L004.001</option><option>L005.001</option><option>L006.001</option>
-            <option>L007.001</option><option>L008.001</option><option>L009.001</option>
-            <option>L010.001</option><option>L011.001</option><option>L012.001</option>
-            <option>L013.001</option><option>L014.001</option><option>L015.001</option>
+            <optgroup label="── Embarques (L) ──">
+            <option>L001.001</option>
+            <option>L002.001</option>
+            <option>L003.001</option>
+            <option>L004.001</option>
+            <option>L005.001</option>
+            <option>L006.001</option>
+            <option>L007.001</option>
+            <option>L008.001</option>
+            <option>L009.001</option>
+            <option>L010.001</option>
+            <option>L011.001</option>
+            <option>L012.001</option>
+            <option>L013.001</option>
+            <option>L014.001</option>
+            <option>L015.001</option>
+            <option>L016.001</option>
+            <option>L017.001</option>
+            <option>L018.001</option>
+            <option>L019.001</option>
+            <option>L020.001</option>
+            </optgroup>
+            <optgroup label="── Traslados (I) ──">
+            <option>I001.001</option>
+            <option>I002.001</option>
+            <option>I003.001</option>
+            <option>I004.001</option>
+            <option>I005.001</option>
+            <option>I006.001</option>
+            <option>I007.001</option>
+            <option>I008.001</option>
+            <option>I009.001</option>
+            <option>I010.001</option>
+            <option>I011.001</option>
+            <option>I012.001</option>
+            <option>I013.001</option>
+            <option>I014.001</option>
+            <option>I015.001</option>
+            <option>I016.001</option>
+            <option>I017.001</option>
+            <option>I018.001</option>
+            <option>I019.001</option>
+            <option>I020.001</option>
+            </optgroup>
           </select>
           <span class="prog" id="prog-text"></span>
           <span id="self-assign-wrap" style="display:none">
@@ -1337,8 +1376,17 @@ function renderHallazgosList(){
       +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+escH(hh.causa)+'</p>':'')
       +(hh.efecto?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Efecto:</strong> '+escH(hh.efecto)+'</p>':'')
       +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+escH(hh.recomendacion)+'</p>':'')
+      +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
+      +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs)+'</p>':'')
+      +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
       +'</div>';
   }).join('');
+  // Wire edit buttons
+  list.querySelectorAll('.edit-hall-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      openHallazgoModal(this.dataset.id);
+    });
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2075,11 +2123,19 @@ function syncChat(s) {
   if(s.chat && Array.isArray(s.chat)) {
     var now = Date.now();
     var myIds = chatMessages.map(function(m){ return m.id; });
+    var changed = false;
     s.chat.forEach(function(m) {
-      if(myIds.indexOf(m.id) < 0 && now - m.ts < CHAT_TTL) chatMessages.push(m);
+      if(myIds.indexOf(m.id) < 0 && now - m.ts < CHAT_TTL) {
+        chatMessages.push(m);
+        changed = true;
+      }
     });
     chatMessages = chatMessages.filter(function(m){ return now - m.ts < CHAT_TTL; });
+    // Always update badge count
     var modal = document.getElementById('modal-chat');
+    var chatBtn = document.getElementById('btn-open-chat');
+    var unread = chatMessages.filter(function(m){ return m.user !== (currentUser?currentUser.name:''); }).length;
+    if(chatBtn) chatBtn.textContent = '💬 Chat' + (unread > 0 ? ' ('+unread+')' : '');
     if(modal && modal.classList.contains('open')) renderChat();
   }
 }
@@ -2150,10 +2206,7 @@ function openHallazgoModal(hallazgoId) {
 }
 
 // Override btn-hallazgo to use new function
-document.getElementById('btn-hallazgo').removeEventListener('click', arguments[0]);
-document.getElementById('btn-hallazgo').addEventListener('click', function() {
-  openHallazgoModal(null);
-});
+// btn-hallazgo already wired in main script - openHallazgoModal called via override
 
 // Patch btn-hall-save to include foto + edit support
 var _origHallSave = document.getElementById('btn-hall-save').onclick;
@@ -2244,8 +2297,8 @@ function updateSummaryCard() {
   document.getElementById('sc-puerta').textContent  = puerta;
   document.getElementById('sc-partic').textContent  = partic;
   document.getElementById('sc-lineas').textContent  = items.length;
-  document.getElementById('sc-contadas').textContent= contadas;
-  document.getElementById('sc-pendientes').textContent = items.length - contadas;
+  document.getElementById('sc-contadas').textContent= contadas + '/' + items.length;
+  document.getElementById('sc-pendientes').textContent = (items.length - contadas);
   document.getElementById('sc-diffs').textContent   = diffs;
 }
 
