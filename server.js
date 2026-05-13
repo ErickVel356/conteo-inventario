@@ -281,7 +281,7 @@ app.post('/api/cdg/unlock', (req, res) => {
 });
 
 app.post('/api/cdg/finalizar', (req,res) => {
-  const { contId, items, usuario, traslado } = req.body;
+  const { contId, items, usuario, traslado, tipo, fotoGral, bloqueado } = req.body;
   if(!contId) return res.status(400).json({ok:false});
   state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado,tipo:tipo||'CDG',fotoGral:fotoGral||null,bloqueado:bloqueado||false};
   const num=traslado||contId;
@@ -294,7 +294,11 @@ app.post('/api/cdg/finalizar', (req,res) => {
     state.teorico[num].cdgValidated=true;
   }
   addHistorial(usuario,'CDG finalizado → Traslado',contId+' → '+num);
-  state.version++; scheduleSave();
+  state.version++;
+  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
+    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
+    hallazgos:state.hallazgos||[],date:state.date,version:state.version})
+    .catch(e=>console.log('CDG final save:',e.message));
   res.json({ok:true,traslado:num,version:state.version});
 });
 
