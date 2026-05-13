@@ -576,6 +576,15 @@ textarea.field-inp{resize:vertical;min-height:72px}
             </optgroup>
           </select>
           <span class="prog" id="prog-text"></span>
+          <!-- Conteo metadata -->
+          <div id="conteo-meta-wrap" style="display:none;width:100%;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <label style="font-size:.78rem;color:#666">F. Ingreso:</label>
+            <input type="date" id="inp-fecha-ingreso" style="padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
+            <label style="font-size:.78rem;color:#666">F. Furgón:</label>
+            <input type="date" id="inp-fecha-furgon" style="padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
+            <label style="font-size:.78rem;color:#666">Placas:</label>
+            <input type="text" id="inp-placas" placeholder="ej: P-123ABC" style="width:110px;padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
+          </div>
           <span id="self-assign-wrap" style="display:none">
             <button class="btn btn-sm btn-blue" id="btn-self-assign">📋 Registrarme en este conteo</button>
           </span>
@@ -1617,70 +1626,251 @@ function setCostStatus(type,msg){
    EXPORT PT-ANALÍTICA
 ══════════════════════════════════════════════════════════════════ */
 function exportExcel(){
-  var auditor=currentUser?currentUser.name:'';
-  var cn=window.prompt('Confirmar nombre del auditor:',auditor);
-  if(cn===null)return;
-  if(cn.trim())auditor=cn.trim();
-  var today=new Date(),dateStr=today.toISOString().slice(0,10);
-  var wb=XLSX.utils.book_new();
-  var scope=(document.getElementById('export-scope')||{}).value||'all';
-  var specific=(document.getElementById('export-specific')||{}).value||'all';
+  // Build container selection
+  var scope = (document.getElementById('export-scope')||{}).value||'all';
   var filtConts;
-  if(scope==='all')filtConts=conts;
-  else if(specific&&specific!=='all')filtConts=[specific];
-  else filtConts=conts.filter(function(c){return teorico[c].type===scope;});
-  var filtEmb=filtConts.filter(function(c){return teorico[c].type==='Embarques'&&!teorico[c].cdgValidado;});
-  var filtTrasl=filtConts.filter(function(c){return teorico[c].type!=='Embarques'||teorico[c].cdgValidado;});
+  if(scope==='pick'){
+    filtConts = [];
+    document.querySelectorAll('.export-pick-cb:checked').forEach(function(cb){
+      filtConts.push(cb.value);
+    });
+    if(!filtConts.length){ alert('Selecciona al menos un contenedor.'); return; }
+  } else if(scope==='Embarques'){
+    filtConts = conts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
+  } else if(scope==='Traslados'){
+    filtConts = conts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
+  } else {
+    filtConts = conts.slice();
+  }
 
-  function buildSheet(filtList,sheetLabel,isEmb){
-    if(!filtList.length)return;
-    var ws={},rng={s:{r:0,c:0},e:{r:0,c:45}};
-    function sc(r,c,v){if(v===null||v===undefined||v==='')return;var ref=XLSX.utils.encode_cell({r:r,c:c}),t=typeof v==='number'?'n':'s';ws[ref]={v:v,t:t};if(r>rng.e.r)rng.e.r=r;if(c>rng.e.c)rng.e.c=c;}
-    sc(1,1,'Compañía');sc(1,3,'Conteo de inventario — '+sheetLabel);
-    sc(2,1,'Proceso');sc(2,3,'Recepción de producto');sc(2,42,'Elaborado por:');sc(2,44,'Fecha:');
-    sc(3,1,'Descripción PT');sc(3,3,'Conteo de inventario');sc(4,1,'Fecha');sc(4,3,dateStr);
-    var H=isEmb
-      ?['','Número de embarque','Fecha','Código Proveedor','Nombre Proveedor','Líneas','Status','# Orden Compra','SKU','Descripción','Cantidad','Ingresado','Colocado','Faltantes','Sobrantes','Dañado','Descripción origen','Status sistema','Fecha ingreso Hamilton','Fecha apertura furgón','Cobertura','Número puerta','Placas Furgón','Físico S/Auditoría','Diferencia auditoría','Diferencia ABS','Uds. faltantes S/Aud','Uds. sobrantes S/Aud','Uds. dañadas S/Aud','Uds. incompletos','Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia','Costo físico ABS','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto','Comentarios Auditoría','Comentarios Auditado','Ref. Hallazgos','Ref. Anexos','Auditado por','Fecha revisión']
-      :['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Líneas','Status','SKU','Descripción','Cantidad','Unidad','Unidades','Origen','Destino','Descripción origen','Status sistema','Fecha ingreso Hamilton','Fecha apertura furgón','Cobertura','Número puerta','Placas Furgón','Físico S/Auditoría','Diferencia auditoría','Diferencia ABS','Uds. faltantes S/Aud','Uds. sobrantes S/Aud','Uds. dañadas S/Aud','Uds. incompletos','Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia','Costo físico ABS','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto','Comentarios Auditoría','Comentarios Auditado','Ref. Hallazgos','Ref. Anexos','Auditado por','Fecha revisión'];
-    for(var h=0;h<H.length;h++)sc(6,h,H[h]);
-    var dr=7;
-    filtList.forEach(function(cont){
-      var items=teorico[cont].items,fis=fisico[cont];
+  if(!filtConts.length){ alert('No hay contenedores para exportar.'); return; }
+
+  var userName = currentUser ? currentUser.name.toLowerCase().replace(/\s+/g,'') : 'auditor';
+  var today = new Date();
+  var dateStr = today.getFullYear()+'_'
+    + String(today.getMonth()+1).padStart(2,'0')+'_'
+    + String(today.getDate()).padStart(2,'0');
+
+  // Separate by type
+  var filtEmb   = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
+  var filtTrasl = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
+
+  // Helper: origen description
+  function getOrigenDesc(nomProv){
+    var p = String(nomProv||'').toUpperCase();
+    if(p.indexOf('LONGTAI')>=0||p.indexOf('CHINA')>=0) return 'Truper China';
+    if(p.indexOf('TRUPER')>=0) return 'Truper México';
+    return nomProv||'';
+  }
+
+  // Helper: cobertura
+  function getCobertura(fiObj){
+    if(!fiObj) return 'No auditado';
+    if(fiObj.fisico!==undefined && fiObj.fisico!==null) return 'Auditado';
+    return 'No auditado';
+  }
+
+  // Export each embarque as separate file
+  if(filtEmb.length){
+    filtEmb.forEach(function(cont){
+      var wb = XLSX.utils.book_new();
+      var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:45}};
+      function sc(r,c,v){
+        if(v===null||v===undefined||v==='') return;
+        var ref=XLSX.utils.encode_cell({r:r,c:c});
+        ws[ref]={v:v,t:typeof v==='number'?'n':'s'};
+        if(r>rng.e.r)rng.e.r=r; if(c>rng.e.c)rng.e.c=c;
+      }
+      var items = teorico[cont].items||[];
+      var fis   = fisico[cont]||[];
+      var raw0  = items.length ? items[0].raw||{} : {};
+      var puerta   = puertas[cont]||'';
+      var contData = conteoMetadata[cont]||{};
+      var fechaIngreso  = contData.fechaIngreso||'';
+      var fechaFurgon   = contData.fechaFurgon||'';
+      var placas        = contData.placas||'';
+
+      // Header rows
+      sc(1,1,'Compañía');    sc(1,3,'Conteo de inventario — PT-Analítica Embarques');
+      sc(2,1,'Proceso');     sc(2,3,'Recepción de producto');
+      sc(3,1,'Descripción'); sc(3,3,'Conteo de inventario');
+      sc(4,1,'Fecha');       sc(4,3,dateStr.replace(/_/g,'-'));
+      sc(5,1,'Contenedor');  sc(5,3,cont);
+      sc(5,5,'Puerta');      sc(5,7,puerta);
+      sc(5,9,'Fecha ingreso');  sc(5,11,fechaIngreso);
+      sc(5,13,'Fecha furgón'); sc(5,15,fechaFurgon);
+      sc(5,17,'Placas');     sc(5,19,placas);
+
+      // Column headers row 7
+      var H=['','Número de embarque','Fecha','Código Proveedor','Nombre Proveedor','Líneas','Status sistema',
+        '# Orden Compra','SKU','Descripción','Accesorios','Cantidad','Ingresado','Colocado','Faltantes SAP',
+        'Sobrantes SAP','Dañado SAP','Descripción origen','Fecha ingreso Hamilton','Fecha apertura furgón',
+        'Cobertura','Número puerta','Placas Furgón','Físico S/Auditoría','Diferencia auditoría',
+        'Diferencia ABS','Uds. faltantes','Uds. sobrantes','Uds. dañadas','Uds. incompletos',
+        'Evaluación','Costo unitario','Costo total teórico','Costo físico','Costo diferencia',
+        'Costo dif. ABS','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
+        'Comentarios Auditoría','Comentarios Auditado','Ref. Hallazgos','Ref. Anexos',
+        'Auditado por','Fecha revisión'];
+      H.forEach(function(h,c){ sc(6,c,h); });
+
+      var dr=7;
       items.forEach(function(item,i){
-        var fiObj=fis?fis[i]:null;
-        var fv=fiObj!=null?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:Number(fiObj)||0):null;
-        var dv=fiObj!=null&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-        var tot=fv!==null?fv+dv:null,diff=tot!==null?tot-item.qty:null;
+        var fiObj=fis[i];
+        var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
+        var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
+        var tot=fv!==null?fv+dv:null;
+        var diff=tot!==null?tot-item.qty:null;
         var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
         var raw=item.raw||{};
-        var cUnit=getCosto(item.sku),faltU=diff!==null&&diff<0?Math.abs(diff):0,sobrU=diff!==null&&diff>0?diff:0;
-        var origen=raw.origen||getOrigen(raw.nomProv||raw.codProv||'');
-        var quien=fiObj&&fiObj.quien?fiObj.quien:auditor;
-        if(isEmb){
-          sc(dr,1,cont);sc(dr,2,raw.fecha||'');sc(dr,3,raw.codProv||'');sc(dr,4,raw.nomProv||'');sc(dr,5,raw.lineas||'');sc(dr,6,raw.status||'');sc(dr,7,raw.oc||'');sc(dr,8,item.sku);sc(dr,9,item.desc);sc(dr,10,item.qty);sc(dr,11,raw.ingresado||'');sc(dr,12,raw.colocado||'');sc(dr,13,raw.faltantes||'');sc(dr,14,raw.sobrantes||'');sc(dr,15,raw.daniado||'');sc(dr,16,origen);sc(dr,23,tot!==null?tot:'');sc(dr,24,diff!==null?diff:'');sc(dr,25,diff!==null?Math.abs(diff):'');sc(dr,26,faltU||'');sc(dr,27,sobrU||'');sc(dr,28,dv||'');sc(dr,30,eva);sc(dr,31,cUnit||'');sc(dr,32,cUnit?cUnit*item.qty:'');sc(dr,33,tot!==null&&cUnit?cUnit*tot:'');sc(dr,34,diff!==null&&cUnit?cUnit*diff:'');sc(dr,35,diff!==null&&cUnit?Math.abs(cUnit*diff):'');sc(dr,36,cUnit?cUnit*faltU:'');sc(dr,37,cUnit?cUnit*sobrU:'');sc(dr,44,quien);sc(dr,45,dateStr);
-        } else {
-          sc(dr,1,cont);sc(dr,2,raw.ingreso||'');sc(dr,3,raw.docSap||'');sc(dr,4,raw.fecha||'');sc(dr,5,raw.tipo||'');sc(dr,6,raw.lineas||'');sc(dr,7,raw.status||'');sc(dr,8,item.sku);sc(dr,9,item.desc);sc(dr,10,item.qty);sc(dr,11,raw.unidad||'');sc(dr,12,raw.unidades||'');sc(dr,13,raw.origen||'');sc(dr,14,raw.destino||'');sc(dr,15,origen);sc(dr,22,tot!==null?tot:'');sc(dr,23,diff!==null?diff:'');sc(dr,24,diff!==null?Math.abs(diff):'');sc(dr,25,faltU||'');sc(dr,26,sobrU||'');sc(dr,27,dv||'');sc(dr,29,eva);sc(dr,30,cUnit||'');sc(dr,31,cUnit?cUnit*item.qty:'');sc(dr,32,tot!==null&&cUnit?cUnit*tot:'');sc(dr,33,diff!==null&&cUnit?cUnit*diff:'');sc(dr,34,diff!==null&&cUnit?Math.abs(cUnit*diff):'');sc(dr,35,cUnit?cUnit*faltU:'');sc(dr,36,cUnit?cUnit*sobrU:'');sc(dr,37,cUnit?cUnit*dv:'');sc(dr,43,quien);sc(dr,44,dateStr);
-        }
+        var cUnit=getCosto(item.sku);
+        var faltU=diff!==null&&diff<0?Math.abs(diff):0;
+        var sobrU=diff!==null&&diff>0?diff:0;
+        var quien=fiObj&&fiObj.quien?fiObj.quien:userName;
+        sc(dr,1,cont);
+        sc(dr,2,raw.fecha||'');
+        sc(dr,3,raw.codProv||'');
+        sc(dr,4,raw.nomProv||'');
+        sc(dr,5,raw.lineas||'');
+        sc(dr,6,raw.status||'');   // Status sistema
+        sc(dr,7,raw.oc||'');
+        sc(dr,8,item.sku);
+        sc(dr,9,item.desc);
+        // col 10 = Accesorios (blank, manual)
+        sc(dr,11,item.qty);
+        sc(dr,12,raw.ingresado||'');
+        sc(dr,13,raw.colocado||'');
+        sc(dr,14,raw.faltantes||'');
+        sc(dr,15,raw.sobrantes||'');
+        sc(dr,16,raw.daniado||'');
+        sc(dr,17,getOrigenDesc(raw.nomProv||raw.codProv||'')); // Descripción origen
+        sc(dr,18,fechaIngreso);
+        sc(dr,19,fechaFurgon);
+        sc(dr,20,getCobertura(fiObj));  // Cobertura
+        sc(dr,21,puerta);
+        sc(dr,22,placas);
+        sc(dr,23,tot!==null?tot:'');
+        sc(dr,24,diff!==null?diff:'');
+        sc(dr,25,diff!==null?Math.abs(diff):'');
+        sc(dr,26,faltU||'');
+        sc(dr,27,sobrU||'');
+        sc(dr,28,dv||'');
+        sc(dr,30,eva);
+        sc(dr,31,cUnit||'');
+        sc(dr,32,cUnit?cUnit*item.qty:'');
+        sc(dr,33,tot!==null&&cUnit?cUnit*tot:'');
+        sc(dr,34,diff!==null&&cUnit?cUnit*diff:'');
+        sc(dr,35,diff!==null&&cUnit?Math.abs(cUnit*diff):'');
+        sc(dr,36,cUnit?cUnit*faltU:'');
+        sc(dr,37,cUnit?cUnit*sobrU:'');
+        sc(dr,44,quien);
+        sc(dr,45,dateStr.replace(/_/g,'-'));
         dr++;
       });
+      ws['!ref']=XLSX.utils.encode_range(rng);
+      XLSX.utils.book_append_sheet(wb,ws,'PT-Analítica Embarques');
+
+      // Hallazgos for this container
+      var hCont = hallazgos.filter(function(h){ return h.cont===cont; });
+      if(hCont.length){
+        var hd=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
+        hCont.forEach(function(h){ hd.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]); });
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd),'PT-Hallazgos');
+      }
+
+      var fname = 'PT-Embarque_'+dateStr+'_'+cont+'_'+userName+'.xlsx';
+      XLSX.writeFile(wb, fname);
+      addHist('Exportó embarque: '+cont);
     });
-    ws['!ref']=XLSX.utils.encode_range(rng);
-    XLSX.utils.book_append_sheet(wb,ws,sheetLabel);
   }
 
-  buildSheet(filtEmb,'PT-Analítica Embarques',true);
-  buildSheet(filtTrasl,'PT-Analítica Traslados',false);
+  // Export traslados (one file per container too)
+  if(filtTrasl.length){
+    filtTrasl.forEach(function(cont){
+      var wb = XLSX.utils.book_new();
+      var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:44}};
+      function sc(r,c,v){
+        if(v===null||v===undefined||v==='') return;
+        var ref=XLSX.utils.encode_cell({r:r,c:c});
+        ws[ref]={v:v,t:typeof v==='number'?'n':'s'};
+        if(r>rng.e.r)rng.e.r=r; if(c>rng.e.c)rng.e.c=c;
+      }
+      var items=teorico[cont].items||[];
+      var fis=fisico[cont]||[];
+      var puerta=puertas[cont]||'';
+      var contData=conteoMetadata[cont]||{};
+      var fechaIngreso=contData.fechaIngreso||'';
+      var fechaFurgon=contData.fechaFurgon||'';
+      var placas=contData.placas||'';
 
-  if(hallazgos.length>0){
-    var hd=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
-    hallazgos.forEach(function(h){hd.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]);});
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd),'PT-Hallazgos');
+      sc(1,1,'Compañía');    sc(1,3,'Conteo de inventario — PT-Analítica Traslados');
+      sc(2,1,'Proceso');     sc(2,3,'Traslado interno');
+      sc(3,1,'Descripción'); sc(3,3,'Conteo de inventario');
+      sc(4,1,'Fecha');       sc(4,3,dateStr.replace(/_/g,'-'));
+      sc(5,1,'Contenedor');  sc(5,3,cont);
+      sc(5,5,'Puerta');      sc(5,7,puerta);
+
+      var H=['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Líneas','Status sistema',
+        'SKU','Descripción','Accesorios','Cantidad','Unidad','Origen','Destino',
+        'Descripción origen','Fecha ingreso Hamilton','Fecha apertura furgón',
+        'Cobertura','Número puerta','Placas Furgón','Físico S/Auditoría','Diferencia auditoría',
+        'Diferencia ABS','Uds. faltantes','Uds. sobrantes','Uds. dañadas','Uds. incompletos',
+        'Evaluación','Costo unitario','Costo total teórico','Costo físico','Costo diferencia',
+        'Costo dif. ABS','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
+        'Comentarios Auditoría','Comentarios Auditado','Ref. Hallazgos','Ref. Anexos',
+        'Auditado por','Fecha revisión'];
+      H.forEach(function(h,c){ sc(6,c,h); });
+
+      var dr=7;
+      items.forEach(function(item,i){
+        var fiObj=fis[i];
+        var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
+        var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
+        var tot=fv!==null?fv+dv:null;
+        var diff=tot!==null?tot-item.qty:null;
+        var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
+        var raw=item.raw||{};
+        var cUnit=getCosto(item.sku);
+        var faltU=diff!==null&&diff<0?Math.abs(diff):0;
+        var sobrU=diff!==null&&diff>0?diff:0;
+        var quien=fiObj&&fiObj.quien?fiObj.quien:userName;
+        sc(dr,1,cont);sc(dr,2,raw.ingreso||'');sc(dr,3,raw.docSap||'');
+        sc(dr,4,raw.fecha||'');sc(dr,5,raw.tipo||'');sc(dr,6,raw.lineas||'');
+        sc(dr,7,raw.status||'');
+        sc(dr,8,item.sku);sc(dr,9,item.desc);
+        sc(dr,11,item.qty);sc(dr,12,raw.unidad||'');
+        sc(dr,13,raw.origen||'');sc(dr,14,raw.destino||'');
+        sc(dr,15,raw.origen||'');
+        sc(dr,16,fechaIngreso);sc(dr,17,fechaFurgon);
+        sc(dr,18,getCobertura(fiObj));
+        sc(dr,19,puerta);sc(dr,20,placas);
+        sc(dr,21,tot!==null?tot:'');sc(dr,22,diff!==null?diff:'');
+        sc(dr,23,diff!==null?Math.abs(diff):'');
+        sc(dr,24,faltU||'');sc(dr,25,sobrU||'');sc(dr,26,dv||'');
+        sc(dr,28,eva);
+        sc(dr,29,cUnit||'');sc(dr,30,cUnit?cUnit*item.qty:'');
+        sc(dr,31,tot!==null&&cUnit?cUnit*tot:'');
+        sc(dr,32,diff!==null&&cUnit?cUnit*diff:'');
+        sc(dr,33,diff!==null&&cUnit?Math.abs(cUnit*diff):'');
+        sc(dr,34,cUnit?cUnit*faltU:'');sc(dr,35,cUnit?cUnit*sobrU:'');
+        sc(dr,36,cUnit?cUnit*dv:'');
+        sc(dr,43,quien);sc(dr,44,dateStr.replace(/_/g,'-'));
+        dr++;
+      });
+      ws['!ref']=XLSX.utils.encode_range(rng);
+      XLSX.utils.book_append_sheet(wb,ws,'PT-Analítica Traslados');
+
+      var hCont=hallazgos.filter(function(h){ return h.cont===cont; });
+      if(hCont.length){
+        var hd=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
+        hCont.forEach(function(h){ hd.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]); });
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd),'PT-Hallazgos');
+      }
+
+      var fname='PT-Traslado_'+dateStr+'_'+cont+'_'+userName+'.xlsx';
+      XLSX.writeFile(wb,fname);
+      addHist('Exportó traslado: '+cont);
+    });
   }
-
-  if(!wb.SheetNames.length){alert('No hay datos para exportar.');return;}
-  var scopeLabel=scope==='all'?'Completo':(specific&&specific!=='all')?specific:scope;
-  XLSX.writeFile(wb,'PT-Conteo_'+scopeLabel+'_'+dateStr+'.xlsx');
-  addHist('Exportó Excel: '+scopeLabel);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2259,6 +2449,7 @@ document.getElementById('btn-hall-save').addEventListener('click', function() {
 // FEATURE 4: PUERTA DE DESEMBARQUE
 // ══════════════════════════════════════════════════════════════════════════
 var puertas = {}; // { contId: 'L003.001' }
+var conteoMetadata = {}; // { contId: {fechaIngreso, fechaFurgon, placas} }
 
 document.getElementById('sel-puerta').addEventListener('change', function() {
   if(!current) return;
@@ -2347,6 +2538,66 @@ setInterval(function() {
     }).catch(function(){});
 }, 3000);
 
+
+// ── Conteo Metadata (fecha ingreso, furgon, placas) ───────────────────────
+function updateMetaInputs() {
+  var wrap = document.getElementById('conteo-meta-wrap');
+  if(wrap) wrap.style.display = current ? 'flex' : 'none';
+  if(!current) return;
+  var m = conteoMetadata[current] || {};
+  var fi = document.getElementById('inp-fecha-ingreso');
+  var ff = document.getElementById('inp-fecha-furgon');
+  var pl = document.getElementById('inp-placas');
+  if(fi) fi.value = m.fechaIngreso || '';
+  if(ff) ff.value = m.fechaFurgon  || '';
+  if(pl) pl.value = m.placas       || '';
+}
+
+function saveMetadata() {
+  if(!current) return;
+  if(!conteoMetadata[current]) conteoMetadata[current] = {};
+  var fi = document.getElementById('inp-fecha-ingreso');
+  var ff = document.getElementById('inp-fecha-furgon');
+  var pl = document.getElementById('inp-placas');
+  if(fi) conteoMetadata[current].fechaIngreso = fi.value;
+  if(ff) conteoMetadata[current].fechaFurgon  = ff.value;
+  if(pl) conteoMetadata[current].placas        = pl.value;
+  updateSummaryCard();
+}
+
+['inp-fecha-ingreso','inp-fecha-furgon','inp-placas'].forEach(function(id){
+  var el = document.getElementById(id);
+  if(el) el.addEventListener('change', saveMetadata);
+});
+
+// Call updateMetaInputs when container changes
+document.getElementById('sel-cont').addEventListener('change', function(){
+  updateMetaInputs();
+});
+
+// Patch renderConteo to also update meta inputs
+var _origRC3 = renderConteo;
+renderConteo = function() {
+  _origRC3();
+  updateMetaInputs();
+};
+
+// ── Export scope picker ───────────────────────────────────────────────────
+document.getElementById('export-scope').addEventListener('change', function(){
+  var wrap = document.getElementById('export-pick-wrap');
+  var list = document.getElementById('export-pick-list');
+  if(this.value === 'pick') {
+    wrap.style.display = '';
+    list.innerHTML = conts.map(function(c){
+      var type = teorico[c] ? teorico[c].type : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.85rem;cursor:pointer">'
+        +'<input type="checkbox" class="export-pick-cb" value="'+c+'" checked style="width:18px;height:18px"> '
+        +c+' <span style="font-size:.75rem;color:#888">('+type+')</span></label>';
+    }).join('');
+  } else {
+    wrap.style.display = 'none';
+  }
+});
 </script>
 </body>
 </html>
