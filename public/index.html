@@ -1450,7 +1450,8 @@ function loadCostFile(fileObj){
   var reader = new FileReader();
   reader.onload = function(ev){
     try{
-      var wb = XLSX.read(ev.target.result, {type:'array'});
+      var data = new Uint8Array(ev.target.result);
+      var wb = XLSX.read(data, {type:'array'});
       var sheetName = wb.SheetNames[0];
       for(var si=0;si<wb.SheetNames.length;si++){
         var nl=wb.SheetNames[si].toLowerCase();
