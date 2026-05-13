@@ -789,13 +789,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     </div>
   </div>
 </div>
-    <div style="display:flex;gap:8px">
-      <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="200"
-        style="flex:1;padding:9px 12px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none">
-      <button id="btn-chat-send" class="btn btn-dark" style="min-height:42px;padding:0 14px">Enviar</button>
-    </div>
-  </div>
-</div>
+    
 
 
 <script>
@@ -2524,71 +2518,7 @@ document.getElementById('sel-cont').addEventListener('change', function() {
 // ══════════════════════════════════════════════════════════════════════════
 // FEATURE 1: CHAT
 // ══════════════════════════════════════════════════════════════════════════
-var chatMessages = [];
-var CHAT_TTL = 5 * 60 * 1000; // 5 minutes
 
-function sendChat() {
-  var inp = document.getElementById('chat-input');
-  var msg = inp ? inp.value.trim() : '';
-  if(!msg || !currentUser) return;
-  var entry = {id: makeId(), user: currentUser.name, msg: msg, ts: Date.now()};
-  chatMessages.push(entry);
-  inp.value = '';
-  renderChat();
-  // Save to server
-  fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(entry)}).catch(function(){});
-}
-
-function renderChat() {
-  var div = document.getElementById('chat-messages'); if(!div) return;
-  var now = Date.now();
-  // Remove expired
-  chatMessages = chatMessages.filter(function(m){ return now - m.ts < CHAT_TTL; });
-  if(!chatMessages.length) {
-    div.innerHTML = '<p style="color:#aaa;text-align:center;padding:1rem">Sin mensajes recientes</p>';
-    return;
-  }
-  div.innerHTML = chatMessages.map(function(m) {
-    var ago = Math.round((now - m.ts)/1000);
-    var agoStr = ago < 60 ? ago+'s' : Math.round(ago/60)+'min';
-    var isMe = currentUser && m.user === currentUser.name;
-    return '<div style="margin-bottom:6px;text-align:'+(isMe?'right':'left')+'">'
-      +'<span style="font-size:.75rem;color:#888">'+escH(m.user)+' · '+agoStr+'</span>'
-      +'<div style="display:inline-block;background:'+(isMe?'#1a1a1a':'#f0f0ee')+';color:'+(isMe?'#fff':'#1a1a1a')+';padding:5px 10px;border-radius:10px;font-size:.85rem;max-width:85%;text-align:left;margin-top:2px">'
-      +escH(m.msg)+'</div></div>';
-  }).join('');
-  div.scrollTop = div.scrollHeight;
-}
-
-document.getElementById('btn-open-chat').addEventListener('click', function() {
-  document.getElementById('modal-chat').classList.add('open');
-  renderChat();
-});
-document.getElementById('btn-chat-close').addEventListener('click', function() {
-  document.getElementById('modal-chat').classList.remove('open');
-});
-document.getElementById('btn-chat-send').addEventListener('click', sendChat);
-document.getElementById('chat-input').addEventListener('keydown', function(e) {
-  if(e.key === 'Enter') sendChat();
-});
-
-// Poll chat from server
-
-
-// ── Conteo Metadata (fecha ingreso, furgon, placas) ───────────────────────
-function updateMetaInputs() {
-  var wrap = document.getElementById('conteo-meta-wrap');
-  if(wrap) wrap.style.display = current ? 'flex' : 'none';
-  if(!current) return;
-  var m = conteoMetadata[current] || {};
-  var fi = document.getElementById('inp-fecha-ingreso');
-  var ff = document.getElementById('inp-fecha-furgon');
-  var pl = document.getElementById('inp-placas');
-  if(fi) fi.value = m.fechaIngreso || '';
-  if(ff) ff.value = m.fechaFurgon  || '';
-  if(pl) pl.value = m.placas       || '';
-}
 
 function saveMetadata() {
   if(!current) return;
@@ -2708,9 +2638,19 @@ var cdgFotoGral = null;
     var costo = getCosto(sku);
     var costoInp = document.getElementById('cdg-costo');
     var autoLbl  = document.getElementById('cdg-desc-auto');
+    // Look for description in teorico items first
+    var foundDesc = '';
+    Object.keys(teorico).forEach(function(cont){
+      if(foundDesc) return;
+      var items = teorico[cont] ? (teorico[cont].items||[]) : [];
+      var found = items.find(function(it){ return String(it.sku).trim()===sku; });
+      if(found && found.desc) foundDesc = found.desc;
+    });
+    var descInp = document.getElementById('cdg-desc');
+    if(foundDesc && descInp && !descInp.value) descInp.value = foundDesc;
     if(costo && costo > 0) {
       if(costoInp) costoInp.value = 'Q'+Number(costo).toFixed(2);
-      if(autoLbl)  autoLbl.textContent = '✓ Q'+Number(costo).toFixed(2);
+      if(autoLbl)  autoLbl.textContent = '✓ Costo: Q'+Number(costo).toFixed(2);
     } else {
       if(costoInp) costoInp.value = '';
       if(autoLbl)  autoLbl.textContent = '';
@@ -2767,8 +2707,11 @@ function showCDGHist(tipo) {
           var c=data[id];
           var isLocked=c.bloqueado||c.status==='closed';
           var badge=isLocked
-            ?'<span style="background:#fdecea;color:#c0392b;padding:2px 8px;border-radius:10px;font-size:.75rem">🔒 Bloqueado</span>'
+            ?'<span style="background:#fdecea;color:#c0392b;padding:2px 8px;border-radius:10px;font-size:.75rem">🔒 Finalizado</span>'
             :'<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">📝 Borrador</span>';
+          var continuarBtn = !isLocked
+            ? '<button class="btn btn-sm cdg-continuar-btn" data-id="'+escH(id)+'" style="font-size:.75rem;min-height:28px;padding:2px 8px">✏️ Continuar</button>'
+            : '';
           h+='<div style="padding:10px 14px;border-bottom:1px solid #f0f0ee">'
             +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
             +'<div><strong>'+escH(id)+'</strong> <span style="color:#888;font-size:.78rem">'
@@ -2777,12 +2720,32 @@ function showCDGHist(tipo) {
             +(isSup()&&isLocked
               ?'<button class="btn btn-sm cdg-unlock-btn" data-id="'+escH(id)+'" style="font-size:.75rem;min-height:28px;padding:2px 8px">🔓 Desbloquear</button>'
               :'')
+            +continuarBtn
             +'</div></div>'
             +(c.fotoGral?'<img src="'+c.fotoGral+'" style="max-height:80px;border-radius:6px;margin-top:6px;border:1px solid #e0e0e0">':'')
             +'</div>';
         });
         h+='</div>';
         content.innerHTML=h;
+        content.querySelectorAll('.cdg-continuar-btn').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var id=this.dataset.id;
+            var c=data[id];
+            // Load back into form
+            document.getElementById('cdg-u25').value=id;
+            var tipoSel=document.getElementById('cdg-tipo');
+            if(tipoSel){
+              if(c.tipo==='CDG'||c.tipo==='KTM') tipoSel.value=c.tipo;
+              else{ tipoSel.value='otro'; var oi=document.getElementById('cdg-tipo-otro'); if(oi){oi.value=c.tipo;var ow=document.getElementById('cdg-tipo-otro-wrap');if(ow)ow.style.display='';} }
+            }
+            cdgSkus=(c.items||[]).slice();
+            renderCDGSkuList();
+            cdgFotoGral=c.fotoGral||null;
+            if(cdgFotoGral){var pi=document.getElementById('cdg-foto-gral-img');var pp=document.getElementById('cdg-foto-gral-preview');if(pi)pi.src=cdgFotoGral;if(pp)pp.style.display='';}
+            document.getElementById('cdg-hist-panel').style.display='none';
+            showMsg('cdg-msg','ok','✏️ Cargado '+escH(id)+' para continuar.');
+          });
+        });
         content.querySelectorAll('.cdg-unlock-btn').forEach(function(btn){
           btn.addEventListener('click',function(){
             var id=this.dataset.id;
