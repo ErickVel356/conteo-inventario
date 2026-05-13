@@ -256,16 +256,33 @@ app.post('/api/cdg/save', (req,res) => {
   const { contId, items, usuario } = req.body;
   if(!contId) return res.status(400).json({ok:false});
   if(!state.cdg[contId]) state.cdg[contId]={items:[],status:'open',autor:usuario,fecha:new Date().toLocaleDateString('es')};
-  state.cdg[contId].items=items; state.cdg[contId].lastEditor=usuario;
+  state.cdg[contId].items=items; state.cdg[contId].lastEditor=usuario; if(req.body.tipo) state.cdg[contId].tipo=req.body.tipo; if(req.body.fotoGral) state.cdg[contId].fotoGral=req.body.fotoGral;
   addHistorial(usuario,'CDG guardado',contId);
   state.version++; scheduleSave();
   res.json({ok:true,version:state.version});
 });
 
+// CDG Unlock (supervisor only - enforced client-side)
+app.post('/api/cdg/unlock', (req, res) => {
+  const { contId, usuario } = req.body;
+  if(!contId) return res.status(400).json({ok:false});
+  if(state.cdg[contId]) {
+    state.cdg[contId].bloqueado = false;
+    state.cdg[contId].desbloqueadoPor = usuario;
+    state.cdg[contId].desbloqueadoTs  = new Date().toLocaleString('es');
+  }
+  // Also unblock in teorico
+  if(state.teorico[contId]) state.teorico[contId].cdgBloqueado = false;
+  addHistorial(usuario||'—', 'Desbloqueó CDG', contId);
+  state.version++;
+  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},date:state.date,version:state.version}).catch(e=>console.log(e.message));
+  res.json({ok:true});
+});
+
 app.post('/api/cdg/finalizar', (req,res) => {
   const { contId, items, usuario, traslado } = req.body;
   if(!contId) return res.status(400).json({ok:false});
-  state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado};
+  state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado,tipo:tipo||'CDG',fotoGral:fotoGral||null,bloqueado:bloqueado||false};
   const num=traslado||contId;
   if(!state.teorico[num]) {
     state.teorico[num]={type:'Traslados',fromCDG:true,cdgRef:contId,
