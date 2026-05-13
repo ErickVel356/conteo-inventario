@@ -640,28 +640,10 @@ var _currentFilter = ''; // 'Embarques' | 'Traslados' | 'CDG' | ''
 /* ══════════════════════════════════════════════════════════════════
    PERSISTENCIA
 ══════════════════════════════════════════════════════════════════ */
-// scheduleSave: debounced server sync
-var _saveTimer = null;
-function saveLocal() { scheduleSave(); }
-function scheduleSave() {
-  if(_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(function(){
-    doServerSave();
-  }, 1000);
-}
-function doServerSave() {
-  if(!currentUser) return;
-  fetch('/api/state/save', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      teorico:teorico, fisico:fisico,
-      asignaciones:asignaciones, historial:historial.slice(-100)
-    })
-  }).then(function(r){return r.json();})
-    .then(function(d){if(d.ok) lastVersion=d.version;})
-    .catch(function(e){console.warn('Server save:',e);});
-}
+// saveLocal: each action saves via its own endpoint - no bulk save
+function saveLocal() { /* no-op: individual saves handle persistence */ }
+function scheduleSave() { /* no-op: individual saves handle persistence */ }
+function doServerSave() { /* disabled: was causing data loss */ }
 
 function loadLocal() {
   try {
@@ -1323,7 +1305,10 @@ function renderAsignaciones(){
       if(!asignaciones[c])return;
       asignaciones[c]=asignaciones[c].filter(function(x){return x!==n;});
       addHist('Quitó a '+n+' de '+c);
-      scheduleSave();renderAsignaciones();
+      fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:c,name:n,action:'remove',usuario:currentUser?currentUser.name:'—'})})
+        .then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;});
+      renderAsignaciones();
     });
   });
 
@@ -1336,7 +1321,9 @@ function renderAsignaciones(){
       if(asignaciones[c].indexOf(n)<0){
         asignaciones[c].push(n);
         addHist('Asignó a '+n+' en '+c);
-        scheduleSave();
+        fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:c,name:n,action:'add',usuario:currentUser?currentUser.name:'—'})})
+          .then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;});
       }
       renderAsignaciones();
     });
