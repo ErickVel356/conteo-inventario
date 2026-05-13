@@ -1087,9 +1087,14 @@ function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
     var prev=fisico[current][idx]||{};
     fisico[current][idx]={fisico:fv,daniado:dv,quien:currentUser.name,ts:nowStr(),calcExpr:calcExpr!==null?calcExpr:(prev.calcExpr||'')};
     addHist('Editó físico/dañado en '+current+' (fila '+(idx+1)+')');
-    scheduleSave();
     heartbeat();
-  },2500);
+    // Save directly to server immediately
+    fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,usuario:currentUser?currentUser.name:'—'})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok)lastVersion=d.version;})
+      .catch(function(e){console.warn('field save error:',e);});
+  },800);
 }
 
 function updateTotDiff(idx){
