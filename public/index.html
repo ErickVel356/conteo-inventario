@@ -882,6 +882,10 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
 
 document.getElementById('btn-logout').addEventListener('click',function(){
   if(!confirm('¿Cerrar sesión?'))return;
+  stopPolling();
+  releaseAllLocks();
+  lastVersion = -1;
+  window.serverLocks = {};
   currentUser=null;
   // Reset ALL role-specific UI before login screen
   var tabAsign = document.getElementById('tab-btn-asign');
@@ -2012,7 +2016,11 @@ function switchTab(name){
 document.getElementById('tab-btn-conteo').addEventListener('click',function(){switchTab('conteo');});
 document.getElementById('tab-btn-reporte').addEventListener('click',function(){switchTab('reporte');buildReporte();});
 document.getElementById('tab-btn-hallazgos').addEventListener('click',function(){switchTab('hallazgos');renderHallazgosList();});
-document.getElementById('tab-btn-asign').addEventListener('click',function(){switchTab('asign');renderAsignaciones();});
+document.getElementById('tab-btn-asign').addEventListener('click',function(){
+  if(!isSup()) return; // contadores no pueden ver asignaciones
+  switchTab('asign');
+  renderAsignaciones();
+});
 
 document.getElementById('sel-cont').addEventListener('change',renderConteo);
 document.getElementById('btn-save').addEventListener('click',saveConteo);
@@ -2126,8 +2134,14 @@ function pollNow() {
           var pgConteo = document.getElementById('pg-conteo');
           if(pgConteo && pgConteo.classList.contains('active')) renderConteo();
           // Re-render asign if visible
-          var pgAsign = document.getElementById('pg-asign');
-          if(pgAsign && pgAsign.classList.contains('active') && typeof renderAsignaciones==='function') renderAsignaciones();
+          // Update asignaciones - always refresh if tab visible (tab-asign with style.display)
+          if(typeof renderAsignaciones==='function') {
+            var tabAsignEl = document.getElementById('tab-asign');
+            var tabBtnAsign = document.getElementById('tab-btn-asign');
+            // Only show asign tab for supervisors
+            if(tabBtnAsign) tabBtnAsign.style.display = (currentUser&&currentUser.role==='supervisor')?'':'none';
+            if(tabAsignEl && tabAsignEl.style.display !== 'none') renderAsignaciones();
+          }
           // Re-render reporte if visible
           var pgRep = document.getElementById('pg-reporte');
           if(pgRep && pgRep.classList.contains('active') && typeof buildReporte==='function') buildReporte();
@@ -2267,12 +2281,7 @@ afterLogin = function() {
 };
 
 // Patch logout to stop polling
-document.getElementById('btn-logout').addEventListener('click', function(){
-  stopPolling();
-  releaseAllLocks();
-  lastVersion = -1;
-  window.serverLocks = {};
-}, true); // capture phase so it runs before confirm
+// stopPolling on logout (merged into main logout handler)
 
 // Patch renderConteo to add lock listeners
 var _origRenderConteo = renderConteo;
