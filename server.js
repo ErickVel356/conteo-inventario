@@ -100,8 +100,9 @@ async function loadState() {
     } else {
       console.log('No saved state found — starting fresh');
     }
-    // Load puertas
-    if(saved && saved.puertas) state.puertas = saved.puertas;
+    // Load puertas and hallazgos
+    if(saved && saved.puertas)   state.puertas   = saved.puertas;
+    if(saved && saved.hallazgos) state.hallazgos = saved.hallazgos;
     // Also load costos
     const savedCostos = await dbGet('costos_state');
     if(savedCostos && savedCostos.costos) {
@@ -220,7 +221,7 @@ app.post('/api/conteo', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
   }).catch(e=>console.log('Conteo save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -244,7 +245,7 @@ app.post('/api/asign', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
   }).catch(e=>console.log('Asign save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -318,6 +319,24 @@ app.post('/api/costos', upload.single('file'), (req,res) => {
     res.json({ok:true,count:cnt});
   } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
+// Hallazgos save
+app.post('/api/hallazgo', (req, res) => {
+  const { hallazgo, action, id } = req.body;
+  if(!state.hallazgos) state.hallazgos = [];
+  if(action==='add' && hallazgo) {
+    state.hallazgos.push(hallazgo);
+  } else if(action==='edit' && id) {
+    const idx = state.hallazgos.findIndex(h=>h.id===id);
+    if(idx>=0) state.hallazgos[idx] = hallazgo;
+  }
+  state.version++;
+  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
+    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
+    hallazgos:state.hallazgos,date:state.date,version:state.version})
+    .catch(e=>console.log('Hallazgo save:',e.message));
+  res.json({ok:true,version:state.version});
+});
+
 // Chat
 app.post('/api/chat', (req, res) => {
   const { id, user, msg, ts } = req.body;
@@ -401,7 +420,7 @@ app.post('/api/conteo/field', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], date:state.date, version:state.version
   }).catch(e=>console.log('Immediate save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
