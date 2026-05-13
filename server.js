@@ -209,6 +209,11 @@ app.post('/api/conteo', (req, res) => {
   if(!cont || !data) return res.status(400).json({ ok:false });
   state.fisico[cont] = data;
   addHistorial(usuario||'—', 'Conteo guardado', cont);
+  dbSet('daily_state', {
+    teorico:state.teorico, fisico:state.fisico,
+    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
+    cdg:state.cdg, date:state.date, version:state.version
+  }).catch(e=>console.log('Conteo save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
 
@@ -228,7 +233,11 @@ app.post('/api/asign', (req, res) => {
     addHistorial(name, 'Auto-asignación', cont);
   }
   state.version++;
-  scheduleSave();
+  dbSet('daily_state', {
+    teorico:state.teorico, fisico:state.fisico,
+    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
+    cdg:state.cdg, date:state.date, version:state.version
+  }).catch(e=>console.log('Asign save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
 
@@ -353,7 +362,13 @@ app.post('/api/upload', upload.single('file'), (req,res) => {
       if(count>0) loaded.push(wb.SheetNames[0]+'('+count+')');
       addHistorial(usuario,'Teórico cargado',loaded.join());
     }
-    state.version++; scheduleSave();
+    state.version++;
+    // Save immediately to Supabase after upload
+    dbSet('daily_state', {
+      teorico:state.teorico, fisico:state.fisico,
+      asignaciones:state.asignaciones, historial:state.historial.slice(-100),
+      cdg:state.cdg, date:state.date, version:state.version
+    }).catch(e=>console.log('Upload save error:',e.message));
     res.json({ok:true,loaded});
   } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
