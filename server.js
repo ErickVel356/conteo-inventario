@@ -100,6 +100,8 @@ async function loadState() {
     } else {
       console.log('No saved state found — starting fresh');
     }
+    // Load puertas
+    if(saved && saved.puertas) state.puertas = saved.puertas;
     // Also load costos
     const savedCostos = await dbGet('costos_state');
     if(savedCostos && savedCostos.costos) {
@@ -218,7 +220,7 @@ app.post('/api/conteo', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Conteo save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -242,7 +244,7 @@ app.post('/api/asign', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Asign save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
@@ -299,6 +301,34 @@ app.post('/api/costos', upload.single('file'), (req,res) => {
     res.json({ok:true,count:cnt});
   } catch(e){res.status(500).json({ok:false,error:e.message});}
 });
+// Chat
+app.post('/api/chat', (req, res) => {
+  const { id, user, msg, ts } = req.body;
+  if(!msg || !user) return res.status(400).json({ok:false});
+  if(!state.chat) state.chat = [];
+  // Remove expired (>5min) and add new
+  state.chat = state.chat.filter(m => Date.now()-m.ts < 300000);
+  state.chat.push({id:id||Date.now().toString(), user, msg, ts:ts||Date.now()});
+  state.version++;
+  res.json({ok:true});
+});
+
+// Puerta
+app.post('/api/puerta', (req, res) => {
+  const { cont, puerta, usuario } = req.body;
+  if(!cont) return res.status(400).json({ok:false});
+  if(!state.puertas) state.puertas = {};
+  state.puertas[cont] = puerta;
+  addHistorial(usuario||'—', 'Puerta asignada', cont+' → '+puerta);
+  state.version++;
+  dbSet('daily_state', {
+    teorico:state.teorico, fisico:state.fisico,
+    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
+    cdg:state.cdg, puertas:state.puertas, date:state.date, version:state.version
+  }).catch(e=>console.log('Puerta save:',e.message));
+  res.json({ok:true, version:state.version});
+});
+
 // Save pre-processed costos from client
 app.post('/api/costos-save', (req,res) => {
   const { costos: c } = req.body;
@@ -354,7 +384,7 @@ app.post('/api/conteo/field', (req, res) => {
   dbSet('daily_state', {
     teorico:state.teorico, fisico:state.fisico,
     asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, date:state.date, version:state.version
+    cdg:state.cdg, puertas:state.puertas||{}, date:state.date, version:state.version
   }).catch(e=>console.log('Immediate save error:',e.message));
   res.json({ ok:true, version:state.version });
 });
