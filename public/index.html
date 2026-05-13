@@ -1444,20 +1444,55 @@ document.getElementById('btn-load-cost').addEventListener('click',function(){doc
 document.getElementById('cost-input').addEventListener('change',function(){if(this.files&&this.files[0])loadCostFile(this.files[0]);});
 
 function loadCostFile(fileObj){
-  var form=new FormData(); form.append('file',fileObj);
-  fetch('/api/costos',{method:'POST',body:form})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok){
-        flashMsg('status-bar','ok','✓ Costos cargados: '+d.count+' SKUs');
-        var cs=document.getElementById('cost-status'); if(cs){cs.textContent='✓ '+d.count+' SKUs';cs.style.color='#1e7e34';}
-        var btn=document.getElementById('btn-load-cost'); if(btn) btn.textContent='Actualizar costos';
-        return fetch('/api/costos');
-      } else { flashMsg('status-bar','err','Error costos: '+d.error); }
-    })
-    .then(function(r){if(r)return r.json();})
-    .then(function(d){if(d)costos=d;})
-    .catch(function(e){flashMsg('status-bar','err','Error costos: '+e.message);});
+  var name = fileObj.name;
+  var cs = document.getElementById('cost-status');
+  if(cs){ cs.textContent='Procesando...'; cs.style.color='#888'; }
+  var reader = new FileReader();
+  reader.onload = function(ev){
+    try{
+      var wb = XLSX.read(ev.target.result, {type:'array'});
+      var sheetName = wb.SheetNames[0];
+      for(var si=0;si<wb.SheetNames.length;si++){
+        var nl=wb.SheetNames[si].toLowerCase();
+        if(nl.indexOf('existencia')>=0||nl.indexOf('sap')>=0||nl.indexOf('costo')>=0){sheetName=wb.SheetNames[si];break;}
+      }
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,defval:'',raw:false});
+      if(!rows||rows.length<2){if(cs)cs.textContent='✗ Archivo vacío';return;}
+      var hdr = rows[0].map(function(h){return norm(h);});
+      var colSku  = findCol(hdr,['articulo','artículo','sku','codigo','código']);
+      var colCost = findCol(hdr,['costo promedio','costo_promedio','precio promedio','costo']);
+      if(colSku<0||colCost<0){
+        if(cs)cs.textContent='✗ No se encontraron columnas SKU/Costo';
+        return;
+      }
+      var raw_costos={};
+      for(var i=1;i<rows.length;i++){
+        var sku=String(rows[i][colSku]||'').trim();
+        var cost=parseFloat(String(rows[i][colCost]).replace(',','.'));
+        if(sku&&!isNaN(cost)&&cost>0){
+          if(!raw_costos[sku])raw_costos[sku]={sum:0,count:0};
+          raw_costos[sku].sum+=cost;
+          raw_costos[sku].count+=1;
+        }
+      }
+      costos={};
+      var count=0;
+      Object.keys(raw_costos).forEach(function(sku){
+        costos[sku]=raw_costos[sku].sum/raw_costos[sku].count;
+        count++;
+      });
+      if(cs){cs.textContent='✓ '+name+' — '+count+' SKUs';cs.style.color='#1e7e34';}
+      var btn=document.getElementById('btn-load-cost'); if(btn) btn.textContent='Actualizar costos';
+      flashMsg('status-bar','ok','✓ Costos cargados: '+count+' SKUs');
+      // Save costos to server (small dict, safe to upload)
+      fetch('/api/costos-save',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({costos:costos})})
+        .catch(function(){});
+    }catch(err){
+      if(cs)cs.textContent='✗ Error: '+err.message;
+    }
+  };
+  reader.readAsArrayBuffer(fileObj);
 }
 
 function setCostStatus(type,msg){
