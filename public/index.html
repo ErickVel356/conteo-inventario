@@ -1188,6 +1188,8 @@ function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
     fisico[current][idx]={fisico:fv,daniado:dv,quien:currentUser.name,ts:nowStr(),calcExpr:calcExpr!==null?calcExpr:(prev.calcExpr||'')};
     addHist('Editó físico/dañado en '+current+' (fila '+(idx+1)+')');
     heartbeat();
+    // Update summary card immediately
+    if(typeof updateSummaryCard==='function') updateSummaryCard();
     // Always save directly to Supabase first
     saveDirectToSupabase();
     // Also save to server
@@ -1244,6 +1246,8 @@ function updateTotDiff(idx){
   var total=fv+dv,diff=total-qty;
   if(totEl)totEl.textContent=total;
   if(difEl){difEl.className='tc '+(diff>0?'blue':diff<0?'red':'green');difEl.textContent=(diff>0?'+':'')+diff;}
+
+  if(typeof updateSummaryCard==='function') updateSummaryCard();
 }
 
 function saveConteo(){
