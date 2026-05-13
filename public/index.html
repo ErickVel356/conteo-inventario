@@ -445,45 +445,110 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
     <!-- ── PÁGINA: CDG NUEVO CONTEO ──────────────────────────── -->
     <div id="pg-cdg" class="page">
-      <p style="font-size:.85rem;color:#666;margin-bottom:1rem">Registra el U25 y los SKUs del envío. Al finalizar se crea el teórico de Traslados CDG automáticamente.</p>
-      <div class="card">
+      <!-- HEADER with history buttons -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:1rem">
+        <p style="font-size:.85rem;color:#666;margin:0">Registra SKUs del envío. Finaliza para crear el teórico en Hamilton CDG.</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm" id="btn-hist-cdg">📋 Historial CDG</button>
+          <button class="btn btn-sm" id="btn-hist-ktm">📋 Historial KTM</button>
+          <button class="btn btn-sm" id="btn-hist-otros">📋 Historial Otros</button>
+        </div>
+      </div>
+
+      <!-- NEW CONTEO FORM -->
+      <div class="card" id="cdg-form-card">
         <div class="cdg-row">
           <div class="cdg-field" style="flex:2;min-width:140px">
             <label>Correlativo U25</label>
             <input type="text" class="field-inp" id="cdg-u25" placeholder="U25-101010">
           </div>
           <div class="cdg-field" style="flex:1;min-width:120px">
-            <label>Tipo</label>
-            <select id="cdg-tipo">
+            <label>Tipo de bodega</label>
+            <select id="cdg-tipo" class="field-inp">
               <option value="CDG">CDG</option>
-              <option value="Traslados">Traslados</option>
+              <option value="KTM">KTM</option>
+              <option value="otro">Otro...</option>
             </select>
           </div>
+          <div class="cdg-field" style="flex:1;min-width:120px" id="cdg-tipo-otro-wrap" style="display:none">
+            <label>Especifica bodega</label>
+            <input type="text" class="field-inp" id="cdg-tipo-otro" placeholder="Nombre bodega">
+          </div>
         </div>
+
+        <!-- Foto general del traslado -->
+        <div style="margin-bottom:.75rem">
+          <label style="font-size:.82rem;color:#555;display:block;margin-bottom:4px">📷 Foto general del traslado (opcional)</label>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" id="btn-cdg-foto-gral">📷 Tomar / Subir</button>
+            <input type="file" id="cdg-foto-gral-input" accept="image/*" capture="environment" style="display:none">
+            <span id="cdg-foto-gral-status" style="font-size:.78rem;color:#888"></span>
+          </div>
+          <div id="cdg-foto-gral-preview" style="margin-top:6px;display:none">
+            <img id="cdg-foto-gral-img" style="max-width:100%;max-height:120px;border-radius:8px;border:1px solid #e0e0e0">
+            <button id="btn-cdg-foto-gral-del" style="display:block;margin-top:4px;font-size:.75rem;color:#c0392b;background:none;border:none;cursor:pointer">× Eliminar</button>
+          </div>
+        </div>
+
+        <!-- SKU list -->
         <div id="cdg-sku-list" style="margin-bottom:.75rem"></div>
+
+        <!-- Add SKU row -->
         <div class="cdg-row">
           <div class="cdg-field" style="flex:1;min-width:90px">
             <label>SKU</label>
             <input type="text" class="field-inp" id="cdg-sku" placeholder="SKU">
           </div>
           <div class="cdg-field" style="flex:3;min-width:130px">
-            <label>Descripción</label>
-            <input type="text" class="field-inp" id="cdg-desc" placeholder="Nombre del producto">
+            <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34"></span></label>
+            <input type="text" class="field-inp" id="cdg-desc" placeholder="Se llena automático">
           </div>
           <div class="cdg-field" style="min-width:80px">
             <label>Cantidad</label>
             <input type="number" id="cdg-qty" min="0" placeholder="0">
+          </div>
+          <div class="cdg-field" style="min-width:80px">
+            <label>Costo unit.</label>
+            <input type="text" id="cdg-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
           </div>
           <div class="cdg-field" style="justify-content:flex-end">
             <label>&nbsp;</label>
             <button class="btn btn-sm" id="btn-cdg-add-sku">+ Agregar</button>
           </div>
         </div>
-        <button class="btn btn-dark btn-full" id="btn-cdg-finish" style="width:100%;margin-top:.5rem">✅ Finalizar → genera teórico Hamilton CDG</button>
+
+        <!-- Action buttons -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.75rem">
+          <button class="btn btn-sm" id="btn-cdg-save-draft" style="flex:1">💾 Guardar progreso</button>
+          <button class="btn btn-sm btn-warn" id="btn-cdg-hallazgo" style="flex:1">⚠ Crear hallazgo</button>
+          <button class="btn btn-dark" id="btn-cdg-finish" style="flex:2">🔒 Finalizar y bloquear</button>
+        </div>
       </div>
       <div id="cdg-msg"></div>
+
+      <!-- HISTORY PANELS -->
+      <div id="cdg-hist-panel" style="display:none;margin-top:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-hist-title">Historial</h3>
+          <button class="btn btn-sm" id="btn-cdg-hist-close">× Cerrar</button>
+        </div>
+        <div id="cdg-hist-content"></div>
+      </div>
+
+      <!-- SUPERVISOR: Unlock panel -->
+      <div id="cdg-unlock-panel" style="display:none;margin-top:1rem;background:#fff3cd;border:1px solid #ffc107;border-radius:10px;padding:1rem">
+        <p style="font-size:.85rem;font-weight:600;margin-bottom:.5rem">🔓 Desbloquear conteo finalizado</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:180px">
+            <label style="font-size:.78rem;color:#666;display:block;margin-bottom:4px">Selecciona conteo a desbloquear</label>
+            <select id="sel-cdg-unlock" class="field-inp" style="width:100%"></select>
+          </div>
+          <button class="btn btn-warn" id="btn-cdg-unlock">🔓 Desbloquear</button>
+        </div>
+      </div>
     </div>
 
+    <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
     <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
     <div id="pg-conteo" class="page">
 
@@ -1560,64 +1625,129 @@ function renderAsignaciones(){
    CDG → HAMILTON
 ══════════════════════════════════════════════════════════════════ */
 document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
-  var sku=document.getElementById('cdg-sku').value.trim();
-  var desc=document.getElementById('cdg-desc').value.trim();
-  var qty=parseFloat(document.getElementById('cdg-qty').value)||0;
+  var sku  = document.getElementById('cdg-sku').value.trim();
+  var desc = document.getElementById('cdg-desc').value.trim();
+  var qty  = parseFloat(document.getElementById('cdg-qty').value)||0;
   if(!sku){showMsg('cdg-msg','warn','Ingresa el SKU.');return;}
-  cdgSkus.push({sku:sku,desc:desc,qty:qty});
+  if(!qty){showMsg('cdg-msg','warn','Ingresa una cantidad mayor a 0.');return;}
+  var costo = getCosto(sku) || 0;
+  if(!desc) desc = sku;
+  cdgSkus.push({sku:sku, desc:desc, qty:qty, costo:costo, foto:null});
+  renderCDGSkuList();
   document.getElementById('cdg-sku').value='';
   document.getElementById('cdg-desc').value='';
   document.getElementById('cdg-qty').value='';
+  document.getElementById('cdg-costo').value='';
+  document.getElementById('cdg-desc-auto').textContent='';
   document.getElementById('cdg-sku').focus();
-  renderCDGSkuList();
+})
+document.getElementById('cdg-sku').addEventListener('blur', function(){
+  var sku = this.value.trim();
+  if(!sku) return;
+  var costo = getCosto(sku);
+  var costoInp = document.getElementById('cdg-costo');
+  var autoLbl  = document.getElementById('cdg-desc-auto');
+  if(costo) {
+    if(costoInp) costoInp.value = 'Q'+Number(costo).toFixed(2);
+    if(autoLbl)  autoLbl.textContent = '✓ Costo encontrado';
+  } else {
+    if(costoInp) costoInp.value = 'No encontrado';
+    if(autoLbl)  autoLbl.textContent = '';
+  }
 });
 
 function renderCDGSkuList(){
   var el=document.getElementById('cdg-sku-list');
+  if(!el) return;
   if(!cdgSkus.length){el.innerHTML='';return;}
-  el.innerHTML='<div class="tbl-wrap" style="margin-bottom:.75rem"><table>'
-    +'<thead><tr><th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th></th></tr></thead><tbody>'
-    +cdgSkus.map(function(s,i){
-      return'<tr><td>'+escH(s.sku)+'</td><td>'+escH(s.desc)+'</td><td class="tc">'+s.qty+'</td>'
-        +'<td><button class="btn btn-xs" data-di="'+i+'" style="background:#fdecea;color:#c0392b;border-color:#f5c6cb">✕</button></td></tr>';
-    }).join('')
-    +'</tbody></table></div>';
-  el.querySelectorAll('[data-di]').forEach(function(btn){
-    btn.addEventListener('click',function(){cdgSkus.splice(parseInt(btn.dataset.di),1);renderCDGSkuList();});
+  var html='<div class="tbl-wrap" style="margin-bottom:.75rem"><table>'
+    +'<thead><tr><th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th class="tc">Costo</th><th class="tc">Evidencia</th><th></th></tr></thead><tbody>';
+  cdgSkus.forEach(function(sk,i){
+    var hasFoto = sk.foto ? '✓ Foto' : '';
+    html+='<tr>'
+      +'<td>'+escH(sk.sku)+'</td>'
+      +'<td>'+escH(sk.desc)+'</td>'
+      +'<td class="tc">'+sk.qty+'</td>'
+      +'<td class="tc" style="font-size:.78rem;color:#888">'+(sk.costo?'Q'+Number(sk.costo).toFixed(2):'—')+'</td>'
+      +'<td class="tc">'
+        +(sk.foto?'<img src="'+sk.foto+'" style="height:32px;border-radius:4px;border:1px solid #e0e0e0">':'')
+        +'<button class="btn btn-sm cdg-foto-line-btn" data-i="'+i+'" style="font-size:.72rem;padding:2px 6px;min-height:28px;margin-left:4px">📷</button>'
+        +'<input type="file" class="cdg-foto-line-input" data-i="'+i+'" accept="image/*" capture="environment" style="display:none">'
+      +'</td>'
+      +'<td class="tc"><button class="cdg-del-sku btn btn-sm" data-i="'+i+'" style="color:#c0392b;font-size:.9rem;min-height:28px">×</button></td>'
+      +'</tr>';
+  });
+  html+='</tbody></table></div>';
+  el.innerHTML=html;
+  el.querySelectorAll('.cdg-del-sku').forEach(function(btn){
+    btn.addEventListener('click',function(){ cdgSkus.splice(+this.dataset.i,1); renderCDGSkuList(); });
+  });
+  el.querySelectorAll('.cdg-foto-line-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){ el.querySelectorAll('.cdg-foto-line-input')[+this.dataset.i].click(); });
+  });
+  el.querySelectorAll('.cdg-foto-line-input').forEach(function(inp){
+    inp.addEventListener('change',function(){
+      var i=+this.dataset.i, file=this.files[0]; if(!file)return;
+      var reader=new FileReader();
+      reader.onload=function(e){ cdgSkus[i].foto=e.target.result; renderCDGSkuList(); };
+      reader.readAsDataURL(file);
+    });
   });
 }
 
 document.getElementById('btn-cdg-finish').addEventListener('click',function(){
-  var u25=document.getElementById('cdg-u25').value.trim();
-  var tipo=document.getElementById('cdg-tipo').value;
+  var u25  = document.getElementById('cdg-u25').value.trim();
+  var tipoSel = document.getElementById('cdg-tipo').value;
+  var tipo = tipoSel==='otro'
+    ? (document.getElementById('cdg-tipo-otro').value.trim()||'Otro')
+    : tipoSel;
   if(!u25){showMsg('cdg-msg','warn','Ingresa el correlativo U25.');return;}
   if(!cdgSkus.length){showMsg('cdg-msg','warn','Agrega al menos un SKU.');return;}
+  if(!confirm('¿Finalizar y bloquear el conteo '+u25+'? Solo un supervisor podrá desbloquearlo.')){return;}
 
-  // Anti-duplicado: buscar si ya existe ese U25
+  var fotoGral = cdgFotoGral||null;
+  var conteo = {
+    u25:u25, tipo:tipo, skus:cdgSkus.slice(),
+    fotoGral:fotoGral, autor:currentUser?currentUser.name:'—',
+    ts:new Date().toLocaleString('es'), bloqueado:true
+  };
+
+  // Anti-duplicado: si ya existe fusionar
   var existente=Object.keys(teorico).find(function(c){return c.toLowerCase()===u25.toLowerCase();});
   if(existente){
-    // Fusionar SKUs y marcar como CDG validado
     cdgSkus.forEach(function(cs){
       var found=teorico[existente].items.find(function(it){return it.sku===cs.sku;});
       if(found){found.qty=cs.qty;}
       else{teorico[existente].items.push({sku:cs.sku,desc:cs.desc,qty:cs.qty,raw:{}});}
     });
     teorico[existente].cdgValidado=true;
-    addHist('Fusionó CDG '+u25+' con teórico existente');
-    rebuildContsList();scheduleSave();updateSubmenúCounts();
-    showMsg('cdg-msg','ok','✅ U25 <strong>'+escH(u25)+'</strong> fusionado con teórico existente y marcado como ✓ Validado CDG.');
+    teorico[existente].cdgBloqueado=true;
   } else {
     teorico[u25]={
       items:cdgSkus.map(function(s){return{sku:s.sku,desc:s.desc,qty:s.qty,raw:{}};}),
-      type:tipo, cdgValidado:true
+      type:tipo, cdgValidado:true, cdgBloqueado:true
     };
     fisico[u25]=null;
-    addHist('Creó conteo CDG: '+u25+' ('+cdgSkus.length+' SKUs)');
-    rebuildContsList();scheduleSave();updateSubmenúCounts();
-    showMsg('cdg-msg','ok','✅ Conteo CDG <strong>'+escH(u25)+'</strong> finalizado. Teórico creado con '+cdgSkus.length+' SKUs. Ya aparece en Hamilton → Traslados CDG.');
   }
-  cdgSkus=[];renderCDGSkuList();
-  document.getElementById('cdg-u25').value='';
+
+  addHist('Finalizó y bloqueó CDG: '+u25+' ('+cdgSkus.length+' SKUs)');
+
+  // Save to server
+  fetch('/api/cdg/finalizar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contId:u25,tipo:tipo,items:cdgSkus.slice(),
+      fotoGral:fotoGral,usuario:currentUser?currentUser.name:'—',bloqueado:true})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){
+        lastVersion=-1; pollNow();
+        showMsg('cdg-msg','ok','✅ Conteo <strong>'+escH(u25)+'</strong> finalizado y bloqueado. Aparece en Hamilton → Traslados CDG.');
+        cdgSkus=[]; cdgFotoGral=null; renderCDGSkuList();
+        document.getElementById('cdg-u25').value='';
+        document.getElementById('cdg-foto-gral-preview').style.display='none';
+        document.getElementById('cdg-foto-gral-status').textContent='';
+      }
+    })
+    .catch(function(e){ showMsg('cdg-msg','err','Error: '+e.message); });
 });
 
 /* ══════════════════════════════════════════════════════════════════
