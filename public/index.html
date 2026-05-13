@@ -500,8 +500,8 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <input type="text" class="field-inp" id="cdg-sku" placeholder="SKU">
           </div>
           <div class="cdg-field" style="flex:3;min-width:130px">
-            <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34"></span></label>
-            <input type="text" class="field-inp" id="cdg-desc" placeholder="Se llena automático">
+            <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
+            <input type="text" class="field-inp" id="cdg-desc" placeholder="Descripción del producto">
           </div>
           <div class="cdg-field" style="min-width:80px">
             <label>Cantidad</label>
@@ -653,7 +653,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <span id="self-assign-wrap" style="display:none">
             <button class="btn btn-sm btn-blue" id="btn-self-assign">📋 Registrarme en este conteo</button>
           </span>
-          <button id="btn-open-chat" class="btn btn-sm" style="margin-left:auto;min-height:38px;padding:0 12px">💬 Chat</button>
+
         </div>
         <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <input id="sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..."
@@ -789,16 +789,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
     </div>
   </div>
 </div>
-<!-- CHAT MODAL -->
-<div id="modal-chat" class="modal-bg">
-  <div class="modal-box" style="max-width:420px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-      <h3 style="margin:0">💬 Chat del equipo</h3>
-      <button id="btn-chat-close" style="background:none;border:none;cursor:pointer;font-size:1.2rem;min-height:44px;min-width:44px">×</button>
-    </div>
-    <div id="chat-messages" style="height:220px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;padding:8px;background:#f9f9f7;margin-bottom:.75rem;font-size:.83rem">
-      <p style="color:#aaa;text-align:center;padding:1rem">Sin mensajes recientes</p>
-    </div>
     <div style="display:flex;gap:8px">
       <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="200"
         style="flex:1;padding:9px 12px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none">
@@ -1343,11 +1333,14 @@ var _supaTimer = null;
 function saveDirectToSupabase() {
   if(_supaTimer) clearTimeout(_supaTimer);
   _supaTimer = setTimeout(function(){
+    var today = new Date();
+    var dateStr = today.toDateString();
     var payload = JSON.stringify({
       teorico: teorico, fisico: fisico,
       asignaciones: asignaciones,
       historial: (historial||[]).slice(-50),
-      date: 'Tue May 12 2026',
+      hallazgos: hallazgos||[],
+      date: dateStr,
       version: (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
     });
     fetch(SUPABASE_URL + '/rest/v1/app_state', {
@@ -2238,6 +2231,7 @@ function pollNow() {
       if(s.fisico)       fisico       = s.fisico;
       if(s.asignaciones) asignaciones = s.asignaciones;
       if(s.historial)    historial    = s.historial;
+      if(s.hallazgos)    hallazgos    = s.hallazgos;
 
       rebuildContsList();
       updateSubmenúCounts();
@@ -2580,230 +2574,6 @@ document.getElementById('chat-input').addEventListener('keydown', function(e) {
 });
 
 // Poll chat from server
-function syncChat(s) {
-  if(s.chat && Array.isArray(s.chat)) {
-    var now = Date.now();
-    var myIds = chatMessages.map(function(m){ return m.id; });
-    var changed = false;
-    s.chat.forEach(function(m) {
-      if(myIds.indexOf(m.id) < 0 && now - m.ts < CHAT_TTL) {
-        chatMessages.push(m);
-        changed = true;
-      }
-    });
-    chatMessages = chatMessages.filter(function(m){ return now - m.ts < CHAT_TTL; });
-    // Always update badge count
-    var modal = document.getElementById('modal-chat');
-    var chatBtn = document.getElementById('btn-open-chat');
-    var unread = chatMessages.filter(function(m){ return m.user !== (currentUser?currentUser.name:''); }).length;
-    if(chatBtn) chatBtn.textContent = '💬 Chat' + (unread > 0 ? ' ('+unread+')' : '');
-    if(modal && modal.classList.contains('open')) renderChat();
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// FEATURE 2: FOTO EN HALLAZGOS
-// ══════════════════════════════════════════════════════════════════════════
-var hallFotoBase64 = null;
-
-document.getElementById('btn-hall-foto').addEventListener('click', function() {
-  document.getElementById('hall-foto-input').click();
-});
-
-document.getElementById('hall-foto-input').addEventListener('change', function() {
-  var file = this.files[0]; if(!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    hallFotoBase64 = e.target.result;
-    document.getElementById('hall-foto-img').src = hallFotoBase64;
-    document.getElementById('hall-foto-preview').style.display = '';
-    document.getElementById('hall-foto-status').textContent = '✓ ' + file.name;
-  };
-  reader.readAsDataURL(file);
-});
-
-document.getElementById('btn-hall-foto-del').addEventListener('click', function() {
-  hallFotoBase64 = null;
-  document.getElementById('hall-foto-preview').style.display = 'none';
-  document.getElementById('hall-foto-status').textContent = '';
-  document.getElementById('hall-foto-input').value = '';
-});
-
-// ══════════════════════════════════════════════════════════════════════════
-// FEATURE 3: MODIFICAR HALLAZGO
-// ══════════════════════════════════════════════════════════════════════════
-var editingHallazgoId = null;
-
-function openHallazgoModal(hallazgoId) {
-  editingHallazgoId = hallazgoId || null;
-  var h = hallazgoId ? hallazgos.find(function(x){ return x.id === hallazgoId; }) : null;
-  document.getElementById('hall-cont-name').textContent = current || '—';
-  document.getElementById('hall-input').value        = h ? (h.quePaso||'') : '';
-  document.getElementById('hall-condicion').value    = h ? (h.condicion||'') : '';
-  document.getElementById('hall-criterio').value     = h ? (h.criterio||'') : '';
-  document.getElementById('hall-causa').value        = h ? (h.causa||'') : '';
-  document.getElementById('hall-efecto').value       = h ? (h.efecto||'') : '';
-  document.getElementById('hall-recomendacion').value= h ? (h.recomendacion||'') : '';
-  hallFotoBase64 = h ? (h.foto||null) : null;
-  var prev = document.getElementById('hall-foto-preview');
-  var img  = document.getElementById('hall-foto-img');
-  if(hallFotoBase64) {
-    img.src = hallFotoBase64;
-    prev.style.display = '';
-  } else {
-    prev.style.display = 'none';
-  }
-  document.getElementById('hall-foto-status').textContent = '';
-  var saveBtn = document.getElementById('btn-hall-save');
-  var modBtn  = document.getElementById('btn-hall-mod');
-  if(h) {
-    saveBtn.textContent = '💾 Guardar cambios';
-    modBtn.style.display = '';
-  } else {
-    saveBtn.textContent = 'Guardar hallazgo';
-    modBtn.style.display = 'none';
-  }
-  document.getElementById('modal-hallazgo').classList.add('open');
-}
-
-// Override btn-hallazgo to use new function
-// btn-hallazgo already wired in main script - openHallazgoModal called via override
-
-// Patch btn-hall-save to include foto + edit support
-var _origHallSave = document.getElementById('btn-hall-save').onclick;
-document.getElementById('btn-hall-save').addEventListener('click', function() {
-  var desc = document.getElementById('hall-input').value.trim();
-  if(!desc){ alert('Describe qué pasó.'); return; }
-  var now = new Date().toLocaleString('es');
-  if(editingHallazgoId) {
-    // Edit existing
-    var idx = hallazgos.findIndex(function(x){ return x.id === editingHallazgoId; });
-    if(idx >= 0) {
-      hallazgos[idx].quePaso       = desc;
-      hallazgos[idx].condicion     = document.getElementById('hall-condicion').value.trim();
-      hallazgos[idx].criterio      = document.getElementById('hall-criterio').value.trim();
-      hallazgos[idx].causa         = document.getElementById('hall-causa').value.trim();
-      hallazgos[idx].efecto        = document.getElementById('hall-efecto').value.trim();
-      hallazgos[idx].recomendacion = document.getElementById('hall-recomendacion').value.trim();
-      hallazgos[idx].foto          = hallFotoBase64;
-      hallazgos[idx].modificadoPor = currentUser.name;
-      hallazgos[idx].modificadoTs  = now;
-    }
-    flashMsg('status-bar','ok','✏️ Hallazgo modificado.');
-  } else {
-    // New hallazgo
-    hallazgos.push({
-      id: makeId(), cont: current, quePaso: desc,
-      condicion:     document.getElementById('hall-condicion').value.trim(),
-      criterio:      document.getElementById('hall-criterio').value.trim(),
-      causa:         document.getElementById('hall-causa').value.trim(),
-      efecto:        document.getElementById('hall-efecto').value.trim(),
-      recomendacion: document.getElementById('hall-recomendacion').value.trim(),
-      foto:          hallFotoBase64,
-      autor:         currentUser.name,
-      ts:            now
-    });
-    flashMsg('status-bar','ok','✅ Hallazgo guardado.');
-  }
-  addHist((editingHallazgoId?'Modificó':'Registró')+' hallazgo en '+current);
-  scheduleSave();
-  document.getElementById('modal-hallazgo').classList.remove('open');
-  editingHallazgoId = null;
-  if(typeof renderHallazgosList==='function') renderHallazgosList();
-}, true);
-
-// ══════════════════════════════════════════════════════════════════════════
-// FEATURE 4: PUERTA DE DESEMBARQUE
-// ══════════════════════════════════════════════════════════════════════════
-var puertas = {}; // { contId: 'L003.001' }
-var conteoMetadata = {}; // { contId: {fechaIngreso, fechaFurgon, placas} }
-
-document.getElementById('sel-puerta').addEventListener('change', function() {
-  if(!current) return;
-  puertas[current] = this.value;
-  updateSummaryCard();
-  scheduleSave();
-  fetch('/api/puerta', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, puerta:this.value, usuario:currentUser?currentUser.name:'—'})
-  }).then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;}).catch(function(){});
-});
-
-function updatePuertaSelector() {
-  var sel = document.getElementById('sel-puerta'); if(!sel) return;
-  sel.value = (current && puertas[current]) ? puertas[current] : '';
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// FEATURE 5: TARJETA RESUMEN
-// ══════════════════════════════════════════════════════════════════════════
-function updateSummaryCard() {
-  var card = document.getElementById('summary-card'); if(!card) return;
-  if(!current || !teorico[current]) { card.style.display='none'; return; }
-  card.style.display = '';
-  var items  = teorico[current].items || [];
-  var fis    = fisico[current] || [];
-  var tipo   = teorico[current].type || '';
-  var puerta = (puertas[current]) || '—';
-  var partic = (asignaciones[current]||[]).join(', ') || '—';
-  var contadas = 0, diffs = 0;
-  items.forEach(function(item, i) {
-    var fi = fis[i];
-    if(fi && (fi.fisico !== undefined || fi.fisico !== null)) {
-      contadas++;
-      var fv = Number(fi.fisico)||0, dv = Number(fi.daniado)||0;
-      if(fv+dv !== item.qty) diffs++;
-    }
-  });
-  document.getElementById('sc-cont').textContent    = current;
-  document.getElementById('sc-tipo').textContent    = tipo;
-  document.getElementById('sc-puerta').textContent  = puerta;
-  document.getElementById('sc-partic').textContent  = partic;
-  document.getElementById('sc-lineas').textContent  = items.length;
-  document.getElementById('sc-contadas').textContent= contadas + '/' + items.length;
-  document.getElementById('sc-pendientes').textContent = (items.length - contadas);
-  document.getElementById('sc-diffs').textContent   = diffs;
-}
-
-// Patch renderConteo to update summary + puerta
-var _origRC2 = renderConteo;
-renderConteo = function() {
-  _origRC2();
-  updateSummaryCard();
-  updatePuertaSelector();
-};
-
-// Patch sel-cont change
-document.getElementById('sel-cont').addEventListener('change', function() {
-  updateSummaryCard();
-  updatePuertaSelector();
-});
-
-// ══════════════════════════════════════════════════════════════════════════
-// PATCH POLL: sync chat + puertas from server
-// ══════════════════════════════════════════════════════════════════════════
-var _origPollProcess = null;
-// Extend existing pollNow to handle new state fields
-var _pollNowOrig = pollNow;
-pollNow = function() {
-  _pollNowOrig();
-};
-
-// After state merge, also sync chat + puertas
-// We patch the fetch handler indirectly by extending what happens after version change
-// Since pollNow is complex, we add a separate 3s interval for chat sync
-setInterval(function() {
-  if(!currentUser) return;
-  fetch('/api/state')
-    .then(function(r){ return r.json(); })
-    .then(function(s) {
-      if(s.chat) syncChat(s);
-      if(s.puertas) {
-        Object.assign(puertas, s.puertas);
-        updatePuertaSelector();
-        updateSummaryCard();
-      }
-    }).catch(function(){});
-}, 3000);
 
 
 // ── Conteo Metadata (fecha ingreso, furgon, placas) ───────────────────────
@@ -2883,5 +2653,181 @@ document.getElementById('btn-pick-none').addEventListener('click', function(){
   document.querySelectorAll('.export-pick-cb').forEach(function(cb){ cb.checked=false; });
 });
 </script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════
+// CDG IMPROVEMENTS - foto, historial, guardar progreso, desbloquear
+// ══════════════════════════════════════════════════════════════════════════
+var cdgFotoGral = null;
+
+// Tipo selector - show/hide "otro" field
+(function(){
+  var tipoSel = document.getElementById('cdg-tipo');
+  if(tipoSel) tipoSel.addEventListener('change', function(){
+    var wrap = document.getElementById('cdg-tipo-otro-wrap');
+    if(wrap) wrap.style.display = this.value==='otro' ? '' : 'none';
+  });
+})();
+
+// Foto general
+(function(){
+  var btnFoto = document.getElementById('btn-cdg-foto-gral');
+  var inpFoto = document.getElementById('cdg-foto-gral-input');
+  var btnDel  = document.getElementById('btn-cdg-foto-gral-del');
+  if(btnFoto) btnFoto.addEventListener('click', function(){ if(inpFoto) inpFoto.click(); });
+  if(inpFoto) inpFoto.addEventListener('change', function(){
+    var file=this.files[0]; if(!file) return;
+    var reader=new FileReader();
+    reader.onload=function(e){
+      cdgFotoGral=e.target.result;
+      var img=document.getElementById('cdg-foto-gral-img');
+      var prev=document.getElementById('cdg-foto-gral-preview');
+      var status=document.getElementById('cdg-foto-gral-status');
+      if(img) img.src=cdgFotoGral;
+      if(prev) prev.style.display='';
+      if(status) status.textContent='✓ '+file.name;
+    };
+    reader.readAsDataURL(file);
+  });
+  if(btnDel) btnDel.addEventListener('click', function(){
+    cdgFotoGral=null;
+    var prev=document.getElementById('cdg-foto-gral-preview');
+    var status=document.getElementById('cdg-foto-gral-status');
+    if(prev) prev.style.display='none';
+    if(status) status.textContent='';
+    if(inpFoto) inpFoto.value='';
+  });
+})();
+
+// Auto-fill desc + costo when SKU typed
+(function(){
+  var skuInp = document.getElementById('cdg-sku');
+  if(!skuInp) return;
+  skuInp.addEventListener('blur', function(){
+    var sku = this.value.trim(); if(!sku) return;
+    var costo = getCosto(sku);
+    var costoInp = document.getElementById('cdg-costo');
+    var autoLbl  = document.getElementById('cdg-desc-auto');
+    if(costo && costo > 0) {
+      if(costoInp) costoInp.value = 'Q'+Number(costo).toFixed(2);
+      if(autoLbl)  autoLbl.textContent = '✓ Q'+Number(costo).toFixed(2);
+    } else {
+      if(costoInp) costoInp.value = '';
+      if(autoLbl)  autoLbl.textContent = '';
+    }
+  });
+})();
+
+// Save draft
+(function(){
+  var btn = document.getElementById('btn-cdg-save-draft');
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    var u25 = (document.getElementById('cdg-u25')||{}).value||'';
+    u25 = u25.trim();
+    if(!u25){ showMsg('cdg-msg','warn','Ingresa el correlativo U25.'); return; }
+    if(!cdgSkus.length){ showMsg('cdg-msg','warn','Agrega al menos un SKU.'); return; }
+    var tipoSel = document.getElementById('cdg-tipo');
+    var tipo = tipoSel ? tipoSel.value : 'CDG';
+    if(tipo==='otro'){
+      var otrInp = document.getElementById('cdg-tipo-otro');
+      tipo = otrInp ? (otrInp.value.trim()||'Otro') : 'Otro';
+    }
+    fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contId:u25,items:cdgSkus.slice(),tipo:tipo,
+        fotoGral:cdgFotoGral,usuario:currentUser?currentUser.name:'—'})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.ok){ showMsg('cdg-msg','ok','💾 Progreso guardado — aparece en Historial '+tipo+'.'); lastVersion=-1; }
+      })
+      .catch(function(e){ showMsg('cdg-msg','err','Error: '+e.message); });
+  });
+})();
+
+// History panels
+function showCDGHist(tipo) {
+  fetch('/api/cdg')
+    .then(function(r){return r.json();})
+    .then(function(data){
+      var panel   = document.getElementById('cdg-hist-panel');
+      var title   = document.getElementById('cdg-hist-title');
+      var content = document.getElementById('cdg-hist-content');
+      if(!panel||!title||!content) return;
+      var keys = Object.keys(data).filter(function(k){
+        var t = data[k].tipo||'CDG';
+        if(tipo==='otro') return t!=='CDG'&&t!=='KTM';
+        return t===tipo;
+      });
+      title.textContent = 'Historial ' + tipo + ' ('+keys.length+')';
+      if(!keys.length){
+        content.innerHTML='<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin conteos de tipo '+escH(tipo)+'.</p>';
+      } else {
+        var h='<div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
+        keys.forEach(function(id){
+          var c=data[id];
+          var isLocked=c.bloqueado||c.status==='closed';
+          var badge=isLocked
+            ?'<span style="background:#fdecea;color:#c0392b;padding:2px 8px;border-radius:10px;font-size:.75rem">🔒 Bloqueado</span>'
+            :'<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">📝 Borrador</span>';
+          h+='<div style="padding:10px 14px;border-bottom:1px solid #f0f0ee">'
+            +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
+            +'<div><strong>'+escH(id)+'</strong> <span style="color:#888;font-size:.78rem">'
+            +(c.items?c.items.length:0)+' SKUs · '+escH(c.autor||'—')+'</span></div>'
+            +'<div style="display:flex;align-items:center;gap:6px">'+badge
+            +(isSup()&&isLocked
+              ?'<button class="btn btn-sm cdg-unlock-btn" data-id="'+escH(id)+'" style="font-size:.75rem;min-height:28px;padding:2px 8px">🔓 Desbloquear</button>'
+              :'')
+            +'</div></div>'
+            +(c.fotoGral?'<img src="'+c.fotoGral+'" style="max-height:80px;border-radius:6px;margin-top:6px;border:1px solid #e0e0e0">':'')
+            +'</div>';
+        });
+        h+='</div>';
+        content.innerHTML=h;
+        content.querySelectorAll('.cdg-unlock-btn').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var id=this.dataset.id;
+            if(!confirm('¿Desbloquear conteo '+id+'?')) return;
+            fetch('/api/cdg/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({contId:id,usuario:currentUser?currentUser.name:'—'})})
+              .then(function(r){return r.json();})
+              .then(function(d){ if(d.ok){showCDGHist(tipo);} });
+          });
+        });
+      }
+      panel.style.display='';
+    })
+    .catch(function(e){ console.warn('CDG hist error:',e); });
+}
+
+(function(){
+  var btnCDG   = document.getElementById('btn-hist-cdg');
+  var btnKTM   = document.getElementById('btn-hist-ktm');
+  var btnOtros = document.getElementById('btn-hist-otros');
+  var btnClose = document.getElementById('btn-cdg-hist-close');
+  if(btnCDG)   btnCDG.addEventListener('click',   function(){ showCDGHist('CDG'); });
+  if(btnKTM)   btnKTM.addEventListener('click',   function(){ showCDGHist('KTM'); });
+  if(btnOtros) btnOtros.addEventListener('click', function(){ showCDGHist('otro'); });
+  if(btnClose) btnClose.addEventListener('click', function(){
+    var panel = document.getElementById('cdg-hist-panel');
+    if(panel) panel.style.display='none';
+  });
+})();
+
+// CDG Hallazgo button
+(function(){
+  var btn = document.getElementById('btn-cdg-hallazgo');
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    var hallContEl = document.getElementById('hall-cont-name');
+    if(hallContEl) hallContEl.textContent = u25.trim()||'CDG';
+    var inp = document.getElementById('hall-input');
+    if(inp) inp.value='';
+    var modal = document.getElementById('modal-hallazgo');
+    if(modal) modal.classList.add('open');
+  });
+})();
+</script>
+
 </body>
 </html>
