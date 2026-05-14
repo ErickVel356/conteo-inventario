@@ -1484,22 +1484,73 @@ function buildReporte(){
 document.getElementById('btn-hallazgo').addEventListener('click',function(){
   document.getElementById('hall-cont-name').textContent=current||'—';
   ['hall-input','hall-condicion','hall-criterio','hall-causa','hall-efecto','hall-recomendacion'].forEach(function(id){document.getElementById(id).value='';});
+  // Reset photo state
+  var preview=document.getElementById('hall-foto-preview');
+  var img=document.getElementById('hall-foto-img');
+  var status=document.getElementById('hall-foto-status');
+  var input=document.getElementById('hall-foto-input');
+  if(preview)preview.style.display='none';
+  if(img)img.src='';
+  if(status)status.textContent='';
+  if(input)input.value='';
+  window._hallFotoData=null;
   document.getElementById('modal-hallazgo').classList.add('open');
 });
+
+// Fix Bug 3: Wire foto button in hallazgo modal
+(function(){
+  var btnFoto=document.getElementById('btn-hall-foto');
+  var fotoInput=document.getElementById('hall-foto-input');
+  var fotoPreview=document.getElementById('hall-foto-preview');
+  var fotoImg=document.getElementById('hall-foto-img');
+  var fotoStatus=document.getElementById('hall-foto-status');
+  var btnFotoDel=document.getElementById('btn-hall-foto-del');
+  if(btnFoto&&fotoInput){
+    btnFoto.addEventListener('click',function(){ fotoInput.click(); });
+    fotoInput.addEventListener('change',function(){
+      var file=this.files[0];if(!file)return;
+      var reader=new FileReader();
+      reader.onload=function(e){
+        window._hallFotoData=e.target.result;
+        if(fotoImg)fotoImg.src=e.target.result;
+        if(fotoPreview)fotoPreview.style.display='';
+        if(fotoStatus)fotoStatus.textContent='✓ Foto lista';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  if(btnFotoDel){
+    btnFotoDel.addEventListener('click',function(){
+      window._hallFotoData=null;
+      if(fotoImg)fotoImg.src='';
+      if(fotoPreview)fotoPreview.style.display='none';
+      if(fotoStatus)fotoStatus.textContent='';
+      if(fotoInput)fotoInput.value='';
+    });
+  }
+})();
 document.getElementById('btn-hall-cancel').addEventListener('click',function(){document.getElementById('modal-hallazgo').classList.remove('open');});
 document.getElementById('btn-hall-save').addEventListener('click',function(){
   var desc=document.getElementById('hall-input').value.trim();
   if(!desc){alert('Describe qué pasó.');return;}
-  hallazgos.push({id:makeId(),cont:current,quePaso:desc,
+  var hall={id:makeId(),cont:current,quePaso:desc,
     condicion:document.getElementById('hall-condicion').value.trim(),
     criterio:document.getElementById('hall-criterio').value.trim(),
     causa:document.getElementById('hall-causa').value.trim(),
     efecto:document.getElementById('hall-efecto').value.trim(),
     recomendacion:document.getElementById('hall-recomendacion').value.trim(),
+    foto:window._hallFotoData||null,
     autor:currentUser.name,ts:new Date().toLocaleString('es')
-  });
+  };
+  hallazgos.push(hall);
   addHist('Registró hallazgo en '+current);
-  scheduleSave();
+  // Save to server
+  fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({hallazgo:hall,action:'add'})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.ok)lastVersion=d.version;})
+    .catch(function(){saveDirectToSupabase();});
+  window._hallFotoData=null;
   document.getElementById('modal-hallazgo').classList.remove('open');
   renderHallazgosList();
   flashMsg('status-bar','ok','✅ Hallazgo guardado.');
@@ -2556,16 +2607,22 @@ function updateSummaryCard() {
   if(!current || !teorico[current]) { card.style.display='none'; return; }
   card.style.display = '';
   var items   = teorico[current].items || [];
-  var fis     = fisico[current] || [];
+  var fis     = fisico[current];
   var tipo    = teorico[current].type || '';
   var puerta  = puertas[current] || '—';
   var partic  = (asignaciones[current]||[]).join(', ') || '—';
   var contadas = 0, diffs = 0;
+  // Read live values from DOM inputs (most up-to-date)
   items.forEach(function(item, i) {
-    var fi = Array.isArray(fis) ? fis[i] : null;
-    if(fi && fi.fisico !== null && fi.fisico !== undefined) {
+    var fiEl = document.getElementById('fi'+i);
+    var fv = fiEl ? parseFloat(fiEl.value) : NaN;
+    // Also check server data as fallback
+    if(isNaN(fv) && Array.isArray(fis) && fis[i]) {
+      var fiObj = fis[i];
+      if(fiObj && (fiObj.quien || fiObj.lastUser)) fv = Number(fiObj.fisico)||0;
+    }
+    if(!isNaN(fv)) {
       contadas++;
-      var fv = Number(fi.fisico)||0;
       if(fv !== item.qty) diffs++;
     }
   });
@@ -2651,6 +2708,17 @@ function saveMetadata() {
     el.addEventListener('blur',   function(){ if(typeof saveMetadata==='function') saveMetadata(); });
   }
 });
+
+// Fix Bug 2: Puerta selector also must trigger saveMetadata
+(function(){
+  var selPuerta = document.getElementById('sel-puerta');
+  if(selPuerta) {
+    selPuerta.addEventListener('change', function(){
+      if(current) puertas[current] = this.value;
+      if(typeof saveMetadata==='function') saveMetadata();
+    });
+  }
+})();
 
 // Call updateMetaInputs when container changes
 document.getElementById('sel-cont').addEventListener('change', function(){
