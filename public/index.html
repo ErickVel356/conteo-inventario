@@ -271,6 +271,19 @@ textarea.field-inp{resize:vertical;min-height:72px}
 .export-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .export-row label{font-size:.875rem;color:#666}
 
+/* ── CDG FOTO SLOTS ─────────────────────────────────────────────── */
+.cdg-foto-slot{border:1.5px dashed #ccc;border-radius:10px;padding:8px;background:#fafaf8;text-align:center;cursor:pointer;transition:all .12s;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}
+.cdg-foto-slot:hover{border-color:#888;background:#f5f5f3}
+.cdg-foto-slot.has-photo{border-style:solid;border-color:#1e7e34;background:#fff;padding:0;overflow:hidden}
+.cdg-foto-slot img{max-width:100%;max-height:120px;display:block;border-radius:8px;object-fit:cover}
+.cdg-foto-slot .slot-label{font-size:.72rem;color:#666;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.cdg-foto-slot .slot-ico{font-size:1.4rem;color:#bbb}
+.cdg-foto-slot .slot-del{position:absolute;top:4px;right:4px;background:rgba(255,255,255,.95);border:1px solid #c0392b;color:#c0392b;border-radius:50%;width:22px;height:22px;font-size:.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;z-index:2}
+.cdg-foto-slot .slot-label-overlay{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:.65rem;padding:3px 5px;text-align:center;text-transform:uppercase;letter-spacing:.3px;font-weight:600}
+@media (max-width:600px){
+  #cdg-foto-grid{grid-template-columns:repeat(2,1fr)!important}
+}
+
 /* ── DROP ZONE ──────────────────────────────────────────────────── */
 .drop{border:2px dashed #ccc;border-radius:12px;padding:2rem 1.25rem;text-align:center;cursor:pointer;transition:all .15s;-webkit-user-select:none;user-select:none;background:#fff}
 .drop:active{border-color:#888;background:#fafaf8}
@@ -478,44 +491,39 @@ textarea.field-inp{resize:vertical;min-height:72px}
           </div>
         </div>
 
-        <!-- Foto general del traslado -->
+        <!-- 5 fotos del traslado con etiquetas -->
         <div style="margin-bottom:.75rem">
-          <label style="font-size:.82rem;color:#555;display:block;margin-bottom:4px">📷 Foto general del traslado (opcional)</label>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="btn-cdg-foto-gral">📷 Tomar / Subir</button>
-            <input type="file" id="cdg-foto-gral-input" accept="image/*" capture="environment" style="display:none">
-            <span id="cdg-foto-gral-status" style="font-size:.78rem;color:#888"></span>
-          </div>
-          <div id="cdg-foto-gral-preview" style="margin-top:6px;display:none">
-            <img id="cdg-foto-gral-img" style="max-width:100%;max-height:120px;border-radius:8px;border:1px solid #e0e0e0">
-            <button id="btn-cdg-foto-gral-del" style="display:block;margin-top:4px;font-size:.75rem;color:#c0392b;background:none;border:none;cursor:pointer">× Eliminar</button>
-          </div>
+          <label style="font-size:.82rem;color:#555;display:block;margin-bottom:6px;font-weight:500">📷 Evidencia fotográfica del traslado</label>
+          <div id="cdg-foto-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px"></div>
         </div>
 
-        <!-- SKU list -->
+        <!-- SKU list (encabezado dinámico) -->
         <div id="cdg-sku-list" style="margin-bottom:.75rem"></div>
 
         <!-- Add SKU row -->
-        <div class="cdg-row">
-          <div class="cdg-field" style="flex:1;min-width:90px">
-            <label>SKU</label>
-            <input type="text" class="field-inp" id="cdg-sku" placeholder="SKU">
-          </div>
-          <div class="cdg-field" style="flex:3;min-width:130px">
-            <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
-            <input type="text" class="field-inp" id="cdg-desc" placeholder="Descripción del producto">
-          </div>
-          <div class="cdg-field" style="min-width:80px">
-            <label>Cantidad</label>
-            <input type="number" id="cdg-qty" min="0" placeholder="0">
-          </div>
-          <div class="cdg-field" style="min-width:80px">
-            <label>Costo unit.</label>
-            <input type="text" id="cdg-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
-          </div>
-          <div class="cdg-field" style="justify-content:flex-end">
-            <label>&nbsp;</label>
-            <button class="btn btn-sm" id="btn-cdg-add-sku">+ Agregar</button>
+        <div style="background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.5rem">
+          <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar SKU</div>
+          <div class="cdg-row" style="margin-bottom:0">
+            <div class="cdg-field" style="flex:1;min-width:100px">
+              <label>SKU</label>
+              <input type="text" class="field-inp" id="cdg-sku" placeholder="SKU">
+            </div>
+            <div class="cdg-field" style="flex:3;min-width:160px">
+              <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
+              <input type="text" class="field-inp" id="cdg-desc" placeholder="Descripción del producto">
+            </div>
+            <div class="cdg-field" style="min-width:90px">
+              <label>Cantidad</label>
+              <input type="number" id="cdg-qty" min="0" placeholder="0">
+            </div>
+            <div class="cdg-field" style="min-width:100px">
+              <label>Costo unit.</label>
+              <input type="text" id="cdg-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
+            </div>
+            <div class="cdg-field" style="justify-content:flex-end">
+              <label>&nbsp;</label>
+              <button class="btn btn-sm btn-dark" id="btn-cdg-add-sku" style="min-width:100px">+ Agregar</button>
+            </div>
           </div>
         </div>
 
@@ -1006,11 +1014,14 @@ document.getElementById('mc-hamilton').addEventListener('click',function(){
 document.getElementById('mc-cdg').addEventListener('click',function(){
   navTo('pg-cdg','🏢 Conteos CDG');
   cdgSkus=[];
+  cdgFotos={};
+  cdgFotoGral=null;
   document.getElementById('cdg-u25').value='';
   document.getElementById('cdg-sku').value='';
   document.getElementById('cdg-desc').value='';
   document.getElementById('cdg-qty').value='';
   renderCDGSkuList();
+  if(typeof renderCDGFotoGrid==='function') renderCDGFotoGrid();
   document.getElementById('cdg-msg').innerHTML='';
 });
 document.getElementById('btn-reset').addEventListener('click',function(){
@@ -1418,6 +1429,7 @@ document.getElementById('btn-hallazgo').addEventListener('click',function(){
   if(status)  status.textContent='';
   if(input)   input.value='';
   window._hallFotoData=null;
+  window._editingHallId=null;
   document.getElementById('modal-hallazgo').classList.add('open');
 });
 
@@ -1458,60 +1470,202 @@ document.getElementById('btn-hall-cancel').addEventListener('click',function(){d
 document.getElementById('btn-hall-save').addEventListener('click',function(){
   var desc=document.getElementById('hall-input').value.trim();
   if(!desc){alert('Describe qué pasó.');return;}
-  var hall = {
-    id:makeId(), cont:current, quePaso:desc,
-    condicion:document.getElementById('hall-condicion').value.trim(),
-    criterio:document.getElementById('hall-criterio').value.trim(),
-    causa:document.getElementById('hall-causa').value.trim(),
-    efecto:document.getElementById('hall-efecto').value.trim(),
-    recomendacion:document.getElementById('hall-recomendacion').value.trim(),
-    foto:window._hallFotoData||null,
-    autor:currentUser.name, ts:new Date().toLocaleString('es')
-  };
-  hallazgos.push(hall);
-  addHist('Registró hallazgo en '+current);
-  // Persist to server
-  fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({hallazgo:hall, action:'add'})})
-    .then(function(r){return r.json();})
-    .then(function(d){if(d.ok)lastVersion=d.version;})
-    .catch(function(){});
+  var editingId = window._editingHallId;
+  var hall;
+  if(editingId) {
+    var existing = hallazgos.find(function(x){ return x.id===editingId; });
+    if(existing) {
+      existing.quePaso       = desc;
+      existing.condicion     = document.getElementById('hall-condicion').value.trim();
+      existing.criterio      = document.getElementById('hall-criterio').value.trim();
+      existing.causa         = document.getElementById('hall-causa').value.trim();
+      existing.efecto        = document.getElementById('hall-efecto').value.trim();
+      existing.recomendacion = document.getElementById('hall-recomendacion').value.trim();
+      existing.foto          = window._hallFotoData || null;
+      existing.modificadoPor = currentUser.name;
+      existing.modificadoTs  = new Date().toLocaleString('es');
+      hall = existing;
+      addHist('Modificó hallazgo en '+existing.cont);
+      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
+        .then(function(r){return r.json();})
+        .then(function(d){if(d.ok)lastVersion=d.version;})
+        .catch(function(){});
+    }
+  } else {
+    hall = {
+      id:makeId(), cont:current, quePaso:desc,
+      condicion:document.getElementById('hall-condicion').value.trim(),
+      criterio:document.getElementById('hall-criterio').value.trim(),
+      causa:document.getElementById('hall-causa').value.trim(),
+      efecto:document.getElementById('hall-efecto').value.trim(),
+      recomendacion:document.getElementById('hall-recomendacion').value.trim(),
+      foto:window._hallFotoData||null,
+      autor:currentUser.name, ts:new Date().toLocaleString('es')
+    };
+    hallazgos.push(hall);
+    addHist('Registró hallazgo en '+current);
+    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({hallazgo:hall, action:'add'})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok)lastVersion=d.version;})
+      .catch(function(){});
+  }
   window._hallFotoData=null;
+  window._editingHallId=null;
   document.getElementById('modal-hallazgo').classList.remove('open');
   renderHallazgosList();
-  flashMsg('status-bar','ok','✅ Hallazgo guardado.');
+  flashMsg('status-bar','ok', editingId ? '✅ Hallazgo modificado.' : '✅ Hallazgo guardado.');
 });
 document.getElementById('modal-hallazgo').addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});
 
 function renderHallazgosList(){
   var list=document.getElementById('hall-list');
   var empty=document.getElementById('hall-empty');
-  var h=hallazgos.filter(function(h){return!current||h.cont===current;});
-  if(!h.length){list.innerHTML='';empty.style.display='';return;}
-  empty.style.display='none';
-  list.innerHTML=h.map(function(hh,i){
-    return'<div class="card" style="margin-bottom:.75rem">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
-      +'<span class="badge b-diff">⚠ Hallazgo #'+(i+1)+' — '+escH(hh.cont)+'</span>'
-      +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor)+' · '+escH(hh.ts)+'</span>'
-      +'</div>'
-      +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.quePaso)+'</p>'
-      +(hh.condicion?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Condición:</strong> '+escH(hh.condicion)+'</p>':'')
-      +(hh.criterio?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Criterio:</strong> '+escH(hh.criterio)+'</p>':'')
-      +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+escH(hh.causa)+'</p>':'')
-      +(hh.efecto?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Efecto:</strong> '+escH(hh.efecto)+'</p>':'')
-      +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+escH(hh.recomendacion)+'</p>':'')
-      +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
-      +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs)+'</p>':'')
-      +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
-      +'</div>';
-  }).join('');
+  if(!hallazgos.length){
+    list.innerHTML='';
+    if(empty) empty.style.display='';
+    return;
+  }
+  if(empty) empty.style.display='none';
+
+  // Toolbar with Word export
+  var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
+    +'<span style="font-size:.85rem;color:#666">Total: <strong>'+hallazgos.length+'</strong> hallazgo'+(hallazgos.length!==1?'s':'')+' en '+Object.keys(hallazgos.reduce(function(a,h){a[h.cont]=1;return a;},{})).length+' contenedor(es)</span>'
+    +'<button class="btn btn-sm btn-blue" id="btn-hall-word">📥 Exportar Word</button>'
+    +'</div>';
+
+  // Group by container
+  var byCont = {};
+  hallazgos.forEach(function(h){
+    if(!byCont[h.cont]) byCont[h.cont]=[];
+    byCont[h.cont].push(h);
+  });
+  var groupKeys = Object.keys(byCont).sort();
+  var globalIdx = 0;
+  var html = toolbar;
+  groupKeys.forEach(function(cont){
+    html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+escH(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
+    byCont[cont].forEach(function(hh){
+      globalIdx++;
+      html += '<div class="card" style="margin-bottom:.75rem">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
+        +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
+        +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
+        +'</div>'
+        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.quePaso||'')+'</p>'
+        +(hh.condicion?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Condición:</strong> '+escH(hh.condicion)+'</p>':'')
+        +(hh.criterio?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Criterio:</strong> '+escH(hh.criterio)+'</p>':'')
+        +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+escH(hh.causa)+'</p>':'')
+        +(hh.efecto?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Efecto:</strong> '+escH(hh.efecto)+'</p>':'')
+        +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+escH(hh.recomendacion)+'</p>':'')
+        +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
+        +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs)+'</p>':'')
+        +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
+        +'</div>';
+    });
+  });
+  list.innerHTML = html;
+
+  // Wire Word export
+  var btnWord = document.getElementById('btn-hall-word');
+  if(btnWord) btnWord.addEventListener('click', exportHallazgosWord);
+
   // Wire edit buttons
   list.querySelectorAll('.edit-hall-btn').forEach(function(btn){
     btn.addEventListener('click',function(){
       openHallazgoModal(this.dataset.id);
     });
   });
+}
+
+// Open the hallazgo modal pre-filled with an existing hallazgo for editing
+function openHallazgoModal(id){
+  var h = hallazgos.find(function(x){ return x.id===id; });
+  if(!h) return;
+  document.getElementById('hall-cont-name').textContent = h.cont||'—';
+  document.getElementById('hall-input').value         = h.quePaso       || '';
+  document.getElementById('hall-condicion').value     = h.condicion     || '';
+  document.getElementById('hall-criterio').value      = h.criterio      || '';
+  document.getElementById('hall-causa').value         = h.causa         || '';
+  document.getElementById('hall-efecto').value        = h.efecto        || '';
+  document.getElementById('hall-recomendacion').value = h.recomendacion || '';
+  // Photo
+  var preview=document.getElementById('hall-foto-preview');
+  var img    =document.getElementById('hall-foto-img');
+  var status =document.getElementById('hall-foto-status');
+  if(h.foto){
+    window._hallFotoData = h.foto;
+    if(img)     img.src=h.foto;
+    if(preview) preview.style.display='';
+    if(status)  status.textContent='Foto existente';
+  } else {
+    window._hallFotoData = null;
+    if(preview) preview.style.display='none';
+    if(img)     img.src='';
+    if(status)  status.textContent='';
+  }
+  // Mark modal as edit mode
+  window._editingHallId = id;
+  document.getElementById('modal-hallazgo').classList.add('open');
+}
+
+// Build and download a single Word document with all hallazgos grouped by container
+function exportHallazgosWord(){
+  if(!hallazgos.length){ alert('No hay hallazgos para exportar.'); return; }
+  var today  = new Date();
+  var fecha  = today.toLocaleDateString('es');
+  var autor  = currentUser ? currentUser.name : '—';
+
+  // Group by container
+  var byCont = {};
+  hallazgos.forEach(function(h){
+    if(!byCont[h.cont]) byCont[h.cont]=[];
+    byCont[h.cont].push(h);
+  });
+
+  var sections = '';
+  var globalIdx = 0;
+  Object.keys(byCont).sort().forEach(function(cont){
+    sections += '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:24pt">Contenedor: '+escH(cont)+'</h2>';
+    byCont[cont].forEach(function(h){
+      globalIdx++;
+      sections += '<h3 style="color:#b7770d;margin-top:18pt">Hallazgo #'+globalIdx+'</h3>'
+        +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:11pt">'
+        +'<tr><td style="width:160px;background:#f0f0ee;font-weight:bold">Auditor</td><td>'+escH(h.autor||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Fecha y hora</td><td>'+escH(h.ts||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">¿Qué pasó?</td><td>'+escH(h.quePaso||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Condición</td><td>'+escH(h.condicion||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Criterio</td><td>'+escH(h.criterio||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Causa</td><td>'+escH(h.causa||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Efecto</td><td>'+escH(h.efecto||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Recomendación</td><td>'+escH(h.recomendacion||'')+'</td></tr>'
+        +(h.modificadoPor?'<tr><td style="background:#f0f0ee;font-weight:bold">Modificado por</td><td>'+escH(h.modificadoPor)+' · '+escH(h.modificadoTs||'')+'</td></tr>':'')
+        +'</table>'
+        +(h.foto?'<p style="margin-top:6pt"><img src="'+h.foto+'" style="max-width:480px;max-height:360px;border:1px solid #ccc"></p>':'');
+    });
+  });
+
+  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    +'<head><meta charset="utf-8"><title>Hallazgos</title></head>'
+    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
+    +'<h1 style="color:#1a1a1a">Reporte de Hallazgos de Auditoría</h1>'
+    +'<p><strong>Fecha:</strong> '+escH(fecha)+'<br><strong>Exportado por:</strong> '+escH(autor)+'<br>'
+    +'<strong>Total de hallazgos:</strong> '+hallazgos.length+'</p>'
+    +sections
+    +'</body></html>';
+
+  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  var ds   = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  a.href     = url;
+  a.download = 'Hallazgos_'+ds+'.doc';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  addHist('Exportó reporte Word de hallazgos ('+hallazgos.length+')');
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1633,6 +1787,8 @@ document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
     if(tipoAuto==='otro'){var oi=document.getElementById('cdg-tipo-otro');tipoAuto=oi&&oi.value.trim()||'Otro';}
     fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({contId:u25Auto.trim(),items:cdgSkus.slice(),tipo:tipoAuto,
+        fotoGral:cdgFotos.marchamo||cdgFotoGral||null,
+        fotos:Object.assign({}, cdgFotos),
         usuario:currentUser?currentUser.name:'—'})})
       .catch(function(e){
         // Server down - save directly to Supabase
@@ -1704,10 +1860,12 @@ document.getElementById('btn-cdg-finish').addEventListener('click',function(){
   if(!cdgSkus.length){showMsg('cdg-msg','warn','Agrega al menos un SKU.');return;}
   if(!confirm('¿Finalizar y bloquear el conteo '+u25+'? Solo un supervisor podrá desbloquearlo.')){return;}
 
-  var fotoGral = cdgFotoGral||null;
+  var fotoGral = cdgFotos.marchamo || cdgFotoGral || null;
+  var fotos    = Object.assign({}, cdgFotos);  // snapshot
   var conteo = {
     u25:u25, tipo:tipo, skus:cdgSkus.slice(),
-    fotoGral:fotoGral, autor:currentUser?currentUser.name:'—',
+    fotoGral:fotoGral, fotos:fotos,
+    autor:currentUser?currentUser.name:'—',
     ts:new Date().toLocaleString('es'), bloqueado:true
   };
 
@@ -1734,16 +1892,14 @@ document.getElementById('btn-cdg-finish').addEventListener('click',function(){
   // Save to server
   fetch('/api/cdg/finalizar',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({contId:u25,tipo:tipo,items:cdgSkus.slice(),
-      fotoGral:fotoGral,usuario:currentUser?currentUser.name:'—',bloqueado:true})})
+      fotoGral:fotoGral, fotos:fotos, usuario:currentUser?currentUser.name:'—',bloqueado:true})})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){
         lastVersion=-1; pollNow();
         showMsg('cdg-msg','ok','✅ Conteo <strong>'+escH(u25)+'</strong> finalizado y bloqueado. Aparece en Hamilton → Traslados CDG.');
-        cdgSkus=[]; cdgFotoGral=null; renderCDGSkuList();
+        cdgSkus=[]; cdgFotos={}; cdgFotoGral=null; renderCDGSkuList(); renderCDGFotoGrid();
         document.getElementById('cdg-u25').value='';
-        document.getElementById('cdg-foto-gral-preview').style.display='none';
-        document.getElementById('cdg-foto-gral-status').textContent='';
       }
     })
     .catch(function(e){ showMsg('cdg-msg','err','Error: '+e.message); });
@@ -2151,8 +2307,9 @@ document.getElementById('tab-btn-asign').addEventListener('click',function(){
   renderAsignaciones();
 });
 
-document.getElementById('sel-cont').addEventListener('change',renderConteo);
-document.getElementById('btn-save').addEventListener('click',saveConteo);
+// Use a wrapper so later renderConteo/saveConteo reassignments (patches below) take effect
+document.getElementById('sel-cont').addEventListener('change',function(){ renderConteo(); });
+document.getElementById('btn-save').addEventListener('click',function(){ saveConteo(); });
 document.getElementById('btn-export').addEventListener('click',exportExcel);
 
 
@@ -2519,13 +2676,20 @@ function updateSummaryCard() {
   var puerta  = puertas[current] || '—';
   var partic  = (asignaciones[current]||[]).join(', ') || '—';
   var contadas = 0, diffs = 0;
-  // Read live values from DOM inputs (most up-to-date); fall back to server data
+  // A row counts as "contada" only if it has an author stamp (quien/lastUser),
+  // which means someone actually saved it — not a server-side 0 fill.
   items.forEach(function(item, i) {
-    var fiEl = document.getElementById('fi'+i);
-    var fv = fiEl ? parseFloat(fiEl.value) : NaN;
-    if(isNaN(fv) && Array.isArray(fis) && fis[i]) {
-      var fiObj = fis[i];
-      if(fiObj && (fiObj.quien || fiObj.lastUser)) fv = Number(fiObj.fisico)||0;
+    var fiObj = (Array.isArray(fis) && fis[i]) ? fis[i] : null;
+    var hasAuthor = fiObj && (fiObj.quien || fiObj.lastUser);
+    var fv = NaN;
+    if(hasAuthor) {
+      fv = Number(fiObj.fisico);
+    } else {
+      // Also count if user is actively typing in the DOM right now (live edit)
+      var fiEl = document.getElementById('fi'+i);
+      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) {
+        fv = parseFloat(fiEl.value);
+      }
     }
     if(!isNaN(fv)) {
       contadas++;
@@ -2679,7 +2843,66 @@ document.getElementById('btn-pick-none').addEventListener('click', function(){
 // ══════════════════════════════════════════════════════════════════════════
 // CDG IMPROVEMENTS - foto, historial, guardar progreso, desbloquear
 // ══════════════════════════════════════════════════════════════════════════
-var cdgFotoGral = null;
+// 5-slot photo grid with labels. cdgFotos is { marchamo, manifiesto, placaFurgon, otro1, otro2 }
+var CDG_FOTO_SLOTS = [
+  { key:'marchamo',    label:'Marchamo'    },
+  { key:'manifiesto',  label:'Manifiesto'  },
+  { key:'placaFurgon', label:'Placa Furgón'},
+  { key:'otro1',       label:'Otro'        },
+  { key:'otro2',       label:'Otro 2'      }
+];
+var cdgFotos = {};                 // dataURL keyed by slot.key
+var cdgFotoGral = null;            // legacy alias; kept = cdgFotos.marchamo for backward compat
+
+function renderCDGFotoGrid(){
+  var grid = document.getElementById('cdg-foto-grid');
+  if(!grid) return;
+  grid.innerHTML = CDG_FOTO_SLOTS.map(function(slot){
+    var data = cdgFotos[slot.key];
+    if(data){
+      return '<div class="cdg-foto-slot has-photo" data-key="'+slot.key+'">'
+        +'<img src="'+data+'" alt="'+escH(slot.label)+'">'
+        +'<button class="slot-del" data-key="'+slot.key+'" title="Eliminar">×</button>'
+        +'<div class="slot-label-overlay">'+escH(slot.label)+'</div>'
+        +'</div>';
+    }
+    return '<div class="cdg-foto-slot" data-key="'+slot.key+'">'
+      +'<div class="slot-ico">📷</div>'
+      +'<div class="slot-label">'+escH(slot.label)+'</div>'
+      +'<input type="file" accept="image/*" capture="environment" style="display:none" data-key="'+slot.key+'">'
+      +'</div>';
+  }).join('');
+  // Wire slot clicks → open file picker
+  grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
+    var inp = slot.querySelector('input[type=file]');
+    if(!inp) return;
+    slot.addEventListener('click', function(e){
+      if(e.target.classList && e.target.classList.contains('slot-del')) return;
+      inp.click();
+    });
+    inp.addEventListener('change', function(){
+      var file = this.files[0]; if(!file) return;
+      var key  = this.dataset.key;
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        cdgFotos[key] = ev.target.result;
+        if(key === 'marchamo') cdgFotoGral = ev.target.result; // legacy
+        renderCDGFotoGrid();
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+  // Wire delete buttons
+  grid.querySelectorAll('.slot-del').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      var key = this.dataset.key;
+      delete cdgFotos[key];
+      if(key === 'marchamo') cdgFotoGral = null;
+      renderCDGFotoGrid();
+    });
+  });
+}
 
 // Tipo selector - show/hide "otro" field
 (function(){
@@ -2690,35 +2913,8 @@ var cdgFotoGral = null;
   });
 })();
 
-// Foto general
-(function(){
-  var btnFoto = document.getElementById('btn-cdg-foto-gral');
-  var inpFoto = document.getElementById('cdg-foto-gral-input');
-  var btnDel  = document.getElementById('btn-cdg-foto-gral-del');
-  if(btnFoto) btnFoto.addEventListener('click', function(){ if(inpFoto) inpFoto.click(); });
-  if(inpFoto) inpFoto.addEventListener('change', function(){
-    var file=this.files[0]; if(!file) return;
-    var reader=new FileReader();
-    reader.onload=function(e){
-      cdgFotoGral=e.target.result;
-      var img=document.getElementById('cdg-foto-gral-img');
-      var prev=document.getElementById('cdg-foto-gral-preview');
-      var status=document.getElementById('cdg-foto-gral-status');
-      if(img) img.src=cdgFotoGral;
-      if(prev) prev.style.display='';
-      if(status) status.textContent='✓ '+file.name;
-    };
-    reader.readAsDataURL(file);
-  });
-  if(btnDel) btnDel.addEventListener('click', function(){
-    cdgFotoGral=null;
-    var prev=document.getElementById('cdg-foto-gral-preview');
-    var status=document.getElementById('cdg-foto-gral-status');
-    if(prev) prev.style.display='none';
-    if(status) status.textContent='';
-    if(inpFoto) inpFoto.value='';
-  });
-})();
+// Initial render of empty grid
+renderCDGFotoGrid();
 
 // Auto-fill desc + costo when SKU typed
 (function(){
@@ -2766,7 +2962,9 @@ var cdgFotoGral = null;
     }
     fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({contId:u25,items:cdgSkus.slice(),tipo:tipo,
-        fotoGral:cdgFotoGral,usuario:currentUser?currentUser.name:'—'})})
+        fotoGral:cdgFotos.marchamo||cdgFotoGral||null,
+        fotos:Object.assign({}, cdgFotos),
+        usuario:currentUser?currentUser.name:'—'})})
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.ok){ showMsg('cdg-msg','ok','💾 Progreso guardado — aparece en Historial '+tipo+'.'); lastVersion=-1; }
@@ -2792,65 +2990,198 @@ function showCDGHist(tipo) {
       title.textContent = 'Historial ' + tipo + ' ('+keys.length+')';
       if(!keys.length){
         content.innerHTML='<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin conteos de tipo '+escH(tipo)+'.</p>';
-      } else {
-        var h='<div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
-        keys.forEach(function(id){
-          var c=data[id];
-          var isLocked=c.bloqueado===true;
-          var badge=isLocked
-            ?'<span style="background:#fdecea;color:#c0392b;padding:2px 8px;border-radius:10px;font-size:.75rem">🔒 Finalizado</span>'
-            :'<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">📝 Borrador</span>';
-          var continuarBtn = !isLocked
-            ? '<button class="btn btn-sm cdg-continuar-btn" data-id="'+escH(id)+'" style="font-size:.75rem;min-height:28px;padding:2px 8px">✏️ Continuar</button>'
-            : '';
-          h+='<div style="padding:10px 14px;border-bottom:1px solid #f0f0ee">'
-            +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
-            +'<div><strong>'+escH(id)+'</strong> <span style="color:#888;font-size:.78rem">'
-            +(c.items?c.items.length:0)+' SKUs · '+escH(c.autor||'—')+'</span></div>'
-            +'<div style="display:flex;align-items:center;gap:6px">'+badge
-            +(isSup()&&isLocked
-              ?'<button class="btn btn-sm cdg-unlock-btn" data-id="'+escH(id)+'" style="font-size:.75rem;min-height:28px;padding:2px 8px">🔓 Desbloquear</button>'
-              :'')
-            +continuarBtn
-            +'</div></div>'
-            +(c.fotoGral?'<img src="'+c.fotoGral+'" style="max-height:80px;border-radius:6px;margin-top:6px;border:1px solid #e0e0e0">':'')
-            +'</div>';
-        });
-        h+='</div>';
-        content.innerHTML=h;
-        content.querySelectorAll('.cdg-continuar-btn').forEach(function(btn){
-          btn.addEventListener('click',function(){
-            var id=this.dataset.id;
-            var c=data[id];
-            // Load back into form
-            document.getElementById('cdg-u25').value=id;
-            var tipoSel=document.getElementById('cdg-tipo');
-            if(tipoSel){
-              if(c.tipo==='CDG'||c.tipo==='KTM') tipoSel.value=c.tipo;
-              else{ tipoSel.value='otro'; var oi=document.getElementById('cdg-tipo-otro'); if(oi){oi.value=c.tipo;var ow=document.getElementById('cdg-tipo-otro-wrap');if(ow)ow.style.display='';} }
-            }
-            cdgSkus=(c.items||[]).slice();
-            renderCDGSkuList();
-            cdgFotoGral=c.fotoGral||null;
-            if(cdgFotoGral){var pi=document.getElementById('cdg-foto-gral-img');var pp=document.getElementById('cdg-foto-gral-preview');if(pi)pi.src=cdgFotoGral;if(pp)pp.style.display='';}
-            document.getElementById('cdg-hist-panel').style.display='none';
-            showMsg('cdg-msg','ok','✏️ Cargado '+escH(id)+' para continuar.');
-          });
-        });
-        content.querySelectorAll('.cdg-unlock-btn').forEach(function(btn){
-          btn.addEventListener('click',function(){
-            var id=this.dataset.id;
-            if(!confirm('¿Desbloquear conteo '+id+'?')) return;
-            fetch('/api/cdg/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({contId:id,usuario:currentUser?currentUser.name:'—'})})
-              .then(function(r){return r.json();})
-              .then(function(d){ if(d.ok){ lastVersion=-1; pollNow(); showCDGHist(tipo); } });
-          });
-        });
+        panel.style.display='';
+        return;
       }
+
+      // Compute totals for each conteo
+      var rows = keys.map(function(id){
+        var c = data[id];
+        var items = c.items||[];
+        var lineas = items.length;
+        var totalSkus = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
+        var totalCosto = items.reduce(function(a,it){
+          var cu = Number(it.costo) || getCosto(it.sku) || 0;
+          return a + cu * (Number(it.qty)||0);
+        }, 0);
+        return { id:id, c:c, lineas:lineas, totalSkus:totalSkus, totalCosto:totalCosto };
+      });
+
+      var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
+        +'<span style="font-size:.85rem;color:#666"><strong>'+keys.length+'</strong> conteo'+(keys.length!==1?'s':'')+' '+escH(tipo)+'</span>'
+        +'<button class="btn btn-sm btn-green" id="btn-cdg-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Excel</button>'
+        +'</div>';
+
+      h += '<div class="tbl-wrap" style="margin-bottom:0"><table>'
+        +'<thead><tr>'
+        +'<th>Correlativo U25</th>'
+        +'<th class="tc">Líneas</th>'
+        +'<th class="tc">Unidades</th>'
+        +'<th class="tc">Costo total</th>'
+        +'<th>Estado</th>'
+        +'<th>Autor</th>'
+        +'<th class="tc">Acciones</th>'
+        +'</tr></thead><tbody>';
+      rows.forEach(function(r){
+        var c = r.c;
+        var isLocked = c.bloqueado === true;
+        var badge = isLocked
+          ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
+          : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
+        var actions = '<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">';
+        actions += '<button class="btn btn-xs cdg-report-btn" data-id="'+escH(r.id)+'" title="Reporte individual">📥</button>';
+        if(!isLocked) actions += '<button class="btn btn-xs cdg-continuar-btn" data-id="'+escH(r.id)+'" title="Continuar">✏️</button>';
+        if(isSup() && isLocked) actions += '<button class="btn btn-xs cdg-unlock-btn" data-id="'+escH(r.id)+'" title="Desbloquear">🔓</button>';
+        actions += '</div>';
+        h += '<tr>'
+          +'<td><strong>'+escH(r.id)+'</strong></td>'
+          +'<td class="tc">'+r.lineas+'</td>'
+          +'<td class="tc">'+r.totalSkus+'</td>'
+          +'<td class="tc" style="font-family:monospace">Q'+r.totalCosto.toFixed(2)+'</td>'
+          +'<td>'+badge+'</td>'
+          +'<td style="font-size:.78rem;color:#888">'+escH(c.autor||'—')+'</td>'
+          +'<td class="tc">'+actions+'</td>'
+          +'</tr>';
+      });
+      h += '</tbody></table></div>';
+      content.innerHTML = h;
+
+      // Wire Excel export
+      var btnXlsx = document.getElementById('btn-cdg-hist-xlsx');
+      if(btnXlsx) btnXlsx.addEventListener('click', function(){
+        exportCDGHistExcel(rows, tipo);
+      });
+
+      // Wire individual report
+      content.querySelectorAll('.cdg-report-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = this.dataset.id;
+          exportCDGReporteIndividual(id, data[id]);
+        });
+      });
+
+      // Wire continuar
+      content.querySelectorAll('.cdg-continuar-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = this.dataset.id;
+          var c  = data[id];
+          document.getElementById('cdg-u25').value = id;
+          var tipoSel = document.getElementById('cdg-tipo');
+          if(tipoSel){
+            if(c.tipo==='CDG' || c.tipo==='KTM') tipoSel.value = c.tipo;
+            else { tipoSel.value='otro';
+              var oi=document.getElementById('cdg-tipo-otro');
+              if(oi){ oi.value=c.tipo; var ow=document.getElementById('cdg-tipo-otro-wrap'); if(ow) ow.style.display=''; }
+            }
+          }
+          cdgSkus = (c.items||[]).slice();
+          renderCDGSkuList();
+          cdgFotos = c.fotos ? Object.assign({}, c.fotos) : {};
+          if(c.fotoGral && !cdgFotos.marchamo) cdgFotos.marchamo = c.fotoGral;
+          cdgFotoGral = cdgFotos.marchamo || null;
+          renderCDGFotoGrid();
+          document.getElementById('cdg-hist-panel').style.display='none';
+          showMsg('cdg-msg','ok','✏️ Cargado '+escH(id)+' para continuar.');
+        });
+      });
+
+      // Wire unlock (supervisor)
+      content.querySelectorAll('.cdg-unlock-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = this.dataset.id;
+          if(!confirm('¿Desbloquear conteo '+id+'?')) return;
+          fetch('/api/cdg/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({contId:id,usuario:currentUser?currentUser.name:'—'})})
+            .then(function(r){return r.json();})
+            .then(function(d){ if(d.ok){ lastVersion=-1; pollNow(); showCDGHist(tipo); } });
+        });
+      });
+
       panel.style.display='';
     })
     .catch(function(e){ console.warn('CDG hist error:',e); });
+}
+
+// Export Excel del historial completo de un tipo
+function exportCDGHistExcel(rows, tipo){
+  var wb = XLSX.utils.book_new();
+  // Summary sheet
+  var summary = [['Correlativo U25','Líneas','Unidades','Costo total Q','Estado','Tipo','Autor','Fecha']];
+  rows.forEach(function(r){
+    summary.push([
+      r.id, r.lineas, r.totalSkus, +r.totalCosto.toFixed(2),
+      r.c.bloqueado ? 'Finalizado' : 'Borrador',
+      r.c.tipo || tipo,
+      r.c.autor || '—',
+      r.c.fecha || ''
+    ]);
+  });
+  // Totals row
+  var totLineas = rows.reduce(function(a,r){return a+r.lineas;}, 0);
+  var totUnits  = rows.reduce(function(a,r){return a+r.totalSkus;}, 0);
+  var totCosto  = rows.reduce(function(a,r){return a+r.totalCosto;}, 0);
+  summary.push([]);
+  summary.push(['TOTAL', totLineas, totUnits, +totCosto.toFixed(2), '', '', '', '']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Resumen '+tipo);
+
+  // Detail sheet — every SKU of every conteo
+  var detail = [['Correlativo U25','SKU','Descripción','Cantidad','Costo unit. Q','Costo línea Q','Tipo','Autor','Fecha']];
+  rows.forEach(function(r){
+    (r.c.items||[]).forEach(function(it){
+      var cu = Number(it.costo) || getCosto(it.sku) || 0;
+      detail.push([
+        r.id, it.sku, it.desc, Number(it.qty)||0,
+        +cu.toFixed(2), +(cu * (Number(it.qty)||0)).toFixed(2),
+        r.c.tipo || tipo, r.c.autor || '—', r.c.fecha || ''
+      ]);
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), 'Detalle SKUs');
+
+  var today = new Date();
+  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  XLSX.writeFile(wb, 'Historial_'+tipo+'_'+ds+'.xlsx');
+  addHist('Exportó historial CDG ('+tipo+'): '+rows.length+' conteos');
+}
+
+// Export Excel reporte individual de un solo conteo CDG
+function exportCDGReporteIndividual(id, c){
+  if(!c){ alert('Conteo no encontrado.'); return; }
+  var wb = XLSX.utils.book_new();
+  // Header info + items
+  var rows = [
+    ['Reporte de Conteo CDG'],
+    [],
+    ['Correlativo U25', id],
+    ['Tipo de bodega', c.tipo || 'CDG'],
+    ['Autor',          c.autor || '—'],
+    ['Fecha',          c.fecha || ''],
+    ['Estado',         c.bloqueado ? 'Finalizado' : 'Borrador'],
+    []
+  ];
+  if(c.fotos) {
+    var labels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
+    Object.keys(labels).forEach(function(k){
+      rows.push(['Foto '+labels[k], c.fotos[k] ? 'Adjunta' : '—']);
+    });
+    rows.push([]);
+  }
+  rows.push(['SKU','Descripción','Cantidad','Costo unit. Q','Costo total Q']);
+  var totalCosto = 0;
+  (c.items||[]).forEach(function(it){
+    var cu = Number(it.costo) || getCosto(it.sku) || 0;
+    var line = cu * (Number(it.qty)||0);
+    totalCosto += line;
+    rows.push([it.sku, it.desc, Number(it.qty)||0, +cu.toFixed(2), +line.toFixed(2)]);
+  });
+  rows.push([]);
+  rows.push(['','','TOTAL', '', +totalCosto.toFixed(2)]);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Conteo '+id.slice(0,20));
+
+  var today = new Date();
+  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  XLSX.writeFile(wb, 'Reporte_CDG_'+id+'_'+ds+'.xlsx');
+  addHist('Exportó reporte CDG: '+id);
 }
 
 (function(){
