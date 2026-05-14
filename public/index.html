@@ -2162,15 +2162,7 @@ document.getElementById('sel-cont').addEventListener('change',renderConteo);
 document.getElementById('btn-save').addEventListener('click',saveConteo);
 document.getElementById('btn-export').addEventListener('click',exportExcel);
 
-document.getElementById('export-scope').addEventListener('change',function(){
-  var scope=this.value,sel=document.getElementById('export-specific');
-  if(scope==='all'){sel.style.display='none';sel.innerHTML='';return;}
-  var group=conts.filter(function(c){return teorico[c].type===scope;});
-  if(group.length<=1){sel.style.display='none';return;}
-  var html='<option value="all">Todos ('+group.length+')</option>';
-  group.forEach(function(c){html+='<option value="'+escH(c)+'">'+escH(c)+'</option>';});
-  sel.innerHTML=html;sel.style.display='';
-});
+
 
 /* ══════════════════════════════════════════════════════════════════
    INIT
