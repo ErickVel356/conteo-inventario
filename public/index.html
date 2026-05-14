@@ -467,6 +467,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <button class="btn btn-sm" id="btn-hist-cdg">📋 Historial CDG</button>
           <button class="btn btn-sm" id="btn-hist-ktm">📋 Historial KTM</button>
           <button class="btn btn-sm" id="btn-hist-otros">📋 Historial Otros</button>
+          <button class="btn btn-sm btn-warn" id="btn-cdg-hallazgos-list">⚠ Hallazgos</button>
         </div>
       </div>
 
@@ -543,6 +544,18 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <button class="btn btn-sm" id="btn-cdg-hist-close">× Cerrar</button>
         </div>
         <div id="cdg-hist-content"></div>
+      </div>
+
+      <!-- CDG HALLAZGOS PANEL -->
+      <div id="cdg-hallazgos-panel" style="display:none;margin-top:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">
+          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-hallazgos-title">⚠ Hallazgos CDG</h3>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-blue" id="btn-cdg-hallazgos-word">📥 Exportar Word</button>
+            <button class="btn btn-sm" id="btn-cdg-hallazgos-close">× Cerrar</button>
+          </div>
+        </div>
+        <div id="cdg-hallazgos-content"></div>
       </div>
 
       <!-- SUPERVISOR: Unlock panel -->
@@ -3540,14 +3553,19 @@ function exportCDGReporteIndividual(id, c){
     var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
     var el = document.getElementById('cdg-hall-cont-name');
     if(el) el.textContent = u25.trim()||'CDG';
+    // Clear all fields (we are creating new, not editing)
+    document.getElementById('cdg-hall-turno').value='';
+    document.getElementById('cdg-hall-area').value='';
+    document.getElementById('cdg-hall-tipo').value='';
+    document.getElementById('cdg-hall-desc').value='';
     // Set today as default date
     var fechaInp = document.getElementById('cdg-hall-fecha');
-    if(fechaInp && !fechaInp.value) {
-      var now = new Date();
-      fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-    }
+    var now = new Date();
+    fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
     // Reset photo state
     hallFoto = null;
+    window._cdgHallFotoData = null;
+    window._editingCDGHallId = null;
     var prev = document.getElementById('cdg-hall-foto-preview');
     var status = document.getElementById('cdg-hall-foto-status');
     var inp = document.getElementById('cdg-hall-foto-input');
@@ -3605,21 +3623,47 @@ function exportCDGReporteIndividual(id, c){
     if(!turno){ alert('Selecciona el turno.'); return; }
     if(!area){ alert('Selecciona el área o proceso.'); return; }
     if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
-    var hall = {
-      id: makeId(), cont: u25.trim(), tipo: 'CDG',
-      fecha: fecha, turno: turno, area: area,
-      tipoHallazgo: tipoH,
-      desc: desc, quePaso: desc,
-      foto: hallFoto || null,
-      autor: currentUser ? currentUser.name : '—',
-      ts: new Date().toLocaleString('es')
-    };
-    hallazgos.push(hall);
-    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({hallazgo:hall, action:'add'})})
-      .then(function(r){return r.json();})
-      .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(){ saveDirectToSupabase(); });
+    // Photo: prefer the new pick (hallFoto), fall back to the existing one (edit mode)
+    var fotoFinal = hallFoto || window._cdgHallFotoData || null;
+    var editingId = window._editingCDGHallId;
+    var hall;
+    if(editingId){
+      // Update existing
+      var existing = (hallazgos||[]).find(function(x){ return x.id===editingId; });
+      if(existing){
+        existing.fecha = fecha;
+        existing.turno = turno;
+        existing.area  = area;
+        existing.tipoHallazgo = tipoH;
+        existing.desc = desc; existing.quePaso = desc;
+        existing.foto = fotoFinal;
+        existing.modificadoPor = currentUser ? currentUser.name : '—';
+        existing.modificadoTs  = new Date().toLocaleString('es');
+        hall = existing;
+        fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
+          .then(function(r){return r.json();})
+          .then(function(d){if(d.ok)lastVersion=d.version;})
+          .catch(function(){ saveDirectToSupabase(); });
+      }
+    } else {
+      // New
+      hall = {
+        id: makeId(), cont: u25.trim(), tipo: 'CDG',
+        fecha: fecha, turno: turno, area: area,
+        tipoHallazgo: tipoH,
+        desc: desc, quePaso: desc,
+        foto: fotoFinal,
+        autor: currentUser ? currentUser.name : '—',
+        ts: new Date().toLocaleString('es')
+      };
+      hallazgos.push(hall);
+      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({hallazgo:hall, action:'add'})})
+        .then(function(r){return r.json();})
+        .then(function(d){if(d.ok)lastVersion=d.version;})
+        .catch(function(){ saveDirectToSupabase(); });
+    }
     modal.classList.remove('open');
     // Reset modal fields
     document.getElementById('cdg-hall-desc').value='';
@@ -3627,13 +3671,184 @@ function exportCDGReporteIndividual(id, c){
     document.getElementById('cdg-hall-area').value='';
     document.getElementById('cdg-hall-tipo').value='';
     hallFoto = null;
+    window._cdgHallFotoData = null;
+    window._editingCDGHallId = null;
     if(fotoPrev) fotoPrev.style.display='none';
     if(fotoStatus) fotoStatus.textContent='';
     if(fotoInput) fotoInput.value='';
-    flashMsg('status-bar','ok','✅ Hallazgo CDG guardado.');
-    // Refresh the global hallazgos list if it's open
+    flashMsg('status-bar','ok', editingId ? '✅ Hallazgo CDG modificado.' : '✅ Hallazgo CDG guardado.');
+    // Refresh both lists if open
     if(typeof renderHallazgosList==='function') renderHallazgosList();
+    if(typeof renderCDGHallazgosPanel==='function') renderCDGHallazgosPanel();
   });
+})();
+
+// ── CDG Hallazgos Panel ──────────────────────────────────────────────────
+// Shows only hallazgos created from CDG (where tipo === 'CDG'), with edit + Word export.
+function renderCDGHallazgosPanel(){
+  var content = document.getElementById('cdg-hallazgos-content');
+  var title   = document.getElementById('cdg-hallazgos-title');
+  if(!content) return;
+  // Filter to CDG-origin hallazgos
+  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG'; });
+  if(title) title.textContent = '⚠ Hallazgos CDG ('+cdgHall.length+')';
+  if(!cdgHall.length){
+    content.innerHTML = '<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">No hay hallazgos CDG registrados aún. Usa el botón "⚠ Crear hallazgo" arriba.</p>';
+    return;
+  }
+  // Group by conteo (cont = U25 number)
+  var byCont = {};
+  cdgHall.forEach(function(h){
+    var k = h.cont || '—';
+    if(!byCont[k]) byCont[k] = [];
+    byCont[k].push(h);
+  });
+  var html = '';
+  var globalIdx = 0;
+  Object.keys(byCont).sort().forEach(function(cont){
+    html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+escH(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
+    byCont[cont].forEach(function(hh){
+      globalIdx++;
+      var metaLine = [];
+      if(hh.fecha)        metaLine.push('📅 '+escH(hh.fecha));
+      if(hh.turno)        metaLine.push('⏱ '+escH(hh.turno));
+      if(hh.area)         metaLine.push('📍 '+escH(hh.area));
+      if(hh.tipoHallazgo) metaLine.push('🏷 '+escH(hh.tipoHallazgo));
+      html += '<div class="card" style="margin-bottom:.75rem">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
+        +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
+        +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
+        +'</div>'
+        +(metaLine.length?'<p style="font-size:.72rem;color:#666;margin-bottom:.4rem">'+metaLine.join(' · ')+'</p>':'')
+        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.desc||hh.quePaso||'')+'</p>'
+        +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:160px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
+        +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs||'')+'</p>':'')
+        +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn cdg-edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
+        +'</div>';
+    });
+  });
+  content.innerHTML = html;
+  // Wire edit buttons → open CDG modal pre-filled
+  content.querySelectorAll('.cdg-edit-hall-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      openCDGHallazgoModal(this.dataset.id);
+    });
+  });
+}
+
+// Open the CDG hallazgo modal pre-filled with an existing hallazgo for editing.
+function openCDGHallazgoModal(id){
+  var h = (hallazgos||[]).find(function(x){ return x.id===id; });
+  if(!h) return;
+  // Show the modal
+  var modal = document.getElementById('modal-cdg-hallazgo');
+  if(!modal) return;
+  // Populate fields
+  var el = document.getElementById('cdg-hall-cont-name');
+  if(el) el.textContent = h.cont || '—';
+  document.getElementById('cdg-hall-fecha').value = h.fecha || '';
+  document.getElementById('cdg-hall-turno').value = h.turno || '';
+  document.getElementById('cdg-hall-area').value  = h.area  || '';
+  document.getElementById('cdg-hall-tipo').value  = h.tipoHallazgo || '';
+  document.getElementById('cdg-hall-desc').value  = h.desc  || h.quePaso || '';
+  // Photo
+  var fotoPrev = document.getElementById('cdg-hall-foto-preview');
+  var fotoImg  = document.getElementById('cdg-hall-foto-img');
+  var fotoStatus = document.getElementById('cdg-hall-foto-status');
+  if(h.foto){
+    window._cdgHallFotoData = h.foto;
+    if(fotoImg) fotoImg.src = h.foto;
+    if(fotoPrev) fotoPrev.style.display = '';
+    if(fotoStatus) fotoStatus.textContent = 'Foto existente';
+  } else {
+    window._cdgHallFotoData = null;
+    if(fotoImg) fotoImg.src = '';
+    if(fotoPrev) fotoPrev.style.display = 'none';
+    if(fotoStatus) fotoStatus.textContent = '';
+  }
+  // Mark as edit mode
+  window._editingCDGHallId = id;
+  // Wire mic (idempotent)
+  setupMic('btn-cdg-hall-mic', 'cdg-hall-mic-lang', 'cdg-hall-mic-status', 'cdg-hall-desc');
+  modal.classList.add('open');
+}
+
+// Export Word with all CDG hallazgos
+function exportCDGHallazgosWord(){
+  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG'; });
+  if(!cdgHall.length){ alert('No hay hallazgos CDG para exportar.'); return; }
+  var today = new Date();
+  var fecha = today.toLocaleDateString('es');
+  var autor = currentUser ? currentUser.name : '—';
+  // Group by cont
+  var byCont = {};
+  cdgHall.forEach(function(h){
+    var k = h.cont || '—';
+    if(!byCont[k]) byCont[k] = [];
+    byCont[k].push(h);
+  });
+  var sections = '';
+  var globalIdx = 0;
+  Object.keys(byCont).sort().forEach(function(cont){
+    sections += '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:24pt">Conteo CDG: '+escH(cont)+'</h2>';
+    byCont[cont].forEach(function(h){
+      globalIdx++;
+      sections += '<h3 style="color:#b7770d;margin-top:18pt">Hallazgo #'+globalIdx+'</h3>'
+        +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:11pt">'
+        +'<tr><td style="width:180px;background:#f0f0ee;font-weight:bold">Auditor</td><td>'+escH(h.autor||'')+'</td></tr>'
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">Registro</td><td>'+escH(h.ts||'')+'</td></tr>'
+        +(h.fecha?'<tr><td style="background:#f0f0ee;font-weight:bold">1. Fecha</td><td>'+escH(h.fecha)+'</td></tr>':'')
+        +(h.turno?'<tr><td style="background:#f0f0ee;font-weight:bold">2. Turno</td><td>'+escH(h.turno)+'</td></tr>':'')
+        +(h.area?'<tr><td style="background:#f0f0ee;font-weight:bold">3. Área o proceso</td><td>'+escH(h.area)+'</td></tr>':'')
+        +(h.tipoHallazgo?'<tr><td style="background:#f0f0ee;font-weight:bold">4. Tipo de hallazgo</td><td>'+escH(h.tipoHallazgo)+'</td></tr>':'')
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">5. Descripción</td><td>'+escH(h.desc||h.quePaso||'')+'</td></tr>'
+        +(h.modificadoPor?'<tr><td style="background:#f0f0ee;font-weight:bold">Modificado por</td><td>'+escH(h.modificadoPor)+' · '+escH(h.modificadoTs||'')+'</td></tr>':'')
+        +'</table>'
+        +(h.foto?'<p style="margin-top:6pt"><img src="'+h.foto+'" style="max-width:480px;max-height:360px;border:1px solid #ccc"></p>':'');
+    });
+  });
+  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    +'<head><meta charset="utf-8"><title>Hallazgos CDG</title></head>'
+    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
+    +'<h1 style="color:#1a1a1a">Reporte de Hallazgos CDG</h1>'
+    +'<p><strong>Fecha:</strong> '+escH(fecha)+'<br><strong>Exportado por:</strong> '+escH(autor)+'<br>'
+    +'<strong>Total:</strong> '+cdgHall.length+' hallazgo'+(cdgHall.length!==1?'s':'')+'</p>'
+    +sections
+    +'</body></html>';
+  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  var ds   = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  a.href     = url;
+  a.download = 'Hallazgos_CDG_'+ds+'.doc';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  addHist('Exportó Word de hallazgos CDG ('+cdgHall.length+')');
+}
+
+// Wire CDG hallazgos panel buttons
+(function(){
+  var btnOpen  = document.getElementById('btn-cdg-hallazgos-list');
+  var btnClose = document.getElementById('btn-cdg-hallazgos-close');
+  var btnWord  = document.getElementById('btn-cdg-hallazgos-word');
+  var panel    = document.getElementById('cdg-hallazgos-panel');
+  if(btnOpen && panel) {
+    btnOpen.addEventListener('click', function(){
+      // Hide the other panels first
+      var histPanel = document.getElementById('cdg-hist-panel');
+      if(histPanel) histPanel.style.display = 'none';
+      panel.style.display = '';
+      renderCDGHallazgosPanel();
+    });
+  }
+  if(btnClose && panel) {
+    btnClose.addEventListener('click', function(){ panel.style.display = 'none'; });
+  }
+  if(btnWord) {
+    btnWord.addEventListener('click', exportCDGHallazgosWord);
+  }
 })();
 
 </script>
