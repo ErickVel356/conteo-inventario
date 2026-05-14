@@ -435,11 +435,15 @@ app.post('/api/conteo/field', (req, res) => {
   if(cont === undefined || idx === undefined) return res.status(400).json({ok:false});
   if(!state.fisico[cont]) state.fisico[cont] = [];
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
+  const prev = state.fisico[cont][idx] || {};
   state.fisico[cont][idx] = {
-    fisico:   fisico  !== undefined ? fisico  : (state.fisico[cont][idx]||{}).fisico||0,
-    daniado:  daniado !== undefined ? daniado : (state.fisico[cont][idx]||{}).daniado||0,
-    lastUser: usuario,
-    lastAt:   Date.now()
+    fisico:    fisico    !== undefined ? fisico    : prev.fisico||0,
+    daniado:   daniado   !== undefined ? daniado   : prev.daniado||0,
+    cobertura: req.body.cobertura !== undefined ? req.body.cobertura : (prev.cobertura||'En revisión'),
+    quien:     usuario,
+    ts:        new Date().toLocaleString('es'),
+    lastUser:  usuario,
+    lastAt:    Date.now()
   };
   state.version++;
   // Save immediately to Supabase — don't wait for debounce
