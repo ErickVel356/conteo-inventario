@@ -771,7 +771,18 @@ textarea.field-inp{resize:vertical;min-height:72px}
   <div class="modal-box">
     <h3>⚠ Crear hallazgo de auditoría</h3>
     <p style="font-size:.82rem;color:#888;margin-bottom:.75rem">Contenedor: <strong id="hall-cont-name"></strong></p>
-    <div class="field-row"><label>¿Qué pasó?</label><textarea class="field-inp" id="hall-input" rows="2" placeholder="Describe lo que encontraste..."></textarea></div>
+    <div class="field-row">
+      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ¿Qué pasó?
+        <button type="button" id="btn-hall-mic" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px" title="Dictar por voz">🎤 Dictar</button>
+        <span id="hall-mic-status" style="font-size:.7rem;color:#888"></span>
+        <select id="hall-mic-lang" style="font-size:.7rem;padding:1px 4px;border-radius:4px;border:1px solid #ccc">
+          <option value="es-ES">Español</option>
+          <option value="en-US">English</option>
+        </select>
+      </label>
+      <textarea class="field-inp" id="hall-input" rows="2" placeholder="Describe lo que encontraste..."></textarea>
+    </div>
     <div class="field-row"><label>Condición</label><textarea class="field-inp" id="hall-condicion" rows="2" placeholder="Estado real encontrado..."></textarea></div>
     <div class="field-row"><label>Criterio</label><textarea class="field-inp" id="hall-criterio" rows="2" placeholder="Política o norma aplicable..."></textarea></div>
     <div class="field-row"><label>Causa</label><textarea class="field-inp" id="hall-causa" rows="2" placeholder="Causa raíz..."></textarea></div>
@@ -856,6 +867,64 @@ function todayISO(){ return new Date().toISOString().slice(0,10); }
    UTILS
 ══════════════════════════════════════════════════════════════════ */
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Reusable speech-to-text helper. Returns true if mic was attached, false if browser doesn't support it.
+function setupMic(btnId, langSelId, statusId, targetTextareaId){
+  var btn = document.getElementById(btnId);
+  var langSel = document.getElementById(langSelId);
+  var statusEl = document.getElementById(statusId);
+  var target = document.getElementById(targetTextareaId);
+  if(!btn || !target) return false;
+  if(btn.dataset.micAttached === '1') return true; // already wired
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRec) {
+    btn.disabled = true;
+    btn.title = 'Tu navegador no soporta dictado por voz';
+    btn.style.opacity = '0.5';
+    return false;
+  }
+  var rec = null;
+  var isRecording = false;
+  btn.addEventListener('click', function(e){
+    e.preventDefault();
+    if(isRecording) { if(rec) rec.stop(); return; }
+    rec = new SpeechRec();
+    rec.lang = (langSel && langSel.value) || 'es-ES';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onstart = function(){
+      isRecording = true;
+      btn.textContent = '⏹ Detener';
+      btn.style.background = '#fdecea';
+      btn.style.color = '#c0392b';
+      if(statusEl) statusEl.textContent = 'Escuchando…';
+    };
+    rec.onresult = function(ev){
+      var transcript = '';
+      for(var i = ev.resultIndex; i < ev.results.length; i++) {
+        if(ev.results[i].isFinal) transcript += ev.results[i][0].transcript + ' ';
+      }
+      if(transcript && target) {
+        target.value = (target.value ? target.value + ' ' : '') + transcript.trim();
+      }
+    };
+    rec.onerror = function(ev){
+      if(statusEl) statusEl.textContent = 'Error: '+ev.error;
+    };
+    rec.onend = function(){
+      isRecording = false;
+      btn.textContent = '🎤 Dictar';
+      btn.style.background = '';
+      btn.style.color = '';
+      if(statusEl) statusEl.textContent = '';
+    };
+    try { rec.start(); } catch(err) {
+      if(statusEl) statusEl.textContent = 'No disponible';
+    }
+  });
+  btn.dataset.micAttached = '1';
+  return true;
+}
 function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function nowStr(){ return new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}); }
 function makeId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
@@ -1491,6 +1560,8 @@ document.getElementById('btn-hallazgo').addEventListener('click',function(){
   if(input)   input.value='';
   window._hallFotoData=null;
   window._editingHallId=null;
+  // Wire microphone if not already
+  setupMic('btn-hall-mic', 'hall-mic-lang', 'hall-mic-status', 'hall-input');
   document.getElementById('modal-hallazgo').classList.add('open');
 });
 
@@ -1674,6 +1745,7 @@ function openHallazgoModal(id){
   }
   // Mark modal as edit mode
   window._editingHallId = id;
+  setupMic('btn-hall-mic', 'hall-mic-lang', 'hall-mic-status', 'hall-input');
   document.getElementById('modal-hallazgo').classList.add('open');
 }
 
@@ -3375,176 +3447,7 @@ function exportCDGReporteIndividual(id, c){
 </script>
 
 
-<script>
-// CDG Hallazgo Modal
-(function(){
-  var btn = document.getElementById('btn-cdg-hallazgo');
-  var modal = document.getElementById('modal-cdg-hallazgo');
-  var btnCancel = document.getElementById('btn-cdg-hall-cancel');
-  var btnSave   = document.getElementById('btn-cdg-hall-save');
-  if(!btn||!modal) return;
 
-  // Local state for the modal
-  var hallFoto = null;
-
-  btn.addEventListener('click', function(){
-    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
-    var el = document.getElementById('cdg-hall-cont-name');
-    if(el) el.textContent = u25.trim()||'CDG';
-    // Set today as default date
-    var fechaInp = document.getElementById('cdg-hall-fecha');
-    if(fechaInp && !fechaInp.value) {
-      var now = new Date();
-      fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-    }
-    // Reset photo state
-    hallFoto = null;
-    var prev = document.getElementById('cdg-hall-foto-preview');
-    var status = document.getElementById('cdg-hall-foto-status');
-    var inp = document.getElementById('cdg-hall-foto-input');
-    if(prev) prev.style.display='none';
-    if(status) status.textContent='';
-    if(inp) inp.value='';
-    modal.classList.add('open');
-  });
-
-  if(btnCancel) btnCancel.addEventListener('click', function(){ modal.classList.remove('open'); });
-
-  // --- Photo ---
-  var btnFoto    = document.getElementById('btn-cdg-hall-foto');
-  var fotoInput  = document.getElementById('cdg-hall-foto-input');
-  var fotoPrev   = document.getElementById('cdg-hall-foto-preview');
-  var fotoImg    = document.getElementById('cdg-hall-foto-img');
-  var fotoStatus = document.getElementById('cdg-hall-foto-status');
-  var btnFotoDel = document.getElementById('btn-cdg-hall-foto-del');
-  if(btnFoto && fotoInput) {
-    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change', function(){
-      var file = this.files[0]; if(!file) return;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        hallFoto = ev.target.result;
-        if(fotoImg) fotoImg.src = ev.target.result;
-        if(fotoPrev) fotoPrev.style.display='';
-        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-  if(btnFotoDel) {
-    btnFotoDel.addEventListener('click', function(){
-      hallFoto = null;
-      if(fotoImg) fotoImg.src='';
-      if(fotoPrev) fotoPrev.style.display='none';
-      if(fotoStatus) fotoStatus.textContent='';
-      if(fotoInput) fotoInput.value='';
-    });
-  }
-
-  // --- Microphone (speech-to-text) ---
-  var btnMic = document.getElementById('btn-cdg-hall-mic');
-  var micStatus = document.getElementById('cdg-hall-mic-status');
-  var micLangSel = document.getElementById('cdg-hall-mic-lang');
-  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var rec = null;
-  var isRecording = false;
-  if(btnMic) {
-    if(!SpeechRec) {
-      btnMic.disabled = true;
-      btnMic.title = 'Tu navegador no soporta dictado por voz';
-      btnMic.style.opacity = '0.5';
-    } else {
-      btnMic.addEventListener('click', function(){
-        if(isRecording) {
-          if(rec) rec.stop();
-          return;
-        }
-        rec = new SpeechRec();
-        rec.lang = (micLangSel && micLangSel.value) || 'es-ES';
-        rec.continuous = true;
-        rec.interimResults = false;
-        rec.onstart = function(){
-          isRecording = true;
-          btnMic.textContent = '⏹ Detener';
-          btnMic.style.background = '#fdecea';
-          btnMic.style.color = '#c0392b';
-          if(micStatus) micStatus.textContent = 'Escuchando…';
-        };
-        rec.onresult = function(e){
-          var transcript = '';
-          for(var i = e.resultIndex; i < e.results.length; i++) {
-            if(e.results[i].isFinal) transcript += e.results[i][0].transcript + ' ';
-          }
-          if(transcript) {
-            var ta = document.getElementById('cdg-hall-desc');
-            if(ta) {
-              ta.value = (ta.value ? ta.value + ' ' : '') + transcript.trim();
-            }
-          }
-        };
-        rec.onerror = function(e){
-          if(micStatus) micStatus.textContent = 'Error: '+e.error;
-        };
-        rec.onend = function(){
-          isRecording = false;
-          btnMic.textContent = '🎤 Dictar';
-          btnMic.style.background = '';
-          btnMic.style.color = '';
-          if(micStatus) micStatus.textContent = '';
-        };
-        try { rec.start(); } catch(err) {
-          if(micStatus) micStatus.textContent = 'No disponible';
-        }
-      });
-    }
-  }
-
-  // --- Save ---
-  if(btnSave) btnSave.addEventListener('click', function(){
-    var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
-    var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
-    var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
-    var tipoH  = (document.getElementById('cdg-hall-tipo')||{}).value||'';
-    var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
-    var u25    = (document.getElementById('cdg-u25')||{}).value||'CDG';
-    if(!desc){ alert('Describe el hallazgo.'); return; }
-    if(!turno){ alert('Selecciona el turno.'); return; }
-    if(!area){ alert('Selecciona el área o proceso.'); return; }
-    if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
-    // Stop any active mic before saving
-    if(isRecording && rec) { try { rec.stop(); } catch(e){} }
-    var hall = {
-      id: makeId(), cont: u25.trim(), tipo: 'CDG',
-      fecha: fecha, turno: turno, area: area,
-      tipoHallazgo: tipoH,
-      desc: desc, quePaso: desc,
-      foto: hallFoto || null,
-      autor: currentUser ? currentUser.name : '—',
-      ts: new Date().toLocaleString('es')
-    };
-    hallazgos.push(hall);
-    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({hallazgo:hall, action:'add'})})
-      .then(function(r){return r.json();})
-      .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(){ saveDirectToSupabase(); });
-    modal.classList.remove('open');
-    // Reset modal fields
-    document.getElementById('cdg-hall-desc').value='';
-    document.getElementById('cdg-hall-turno').value='';
-    document.getElementById('cdg-hall-area').value='';
-    document.getElementById('cdg-hall-tipo').value='';
-    hallFoto = null;
-    if(fotoPrev) fotoPrev.style.display='none';
-    if(fotoStatus) fotoStatus.textContent='';
-    if(fotoInput) fotoInput.value='';
-    flashMsg('status-bar','ok','✅ Hallazgo CDG guardado.');
-    // Refresh the global hallazgos list if it's open
-    if(typeof renderHallazgosList==='function') renderHallazgosList();
-  });
-})();
-
-</script>
 
 <!-- CDG HALLAZGO MODAL -->
 <div id="modal-cdg-hallazgo" class="modal-bg">
@@ -3620,6 +3523,120 @@ function exportCDGReporteIndividual(id, c){
     </div>
   </div>
 </div>
+
+<script>
+// CDG Hallazgo Modal
+(function(){
+  var btn = document.getElementById('btn-cdg-hallazgo');
+  var modal = document.getElementById('modal-cdg-hallazgo');
+  var btnCancel = document.getElementById('btn-cdg-hall-cancel');
+  var btnSave   = document.getElementById('btn-cdg-hall-save');
+  if(!btn||!modal) return;
+
+  // Local state for the modal
+  var hallFoto = null;
+
+  btn.addEventListener('click', function(){
+    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    var el = document.getElementById('cdg-hall-cont-name');
+    if(el) el.textContent = u25.trim()||'CDG';
+    // Set today as default date
+    var fechaInp = document.getElementById('cdg-hall-fecha');
+    if(fechaInp && !fechaInp.value) {
+      var now = new Date();
+      fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+    }
+    // Reset photo state
+    hallFoto = null;
+    var prev = document.getElementById('cdg-hall-foto-preview');
+    var status = document.getElementById('cdg-hall-foto-status');
+    var inp = document.getElementById('cdg-hall-foto-input');
+    if(prev) prev.style.display='none';
+    if(status) status.textContent='';
+    if(inp) inp.value='';
+    modal.classList.add('open');
+  });
+
+  if(btnCancel) btnCancel.addEventListener('click', function(){ modal.classList.remove('open'); });
+
+  // --- Photo ---
+  var btnFoto    = document.getElementById('btn-cdg-hall-foto');
+  var fotoInput  = document.getElementById('cdg-hall-foto-input');
+  var fotoPrev   = document.getElementById('cdg-hall-foto-preview');
+  var fotoImg    = document.getElementById('cdg-hall-foto-img');
+  var fotoStatus = document.getElementById('cdg-hall-foto-status');
+  var btnFotoDel = document.getElementById('btn-cdg-hall-foto-del');
+  if(btnFoto && fotoInput) {
+    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
+    fotoInput.addEventListener('change', function(){
+      var file = this.files[0]; if(!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        hallFoto = ev.target.result;
+        if(fotoImg) fotoImg.src = ev.target.result;
+        if(fotoPrev) fotoPrev.style.display='';
+        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  if(btnFotoDel) {
+    btnFotoDel.addEventListener('click', function(){
+      hallFoto = null;
+      if(fotoImg) fotoImg.src='';
+      if(fotoPrev) fotoPrev.style.display='none';
+      if(fotoStatus) fotoStatus.textContent='';
+      if(fotoInput) fotoInput.value='';
+    });
+  }
+
+  // --- Microphone (speech-to-text) — use shared helper ---
+  setupMic('btn-cdg-hall-mic', 'cdg-hall-mic-lang', 'cdg-hall-mic-status', 'cdg-hall-desc');
+
+  // --- Save ---
+  if(btnSave) btnSave.addEventListener('click', function(){
+    var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
+    var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
+    var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
+    var tipoH  = (document.getElementById('cdg-hall-tipo')||{}).value||'';
+    var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
+    var u25    = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    if(!desc){ alert('Describe el hallazgo.'); return; }
+    if(!turno){ alert('Selecciona el turno.'); return; }
+    if(!area){ alert('Selecciona el área o proceso.'); return; }
+    if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
+    var hall = {
+      id: makeId(), cont: u25.trim(), tipo: 'CDG',
+      fecha: fecha, turno: turno, area: area,
+      tipoHallazgo: tipoH,
+      desc: desc, quePaso: desc,
+      foto: hallFoto || null,
+      autor: currentUser ? currentUser.name : '—',
+      ts: new Date().toLocaleString('es')
+    };
+    hallazgos.push(hall);
+    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({hallazgo:hall, action:'add'})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok)lastVersion=d.version;})
+      .catch(function(){ saveDirectToSupabase(); });
+    modal.classList.remove('open');
+    // Reset modal fields
+    document.getElementById('cdg-hall-desc').value='';
+    document.getElementById('cdg-hall-turno').value='';
+    document.getElementById('cdg-hall-area').value='';
+    document.getElementById('cdg-hall-tipo').value='';
+    hallFoto = null;
+    if(fotoPrev) fotoPrev.style.display='none';
+    if(fotoStatus) fotoStatus.textContent='';
+    if(fotoInput) fotoInput.value='';
+    flashMsg('status-bar','ok','✅ Hallazgo CDG guardado.');
+    // Refresh the global hallazgos list if it's open
+    if(typeof renderHallazgosList==='function') renderHallazgosList();
+  });
+})();
+
+</script>
 
 </body>
 </html>
