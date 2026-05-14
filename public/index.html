@@ -1882,7 +1882,7 @@ function exportExcel(){
       var dr2=7;
       filtEmb.forEach(function(cont){
         var items2=teorico[cont].items||[],fis2=fisico[cont]||[];
-        var puerta2=puertas[cont]||'',cm2=conteoMetadata[cont]||{};
+        var puerta2=(typeof puertas!=='undefined'&&puertas[cont])||'',cm2=conteoMetadata[cont]||{};
         items2.forEach(function(item,i){
           var fo=fis2[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
@@ -1906,7 +1906,7 @@ function exportExcel(){
       var drt=7;
       filtTrasl.forEach(function(cont){
         var items3=teorico[cont].items||[],fis3=fisico[cont]||[];
-        var puerta3=puertas[cont]||'',cm3=conteoMetadata[cont]||{};
+        var puerta3=(typeof puertas!=='undefined'&&puertas[cont])||'',cm3=conteoMetadata[cont]||{};
         items3.forEach(function(item,i){
           var fo=fis3[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
@@ -1947,8 +1947,8 @@ function exportExcel(){
       var items = teorico[cont].items||[];
       var fis   = fisico[cont]||[];
       var raw0  = items.length ? items[0].raw||{} : {};
-      var puerta   = puertas[cont]||'';
-      var contData = conteoMetadata[cont]||{};
+      var puerta   = (typeof puertas!=='undefined'&&puertas[cont])||'';
+      var contData = (typeof conteoMetadata!=='undefined'&&conteoMetadata[cont])||{};
       var fechaIngreso  = contData.fechaIngreso||'';
       var fechaFurgon   = contData.fechaFurgon||'';
       var placas        = contData.placas||'';
@@ -2059,7 +2059,7 @@ function exportExcel(){
       }
       var items=teorico[cont].items||[];
       var fis=fisico[cont]||[];
-      var puerta=puertas[cont]||'';
+      var puerta=(typeof puertas!=='undefined'&&puertas[cont])||'';
       var contData=conteoMetadata[cont]||{};
       var fechaIngreso=contData.fechaIngreso||'';
       var fechaFurgon=contData.fechaFurgon||'';
@@ -2523,10 +2523,25 @@ document.getElementById('sel-cont').addEventListener('change', function() {
 
 
 <script>
-// ══════════════════════════════════════════════════════════════════════════
-// FEATURE 1: CHAT
-// ══════════════════════════════════════════════════════════════════════════
+// Global vars for metadata (must be global so all scripts can access)
+var puertas         = {};   // { contId: 'L001.001' }
+var conteoMetadata  = {};   // { contId: {fechaIngreso, fechaFurgon, placas} }
 
+// updateMetaInputs - declared early so renderConteo patch can call it
+function updateMetaInputs() {
+  var wrap = document.getElementById('conteo-meta-wrap');
+  if(wrap) wrap.style.display = current ? 'flex' : 'none';
+  if(!current) return;
+  var m = conteoMetadata[current] || {};
+  var fi = document.getElementById('inp-fecha-ingreso');
+  var ff = document.getElementById('inp-fecha-furgon');
+  var pl = document.getElementById('inp-placas');
+  var pv = document.getElementById('sel-puerta');
+  if(fi) fi.value = m.fechaIngreso || '';
+  if(ff) ff.value = m.fechaFurgon  || '';
+  if(pl) pl.value = m.placas       || '';
+  if(pv) pv.value = puertas[current] || '';
+}
 
 function saveMetadata() {
   if(!current) return;
