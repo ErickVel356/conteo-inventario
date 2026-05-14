@@ -257,7 +257,7 @@ app.post('/api/asign', (req, res) => {
 app.get('/api/cdg', (req, res) => res.json(state.cdg||{}));
 
 app.post('/api/cdg/save', (req, res) => {
-  const { contId, items, usuario, tipo, fotoGral } = req.body;
+  const { contId, items, usuario, tipo, fotoGral, fotos } = req.body;
   if(!contId) return res.status(400).json({ ok:false });
   if(!state.cdg[contId]) {
     state.cdg[contId] = {
@@ -271,6 +271,7 @@ app.post('/api/cdg/save', (req, res) => {
   state.cdg[contId].lastEditor = usuario;
   if(tipo)     state.cdg[contId].tipo     = tipo;
   if(fotoGral) state.cdg[contId].fotoGral = fotoGral;
+  if(fotos)    state.cdg[contId].fotos    = fotos;
   addHistorial(usuario, 'CDG guardado', contId);
   state.version++;
   scheduleSave();
@@ -295,7 +296,7 @@ app.post('/api/cdg/unlock', (req, res) => {
 });
 
 app.post('/api/cdg/finalizar', (req, res) => {
-  const { contId, items, usuario, traslado, tipo, fotoGral, bloqueado } = req.body;
+  const { contId, items, usuario, traslado, tipo, fotoGral, fotos, bloqueado } = req.body;
   if(!contId) return res.status(400).json({ ok:false });
   state.cdg[contId] = {
     items,
@@ -305,6 +306,7 @@ app.post('/api/cdg/finalizar', (req, res) => {
     traslado,
     tipo:      tipo || 'CDG',
     fotoGral:  fotoGral || null,
+    fotos:     fotos    || null,
     bloqueado: bloqueado || false
   };
   const num = traslado || contId;
