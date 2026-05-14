@@ -2382,8 +2382,17 @@ function pollNow() {
       if(s.asignaciones)    asignaciones    = s.asignaciones;
       if(s.historial)       historial       = s.historial;
       if(s.hallazgos)       hallazgos       = s.hallazgos;
-      if(s.conteoMetadata)  conteoMetadata  = s.conteoMetadata;
-      if(s.puertas)         Object.assign(puertas, s.puertas);
+      // Only merge metadata/puertas if server actually has data — don't wipe local state
+      if(s.conteoMetadata && Object.keys(s.conteoMetadata).length > 0) {
+        // Merge server data INTO local — preserve any local edits not yet saved
+        Object.keys(s.conteoMetadata).forEach(function(k){
+          if(!conteoMetadata[k]) conteoMetadata[k] = s.conteoMetadata[k];
+          else Object.assign(conteoMetadata[k], s.conteoMetadata[k]);
+        });
+      }
+      if(s.puertas && Object.keys(s.puertas).length > 0) {
+        Object.assign(puertas, s.puertas);
+      }
 
       rebuildContsList();
       updateSubmenúCounts();
@@ -2762,13 +2771,15 @@ function saveMetadata() {
   if(pl) conteoMetadata[current].placas        = pl.value;
   if(pv) puertas[current] = pv.value;
   updateSummaryCard();
-  // Save to server immediately
+  // ALWAYS save direct to Supabase (insurance against Render sleeping)
+  saveDirectToSupabase();
+  // Also fire the server endpoint (broadcasts to other clients via polling)
   fetch('/api/metadata',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({cont:current, metadata:conteoMetadata[current],
       puerta:pv?pv.value:'', usuario:currentUser?currentUser.name:'—'})})
     .then(function(r){return r.json();})
     .then(function(d){if(d.ok)lastVersion=d.version;})
-    .catch(function(){saveDirectToSupabase();});
+    .catch(function(){ /* already saved direct */ });
 }
 
 ['inp-fecha-ingreso','inp-fecha-furgon','inp-placas'].forEach(function(id){
