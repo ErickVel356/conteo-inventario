@@ -255,7 +255,7 @@ app.post('/api/asign', (req, res) => {
 app.get('/api/cdg', (req,res) => res.json(state.cdg||{}));
 
 app.post('/api/cdg/save', (req,res) => {
-  const { contId, items, usuario } = req.body;
+  const { contId, items, usuario, tipo, fotoGral } = req.body;
   if(!contId) return res.status(400).json({ok:false});
   if(!state.cdg[contId]) state.cdg[contId]={items:[],status:'open',autor:usuario,fecha:new Date().toLocaleDateString('es')};
   state.cdg[contId].items=items; state.cdg[contId].lastEditor=usuario; if(req.body.tipo) state.cdg[contId].tipo=req.body.tipo; if(req.body.fotoGral) state.cdg[contId].fotoGral=req.body.fotoGral;
@@ -277,7 +277,10 @@ app.post('/api/cdg/unlock', (req, res) => {
   if(state.teorico[contId]) state.teorico[contId].cdgBloqueado = false;
   addHistorial(usuario||'—', 'Desbloqueó CDG', contId);
   state.version++;
-  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},date:state.date,version:state.version}).catch(e=>console.log(e.message));
+  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
+    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
+    hallazgos:state.hallazgos||[],conteoMetadata:state.conteoMetadata||{},
+    date:state.date,version:state.version}).catch(e=>console.log(e.message));
   res.json({ok:true});
 });
 
