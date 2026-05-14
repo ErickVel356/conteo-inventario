@@ -1333,6 +1333,8 @@ function saveDirectToSupabase() {
       asignaciones: asignaciones,
       historial: (historial||[]).slice(-50),
       hallazgos: hallazgos||[],
+      conteoMetadata: conteoMetadata||{},
+      puertas: puertas||{},
       date: dateStr,
       version: (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
     });
@@ -1626,6 +1628,19 @@ document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
   document.getElementById('cdg-costo').value='';
   document.getElementById('cdg-desc-auto').textContent='';
   document.getElementById('cdg-sku').focus();
+  // Auto-save to server after each SKU added
+  var u25Auto = (document.getElementById('cdg-u25')||{}).value||'';
+  if(u25Auto.trim()) {
+    var tipoAuto = (document.getElementById('cdg-tipo')||{}).value||'CDG';
+    if(tipoAuto==='otro'){var oi=document.getElementById('cdg-tipo-otro');tipoAuto=oi&&oi.value.trim()||'Otro';}
+    fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contId:u25Auto.trim(),items:cdgSkus.slice(),tipo:tipoAuto,
+        usuario:currentUser?currentUser.name:'—'})})
+      .catch(function(e){
+        // Server down - save directly to Supabase
+        saveDirectToSupabase();
+      });
+  }
 })
 document.getElementById('cdg-sku').addEventListener('blur', function(){
   var sku = this.value.trim();
