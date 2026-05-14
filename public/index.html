@@ -1386,6 +1386,46 @@ function saveCDGDirectToSupabase(contId, conteoData) {
   });
 }
 
+// Save a single hallazgo directly to Supabase, merging with existing state.
+// Used as guaranteed backup (not just on catch — runs in parallel with /api/hallazgo).
+function saveHallazgoDirectToSupabase(hall, action) {
+  if(!hall) return Promise.resolve();
+  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    var current = {};
+    if(rows && rows.length > 0) {
+      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
+    }
+    if(!Array.isArray(current.hallazgos)) current.hallazgos = [];
+    if(action === 'edit') {
+      var idx = current.hallazgos.findIndex(function(h){ return h.id === hall.id; });
+      if(idx >= 0) current.hallazgos[idx] = hall;
+      else current.hallazgos.push(hall);
+    } else {
+      // 'add' or default — avoid duplicating if id already exists
+      var existsIdx = current.hallazgos.findIndex(function(h){ return h.id === hall.id; });
+      if(existsIdx >= 0) current.hallazgos[existsIdx] = hall;
+      else current.hallazgos.push(hall);
+    }
+    current.version = (current.version||0) + 1;
+    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
+    });
+  }).then(function(){
+    console.log('Hallazgo direct Supabase save OK:', hall.id);
+  }).catch(function(e){
+    console.warn('Hallazgo direct Supabase save failed:', e);
+  });
+}
+
 function saveDirectToSupabase() {
   if(_supaTimer) clearTimeout(_supaTimer);
   _supaTimer = setTimeout(function(){
@@ -1631,6 +1671,8 @@ document.getElementById('btn-hall-save').addEventListener('click',function(){
       existing.modificadoTs  = new Date().toLocaleString('es');
       hall = existing;
       addHist('Modificó hallazgo en '+existing.cont);
+      // GUARANTEED save: write to Supabase directly
+      saveHallazgoDirectToSupabase(hall, 'edit');
       fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
         .then(function(r){return r.json();})
@@ -1650,6 +1692,8 @@ document.getElementById('btn-hall-save').addEventListener('click',function(){
     };
     hallazgos.push(hall);
     addHist('Registró hallazgo en '+current);
+    // GUARANTEED save: write to Supabase directly
+    saveHallazgoDirectToSupabase(hall, 'add');
     fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({hallazgo:hall, action:'add'})})
       .then(function(r){return r.json();})
@@ -3640,11 +3684,13 @@ function exportCDGReporteIndividual(id, c){
         existing.modificadoPor = currentUser ? currentUser.name : '—';
         existing.modificadoTs  = new Date().toLocaleString('es');
         hall = existing;
+        // GUARANTEED save: write to Supabase directly
+        saveHallazgoDirectToSupabase(hall, 'edit');
         fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
           .then(function(r){return r.json();})
           .then(function(d){if(d.ok)lastVersion=d.version;})
-          .catch(function(){ saveDirectToSupabase(); });
+          .catch(function(){});
       }
     } else {
       // New
@@ -3658,11 +3704,13 @@ function exportCDGReporteIndividual(id, c){
         ts: new Date().toLocaleString('es')
       };
       hallazgos.push(hall);
+      // GUARANTEED save: write to Supabase directly
+      saveHallazgoDirectToSupabase(hall, 'add');
       fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({hallazgo:hall, action:'add'})})
         .then(function(r){return r.json();})
         .then(function(d){if(d.ok)lastVersion=d.version;})
-        .catch(function(){ saveDirectToSupabase(); });
+        .catch(function(){});
     }
     modal.classList.remove('open');
     // Reset modal fields
