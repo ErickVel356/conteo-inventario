@@ -243,6 +243,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
 .btn-green{background:#1e7e34;color:#fff;border-color:#1e7e34}
 .btn-orange{background:#e67e22;color:#fff;border-color:#e67e22}
 .btn-blue{background:#1565c0;color:#fff;border-color:#1565c0}
+.btn-warn{background:#fef9e7;color:#b7770d;border-color:#f9e79f}
 .btn-sm{padding:7px 14px;font-size:.82rem;min-height:40px}
 .btn-xs{padding:5px 10px;font-size:.78rem;min-height:34px;border-radius:8px}
 .actions{display:flex;justify-content:flex-end;margin-top:1rem;gap:.75rem;flex-wrap:wrap}
@@ -263,6 +264,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
 /* ── MISC ───────────────────────────────────────────────────────── */
 .sec{font-size:.9rem;font-weight:700;margin:1.5rem 0 .75rem;color:#333}
+.sub{font-size:.85rem;color:#777;margin-bottom:.875rem}
 .empty{text-align:center;color:#bbb;padding:1.5rem;font-size:.875rem}
 .green{color:#1e7e34;font-weight:500}.red{color:#c0392b;font-weight:500}
 .blue{color:#1565c0;font-weight:500}.gray{color:#bbb}
@@ -470,7 +472,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
               <option value="otro">Otro...</option>
             </select>
           </div>
-          <div class="cdg-field" style="flex:1;min-width:120px" id="cdg-tipo-otro-wrap" style="display:none">
+          <div class="cdg-field" id="cdg-tipo-otro-wrap" style="flex:1;min-width:120px;display:none">
             <label>Especifica bodega</label>
             <input type="text" class="field-inp" id="cdg-tipo-otro" placeholder="Nombre bodega">
           </div>
@@ -548,7 +550,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
       </div>
     </div>
 
-    <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
     <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
     <div id="pg-conteo" class="page">
 
@@ -641,7 +642,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
             </optgroup></select>
           <span class="prog" id="prog-text"></span>
           <!-- Conteo metadata -->
-          <div id="conteo-meta-wrap" style="display:none;width:100%;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <div id="conteo-meta-wrap" style="display:none;width:100%;margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
             <label style="font-size:.78rem;color:#666">F. Ingreso:</label>
             <input type="date" id="inp-fecha-ingreso" style="padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
             <label style="font-size:.78rem;color:#666">F. Furgón:</label>
@@ -826,10 +827,7 @@ var _currentFilter = ''; // 'Embarques' | 'Traslados' | 'CDG' | ''
 /* ══════════════════════════════════════════════════════════════════
    PERSISTENCIA
 ══════════════════════════════════════════════════════════════════ */
-// saveLocal: each action saves via its own endpoint - no bulk save
-function saveLocal() { /* no-op: individual saves handle persistence */ }
-function scheduleSave() { /* no-op: individual saves handle persistence */ }
-function doServerSave() { /* disabled: was causing data loss */ }
+// All actions persist via their individual API endpoints — no bulk save.
 
 function loadLocal() {
   try {
@@ -1017,7 +1015,7 @@ document.getElementById('mc-cdg').addEventListener('click',function(){
 });
 document.getElementById('btn-reset').addEventListener('click',function(){
   if(!confirm('¿Comenzar un nuevo día? Se borrará todo el conteo actual.'))return;
-  teorico={};fisico={};conts=[];current=null;loadedSheets={};hallazgos=[];cdgSkus=[];asignaciones={};historial={};
+  teorico={};fisico={};conts=[];current=null;loadedSheets={};hallazgos=[];cdgSkus=[];asignaciones={};historial=[];
   locks={};
   localStorage.removeItem(STORE_KEY);
   document.getElementById('upload-msg').innerHTML='';
@@ -1084,80 +1082,6 @@ function handleFile(fileObj){
       else showMsg('upload-msg','err','Error: '+d.error);
     })
     .catch(function(e){showMsg('upload-msg','err','Error de red: '+e.message);});
-}
-
-async function processXLSX(buffer,name){
-  try{
-    var wb=await XLSX.readAsync(buffer),names=wb.SheetNames;
-    var traslSheet=null,embSheet=null;
-    for(var s=0;s<names.length;s++){var nl=names[s].toLowerCase();if(nl.indexOf('traslado')>=0)traslSheet=names[s];else if(nl.indexOf('embarque')>=0)embSheet=names[s];}
-    var loaded=[];
-    if(traslSheet){var r1=XLSX.utils.sheet_to_json(wb.Sheets[traslSheet],{header:1,defval:''});var c1=mergeSheet(r1,'Traslados');if(c1>0)loaded.push(traslSheet+' ('+c1+')');}
-    if(embSheet){var r2=XLSX.utils.sheet_to_json(wb.Sheets[embSheet],{header:1,defval:''});var c2=mergeSheet(r2,'Embarques');if(c2>0)loaded.push(embSheet+' ('+c2+')');}
-    if(!traslSheet&&!embSheet){var r3=XLSX.utils.sheet_to_json(wb.Sheets[names[0]],{header:1,defval:''});var c3=mergeSheet(r3,'General');if(c3>0)loaded.push(names[0]+' ('+c3+')');}
-    if(!loaded.length){showMsg('upload-msg','err','No se encontraron datos válidos.');return;}
-    addHist('Cargó teórico: '+name);
-    rebuildContsList();scheduleSave();updateSubmenúCounts();
-    showMsg('upload-msg','ok','<strong>'+name+'</strong> cargado — '+loaded.join(' · '));
-  }catch(err){showMsg('upload-msg','err','Error: '+err.message);}
-}
-
-function processCSV(text,name){
-  var rows=text.split('\n').map(function(r){return r.split(',').map(function(c){return c.trim().replace(/^"|"$/g,'');});});
-  mergeSheet(rows,'General');addHist('Cargó CSV: '+name);rebuildContsList();scheduleSave();updateSubmenúCounts();
-  showMsg('upload-msg','ok',name+' cargado.');
-}
-
-function mergeSheet(rows,type){
-  if(!rows||rows.length<2)return 0;
-  var hdr=rows[0].map(function(h){return norm(h);});
-  var colCont=findCol(hdr,['numero','número']);
-  var colSku=findCol(hdr,['sku']);
-  var colQty=findCol(hdr,['cant.','cant','cantidad']);
-  var colDesc=-1;
-  for(var hi=colSku+1;hi<hdr.length;hi++){if(hdr[hi].indexOf('nombre')>=0||hdr[hi].indexOf('descripcion')>=0||hdr[hi].indexOf('descripción')>=0){colDesc=hi;break;}}
-  if(colDesc<0)colDesc=findCol(hdr,['nombre','descripcion','descripción']);
-  if(colCont<0||colSku<0||colDesc<0||colQty<0)return 0;
-  var cFecha=findCol(hdr,['fecha']),cCodProv=findCol(hdr,['proveedor','código de proveedor','codigo de proveedor']);
-  var cNomProv=-1;
-  for(var hx=0;hx<hdr.length&&hx<colSku;hx++){if(hdr[hx].indexOf('nombre')>=0){cNomProv=hx;break;}}
-  var cLineas=findCol(hdr,['lineas','líneas']),cStatus=findCol(hdr,['status']);
-  var cOC=findCol(hdr,['orden de compra','# orden']),cIngr=findCol(hdr,['ingresado']);
-  var cColoc=findCol(hdr,['colocado']),cFalt=findCol(hdr,['faltantes']),cSobr=findCol(hdr,['sobrantes']);
-  var cDan=findCol(hdr,['dañado','danado']),cOrigen=findCol(hdr,['origen']);
-  var cIngreso=findCol(hdr,['# ingreso','ingreso']),cDocSap=findCol(hdr,['doc. sap','doc sap','sap']);
-  var cTipo=findCol(hdr,['tipo']),cUnidad=findCol(hdr,['unidad']),cUnidades=findCol(hdr,['unidades']),cDestino=findCol(hdr,['destino']);
-  var newConts={};
-  rows.slice(1).filter(function(r){return r.some(function(c){return String(c).trim()!=='';});}).forEach(function(row){
-    var cont=String(row[colCont]||'').trim();if(!cont)return;
-    if(!newConts[cont])newConts[cont]=[];
-    newConts[cont].push({
-      sku:String(row[colSku]||'').trim(),desc:String(row[colDesc]||'').trim(),
-      qty:parseFloat(String(row[colQty]).replace(',','.'))||0,
-      raw:{fecha:cFecha>=0?row[cFecha]:'',codProv:cCodProv>=0?row[cCodProv]:'',
-           nomProv:cNomProv>=0?row[cNomProv]:'',lineas:cLineas>=0?row[cLineas]:'',
-           status:cStatus>=0?row[cStatus]:'',oc:cOC>=0?row[cOC]:'',
-           ingresado:cIngr>=0?row[cIngr]:'',colocado:cColoc>=0?row[cColoc]:'',
-           faltantes:cFalt>=0?row[cFalt]:'',sobrantes:cSobr>=0?row[cSobr]:'',
-           daniado:cDan>=0?row[cDan]:'',origen:cOrigen>=0?row[cOrigen]:'',
-           ingreso:cIngreso>=0?row[cIngreso]:'',docSap:cDocSap>=0?row[cDocSap]:'',
-           tipo:cTipo>=0?row[cTipo]:'',unidad:cUnidad>=0?row[cUnidad]:'',
-           unidades:cUnidades>=0?row[cUnidades]:'',destino:cDestino>=0?row[cDestino]:''}
-    });
-  });
-  Object.keys(newConts).forEach(function(cont){
-    // Anti-duplicado CDG: si ya existe como CDG, fusionar y mantener cdgValidado
-    var existing=teorico[cont];
-    var wasCDG=existing&&existing.cdgValidado;
-    var oldItems=existing?existing.items:null;
-    teorico[cont]={items:newConts[cont],type:type,cdgValidado:wasCDG||false};
-    if(wasCDG) teorico[cont].cdgValidado=true;
-    if(fisico[cont]!==null&&fisico[cont]!==undefined){
-      if(!oldItems||oldItems.length!==newConts[cont].length)fisico[cont]=null;
-    } else {fisico[cont]=null;}
-  });
-  loadedSheets[type]=true;
-  return Object.keys(newConts).length;
 }
 
 function rebuildContsList(){
@@ -1484,72 +1408,74 @@ function buildReporte(){
 document.getElementById('btn-hallazgo').addEventListener('click',function(){
   document.getElementById('hall-cont-name').textContent=current||'—';
   ['hall-input','hall-condicion','hall-criterio','hall-causa','hall-efecto','hall-recomendacion'].forEach(function(id){document.getElementById(id).value='';});
-  // Reset photo state
+  // Reset photo state on open
   var preview=document.getElementById('hall-foto-preview');
   var img=document.getElementById('hall-foto-img');
   var status=document.getElementById('hall-foto-status');
   var input=document.getElementById('hall-foto-input');
-  if(preview)preview.style.display='none';
-  if(img)img.src='';
-  if(status)status.textContent='';
-  if(input)input.value='';
+  if(preview) preview.style.display='none';
+  if(img)     img.src='';
+  if(status)  status.textContent='';
+  if(input)   input.value='';
   window._hallFotoData=null;
   document.getElementById('modal-hallazgo').classList.add('open');
 });
 
-// Fix Bug 3: Wire foto button in hallazgo modal
+// Fix Bug 3: Wire the foto button in the hallazgo modal
 (function(){
-  var btnFoto=document.getElementById('btn-hall-foto');
-  var fotoInput=document.getElementById('hall-foto-input');
-  var fotoPreview=document.getElementById('hall-foto-preview');
-  var fotoImg=document.getElementById('hall-foto-img');
-  var fotoStatus=document.getElementById('hall-foto-status');
-  var btnFotoDel=document.getElementById('btn-hall-foto-del');
-  if(btnFoto&&fotoInput){
-    btnFoto.addEventListener('click',function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change',function(){
-      var file=this.files[0];if(!file)return;
+  var btnFoto    = document.getElementById('btn-hall-foto');
+  var fotoInput  = document.getElementById('hall-foto-input');
+  var fotoPrev   = document.getElementById('hall-foto-preview');
+  var fotoImg    = document.getElementById('hall-foto-img');
+  var fotoStatus = document.getElementById('hall-foto-status');
+  var btnFotoDel = document.getElementById('btn-hall-foto-del');
+  if(btnFoto && fotoInput) {
+    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
+    fotoInput.addEventListener('change', function(){
+      var file=this.files[0]; if(!file) return;
       var reader=new FileReader();
       reader.onload=function(e){
         window._hallFotoData=e.target.result;
-        if(fotoImg)fotoImg.src=e.target.result;
-        if(fotoPreview)fotoPreview.style.display='';
-        if(fotoStatus)fotoStatus.textContent='✓ Foto lista';
+        if(fotoImg)    fotoImg.src=e.target.result;
+        if(fotoPrev)   fotoPrev.style.display='';
+        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
       };
       reader.readAsDataURL(file);
     });
   }
-  if(btnFotoDel){
-    btnFotoDel.addEventListener('click',function(){
+  if(btnFotoDel) {
+    btnFotoDel.addEventListener('click', function(){
       window._hallFotoData=null;
-      if(fotoImg)fotoImg.src='';
-      if(fotoPreview)fotoPreview.style.display='none';
-      if(fotoStatus)fotoStatus.textContent='';
-      if(fotoInput)fotoInput.value='';
+      if(fotoImg)    fotoImg.src='';
+      if(fotoPrev)   fotoPrev.style.display='none';
+      if(fotoStatus) fotoStatus.textContent='';
+      if(fotoInput)  fotoInput.value='';
     });
   }
 })();
+
 document.getElementById('btn-hall-cancel').addEventListener('click',function(){document.getElementById('modal-hallazgo').classList.remove('open');});
 document.getElementById('btn-hall-save').addEventListener('click',function(){
   var desc=document.getElementById('hall-input').value.trim();
   if(!desc){alert('Describe qué pasó.');return;}
-  var hall={id:makeId(),cont:current,quePaso:desc,
+  var hall = {
+    id:makeId(), cont:current, quePaso:desc,
     condicion:document.getElementById('hall-condicion').value.trim(),
     criterio:document.getElementById('hall-criterio').value.trim(),
     causa:document.getElementById('hall-causa').value.trim(),
     efecto:document.getElementById('hall-efecto').value.trim(),
     recomendacion:document.getElementById('hall-recomendacion').value.trim(),
     foto:window._hallFotoData||null,
-    autor:currentUser.name,ts:new Date().toLocaleString('es')
+    autor:currentUser.name, ts:new Date().toLocaleString('es')
   };
   hallazgos.push(hall);
   addHist('Registró hallazgo en '+current);
-  // Save to server
+  // Persist to server
   fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({hallazgo:hall,action:'add'})})
+    body:JSON.stringify({hallazgo:hall, action:'add'})})
     .then(function(r){return r.json();})
     .then(function(d){if(d.ok)lastVersion=d.version;})
-    .catch(function(){saveDirectToSupabase();});
+    .catch(function(){});
   window._hallFotoData=null;
   document.getElementById('modal-hallazgo').classList.remove('open');
   renderHallazgosList();
@@ -1713,7 +1639,7 @@ document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
         saveDirectToSupabase();
       });
   }
-})
+});
 document.getElementById('cdg-sku').addEventListener('blur', function(){
   var sku = this.value.trim();
   if(!sku) return;
@@ -1878,12 +1804,6 @@ function loadCostFile(fileObj){
     }
   };
   reader.readAsArrayBuffer(fileObj);
-}
-
-function setCostStatus(type,msg){
-  var el=document.getElementById('cost-status'),btn=document.getElementById('btn-load-cost');
-  if(type==='ok'){el.style.color='#1e7e34';el.innerHTML='✓ '+escH(msg);btn.textContent='Reemplazar';}
-  else{el.style.color='#c0392b';el.textContent='✗ '+msg;}
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2369,18 +2289,17 @@ function pollNow() {
 
 // Update online bar from server activeUsers list
 function updateOnlineBarFromServer(users) {
-  var bar  = document.getElementById('online-bar');
-  var list = document.getElementById('online-list');
-  if(!bar || !list) return;
+  var bar = document.getElementById('online-bar');
+  if(!bar) return;
   var isSupervisor = currentUser && (typeof isSup==='function' ? isSup() : false);
   if(!isSupervisor) return;
-  if(users.length > 0) {
-    bar.style.display = 'flex';
-    list.innerHTML = users.map(function(nm){
-      return '<span style="background:#f0f0ee;padding:2px 8px;border-radius:10px;margin:2px;font-size:.75rem">🟢 '+nm+'</span>';
+  if(users && users.length > 0) {
+    bar.style.display = '';
+    bar.innerHTML = '👥 En línea: ' + users.map(function(nm){
+      return '<span style="margin-right:8px">🟢 '+escH(nm)+'</span>';
     }).join('');
   } else {
-    bar.style.display = 'none';
+    bar.innerHTML = '👥 En línea: <em style="color:#aaa">Ninguno</em>';
   }
 }
 
@@ -2484,9 +2403,6 @@ afterLogin = function() {
   _origAfterLogin();
 };
 
-// Patch logout to stop polling
-// stopPolling on logout (merged into main logout handler)
-
 // Patch renderConteo to add lock listeners
 var _origRenderConteo = renderConteo;
 renderConteo = function() {
@@ -2555,15 +2471,6 @@ if(selCont) selCont.addEventListener('change', function(){ releaseAllLocks(); })
 
 window.addEventListener('beforeunload', function(){ releaseAllLocks(); });
 
-// Add /api/state/save endpoint usage - server already handles via existing endpoints
-// The doServerSave function uses /api/state/save - we need to check server supports it
-// For now route asign changes through existing /api/asign
-
-// Override saveLocal calls that handle asignaciones specifically
-// The asign changes call scheduleSave which calls doServerSave
-// We need to intercept asign-specific changes and POST to /api/asign instead
-// Patch is applied: when historial shows asign action, send to server
-
 </script>
 
 
@@ -2612,11 +2519,10 @@ function updateSummaryCard() {
   var puerta  = puertas[current] || '—';
   var partic  = (asignaciones[current]||[]).join(', ') || '—';
   var contadas = 0, diffs = 0;
-  // Read live values from DOM inputs (most up-to-date)
+  // Read live values from DOM inputs (most up-to-date); fall back to server data
   items.forEach(function(item, i) {
     var fiEl = document.getElementById('fi'+i);
     var fv = fiEl ? parseFloat(fiEl.value) : NaN;
-    // Also check server data as fallback
     if(isNaN(fv) && Array.isArray(fis) && fis[i]) {
       var fiObj = fis[i];
       if(fiObj && (fiObj.quien || fiObj.lastUser)) fv = Number(fiObj.fisico)||0;
@@ -2709,7 +2615,7 @@ function saveMetadata() {
   }
 });
 
-// Fix Bug 2: Puerta selector also must trigger saveMetadata
+// Fix Bug 2: Puerta selector also triggers saveMetadata
 (function(){
   var selPuerta = document.getElementById('sel-puerta');
   if(selPuerta) {
@@ -2960,21 +2866,6 @@ function showCDGHist(tipo) {
     if(panel) panel.style.display='none';
   });
 })();
-
-// CDG Hallazgo button
-(function(){
-  var btn = document.getElementById('btn-cdg-hallazgo');
-  if(!btn) return;
-  btn.addEventListener('click', function(){
-    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
-    var hallContEl = document.getElementById('hall-cont-name');
-    if(hallContEl) hallContEl.textContent = u25.trim()||'CDG';
-    var inp = document.getElementById('hall-input');
-    if(inp) inp.value='';
-    var modal = document.getElementById('modal-hallazgo');
-    if(modal) modal.classList.add('open');
-  });
-})();
 </script>
 
 
@@ -3031,8 +2922,6 @@ function showCDGHist(tipo) {
 })();
 
 </script>
-</body>
-</html>
 
 <!-- CDG HALLAZGO MODAL -->
 <div id="modal-cdg-hallazgo" class="modal-bg">
@@ -3074,3 +2963,6 @@ function showCDGHist(tipo) {
     </div>
   </div>
 </div>
+
+</body>
+</html>
