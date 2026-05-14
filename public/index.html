@@ -1259,22 +1259,35 @@ var SUPABASE_URL = 'https://uzwhcoztwlxkhrmyeybe.supabase.co';
 var SUPABASE_KEY = 'sb_publishable_NTQKwnemAsOitW0JAIHauQ_xci8VT75';
 var _supaTimer = null;
 
-function saveDirectToSupabase() {
-  if(_supaTimer) clearTimeout(_supaTimer);
-  _supaTimer = setTimeout(function(){
-    var today = new Date();
-    var dateStr = today.toDateString();
-    var payload = JSON.stringify({
-      teorico: teorico, fisico: fisico,
-      asignaciones: asignaciones,
-      historial: (historial||[]).slice(-50),
-      hallazgos: hallazgos||[],
-      conteoMetadata: conteoMetadata||{},
-      puertas: puertas||{},
-      date: dateStr,
-      version: (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
-    });
-    fetch(SUPABASE_URL + '/rest/v1/app_state', {
+// Save a single CDG conteo directly to Supabase, merging with existing state.
+// Used as fallback when Render is sleeping/unavailable.
+function saveCDGDirectToSupabase(contId, conteoData) {
+  if(!contId || !conteoData) return Promise.resolve();
+  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    var current = {};
+    if(rows && rows.length > 0) {
+      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
+    }
+    if(!current.cdg) current.cdg = {};
+    current.cdg[contId] = conteoData;
+    // Also update teorico/fisico if the CDG was finalized
+    if(conteoData.bloqueado && conteoData.items) {
+      if(!current.teorico) current.teorico = {};
+      if(!current.fisico)  current.fisico  = {};
+      if(!current.teorico[contId]) {
+        current.teorico[contId] = {
+          items: conteoData.items.map(function(s){return{sku:s.sku,desc:s.desc,qty:s.qty,raw:{origen:'CDG',status:'CDG Validado'}};}),
+          type: conteoData.tipo || 'CDG',
+          fromCDG: true, cdgRef: contId,
+          cdgValidado: true, cdgBloqueado: true
+        };
+        current.fisico[contId] = null;
+      }
+    }
+    current.version = (current.version||0) + 1;
+    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_KEY,
@@ -1282,7 +1295,55 @@ function saveDirectToSupabase() {
         'Content-Type': 'application/json',
         'Prefer': 'resolution=merge-duplicates'
       },
-      body: JSON.stringify({key: 'daily_state', value: payload})
+      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
+    });
+  }).then(function(){
+    console.log('CDG direct Supabase save OK:', contId);
+  }).catch(function(e){
+    console.warn('CDG direct Supabase save failed:', e);
+  });
+}
+
+function saveDirectToSupabase() {
+  if(_supaTimer) clearTimeout(_supaTimer);
+  _supaTimer = setTimeout(function(){
+    // STEP 1: Read current state from Supabase so we don't blow away fields
+    // the client doesn't track locally (cdg, costos, etc.)
+    fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY
+      }
+    }).then(function(r){ return r.json(); }).then(function(rows){
+      var current = {};
+      if(rows && rows.length > 0) {
+        try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
+      }
+      // STEP 2: Merge — overwrite the fields the client owns, KEEP the rest
+      var today = new Date();
+      var merged = Object.assign({}, current, {
+        teorico:        teorico,
+        fisico:         fisico,
+        asignaciones:   asignaciones,
+        historial:      (historial||[]).slice(-50),
+        hallazgos:      hallazgos || (current.hallazgos || []),
+        conteoMetadata: conteoMetadata || (current.conteoMetadata || {}),
+        puertas:        puertas || (current.puertas || {}),
+        date:           today.toDateString(),
+        version:        (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
+        // NOTE: cdg, costos, chat — preserved from `current` via Object.assign
+      });
+      // STEP 3: Write the merged payload back
+      return fetch(SUPABASE_URL + '/rest/v1/app_state', {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(merged) })
+      });
     }).then(function(){
       console.log('Direct Supabase save OK');
     }).catch(function(e){
@@ -1548,12 +1609,18 @@ function renderHallazgosList(){
     html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+escH(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
     byCont[cont].forEach(function(hh){
       globalIdx++;
+      var metaLine = [];
+      if(hh.fecha)        metaLine.push('📅 '+escH(hh.fecha));
+      if(hh.turno)        metaLine.push('⏱ '+escH(hh.turno));
+      if(hh.area)         metaLine.push('📍 '+escH(hh.area));
+      if(hh.tipoHallazgo) metaLine.push('🏷 '+escH(hh.tipoHallazgo));
       html += '<div class="card" style="margin-bottom:.75rem">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
         +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
         +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
         +'</div>'
-        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.quePaso||'')+'</p>'
+        +(metaLine.length?'<p style="font-size:.72rem;color:#666;margin-bottom:.4rem">'+metaLine.join(' · ')+'</p>':'')
+        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.quePaso||hh.desc||'')+'</p>'
         +(hh.condicion?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Condición:</strong> '+escH(hh.condicion)+'</p>':'')
         +(hh.criterio?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Criterio:</strong> '+escH(hh.criterio)+'</p>':'')
         +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+escH(hh.causa)+'</p>':'')
@@ -1634,12 +1701,16 @@ function exportHallazgosWord(){
         +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:11pt">'
         +'<tr><td style="width:160px;background:#f0f0ee;font-weight:bold">Auditor</td><td>'+escH(h.autor||'')+'</td></tr>'
         +'<tr><td style="background:#f0f0ee;font-weight:bold">Fecha y hora</td><td>'+escH(h.ts||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">¿Qué pasó?</td><td>'+escH(h.quePaso||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Condición</td><td>'+escH(h.condicion||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Criterio</td><td>'+escH(h.criterio||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Causa</td><td>'+escH(h.causa||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Efecto</td><td>'+escH(h.efecto||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Recomendación</td><td>'+escH(h.recomendacion||'')+'</td></tr>'
+        +(h.fecha?'<tr><td style="background:#f0f0ee;font-weight:bold">Fecha del hallazgo</td><td>'+escH(h.fecha)+'</td></tr>':'')
+        +(h.turno?'<tr><td style="background:#f0f0ee;font-weight:bold">Turno</td><td>'+escH(h.turno)+'</td></tr>':'')
+        +(h.area?'<tr><td style="background:#f0f0ee;font-weight:bold">Área o proceso</td><td>'+escH(h.area)+'</td></tr>':'')
+        +(h.tipoHallazgo?'<tr><td style="background:#f0f0ee;font-weight:bold">Tipo de hallazgo</td><td>'+escH(h.tipoHallazgo)+'</td></tr>':'')
+        +'<tr><td style="background:#f0f0ee;font-weight:bold">¿Qué pasó?</td><td>'+escH(h.quePaso||h.desc||'')+'</td></tr>'
+        +(h.condicion?'<tr><td style="background:#f0f0ee;font-weight:bold">Condición</td><td>'+escH(h.condicion)+'</td></tr>':'')
+        +(h.criterio?'<tr><td style="background:#f0f0ee;font-weight:bold">Criterio</td><td>'+escH(h.criterio)+'</td></tr>':'')
+        +(h.causa?'<tr><td style="background:#f0f0ee;font-weight:bold">Causa</td><td>'+escH(h.causa)+'</td></tr>':'')
+        +(h.efecto?'<tr><td style="background:#f0f0ee;font-weight:bold">Efecto</td><td>'+escH(h.efecto)+'</td></tr>':'')
+        +(h.recomendacion?'<tr><td style="background:#f0f0ee;font-weight:bold">Recomendación</td><td>'+escH(h.recomendacion)+'</td></tr>':'')
         +(h.modificadoPor?'<tr><td style="background:#f0f0ee;font-weight:bold">Modificado por</td><td>'+escH(h.modificadoPor)+' · '+escH(h.modificadoTs||'')+'</td></tr>':'')
         +'</table>'
         +(h.foto?'<p style="margin-top:6pt"><img src="'+h.foto+'" style="max-width:480px;max-height:360px;border:1px solid #ccc"></p>':'');
@@ -1780,20 +1851,29 @@ document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
   document.getElementById('cdg-costo').value='';
   document.getElementById('cdg-desc-auto').textContent='';
   document.getElementById('cdg-sku').focus();
-  // Auto-save to server after each SKU added
+  // Auto-save to server after each SKU added (and directly to Supabase as backup)
   var u25Auto = (document.getElementById('cdg-u25')||{}).value||'';
   if(u25Auto.trim()) {
     var tipoAuto = (document.getElementById('cdg-tipo')||{}).value||'CDG';
     if(tipoAuto==='otro'){var oi=document.getElementById('cdg-tipo-otro');tipoAuto=oi&&oi.value.trim()||'Otro';}
+    var conteoAutoData = {
+      items: cdgSkus.slice(),
+      status: 'open',
+      autor: currentUser?currentUser.name:'—',
+      fecha: new Date().toLocaleDateString('es'),
+      tipo: tipoAuto,
+      fotoGral: cdgFotos.marchamo||cdgFotoGral||null,
+      fotos: Object.assign({}, cdgFotos),
+      lastEditor: currentUser?currentUser.name:'—',
+      ts: new Date().toLocaleString('es')
+    };
+    saveCDGDirectToSupabase(u25Auto.trim(), conteoAutoData);
     fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({contId:u25Auto.trim(),items:cdgSkus.slice(),tipo:tipoAuto,
         fotoGral:cdgFotos.marchamo||cdgFotoGral||null,
         fotos:Object.assign({}, cdgFotos),
         usuario:currentUser?currentUser.name:'—'})})
-      .catch(function(e){
-        // Server down - save directly to Supabase
-        saveDirectToSupabase();
-      });
+      .catch(function(){ /* already saved direct */ });
   }
 });
 document.getElementById('cdg-sku').addEventListener('blur', function(){
@@ -1889,7 +1969,20 @@ document.getElementById('btn-cdg-finish').addEventListener('click',function(){
 
   addHist('Finalizó y bloqueó CDG: '+u25+' ('+cdgSkus.length+' SKUs)');
 
-  // Save to server
+  var conteoData = {
+    items: cdgSkus.slice(),
+    status: 'closed',
+    autor: currentUser?currentUser.name:'—',
+    fecha: new Date().toLocaleDateString('es'),
+    tipo: tipo,
+    fotoGral: fotoGral,
+    fotos: fotos,
+    bloqueado: true,
+    ts: new Date().toLocaleString('es')
+  };
+
+  // Save to BOTH Render and Supabase direct (Render may be sleeping)
+  saveCDGDirectToSupabase(u25, conteoData);
   fetch('/api/cdg/finalizar',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({contId:u25,tipo:tipo,items:cdgSkus.slice(),
       fotoGral:fotoGral, fotos:fotos, usuario:currentUser?currentUser.name:'—',bloqueado:true})})
@@ -1897,12 +1990,13 @@ document.getElementById('btn-cdg-finish').addEventListener('click',function(){
     .then(function(d){
       if(d.ok){
         lastVersion=-1; pollNow();
-        showMsg('cdg-msg','ok','✅ Conteo <strong>'+escH(u25)+'</strong> finalizado y bloqueado. Aparece en Hamilton → Traslados CDG.');
-        cdgSkus=[]; cdgFotos={}; cdgFotoGral=null; renderCDGSkuList(); renderCDGFotoGrid();
-        document.getElementById('cdg-u25').value='';
       }
     })
-    .catch(function(e){ showMsg('cdg-msg','err','Error: '+e.message); });
+    .catch(function(){ /* already saved direct */ });
+  // Show success immediately — the save is already happening (Supabase direct)
+  showMsg('cdg-msg','ok','✅ Conteo <strong>'+escH(u25)+'</strong> finalizado y bloqueado. Aparece en Hamilton → Traslados CDG.');
+  cdgSkus=[]; cdgFotos={}; cdgFotoGral=null; renderCDGSkuList(); renderCDGFotoGrid();
+  document.getElementById('cdg-u25').value='';
 });
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2971,24 +3065,51 @@ renderCDGFotoGrid();
       var otrInp = document.getElementById('cdg-tipo-otro');
       tipo = otrInp ? (otrInp.value.trim()||'Otro') : 'Otro';
     }
+    var conteoData = {
+      items: cdgSkus.slice(),
+      status: 'open',
+      autor: currentUser?currentUser.name:'—',
+      fecha: new Date().toLocaleDateString('es'),
+      tipo: tipo,
+      fotoGral: cdgFotos.marchamo||cdgFotoGral||null,
+      fotos: Object.assign({}, cdgFotos),
+      lastEditor: currentUser?currentUser.name:'—',
+      ts: new Date().toLocaleString('es')
+    };
+    // Save to BOTH Render and direct Supabase
+    saveCDGDirectToSupabase(u25, conteoData);
     fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({contId:u25,items:cdgSkus.slice(),tipo:tipo,
         fotoGral:cdgFotos.marchamo||cdgFotoGral||null,
         fotos:Object.assign({}, cdgFotos),
         usuario:currentUser?currentUser.name:'—'})})
       .then(function(r){return r.json();})
-      .then(function(d){
-        if(d.ok){ showMsg('cdg-msg','ok','💾 Progreso guardado — aparece en Historial '+tipo+'.'); lastVersion=-1; }
-      })
-      .catch(function(e){ showMsg('cdg-msg','err','Error: '+e.message); });
+      .then(function(d){ if(d.ok) lastVersion=-1; })
+      .catch(function(){ /* already saved direct */ });
+    showMsg('cdg-msg','ok','💾 Progreso guardado — aparece en Historial '+tipo+'.');
   });
 })();
 
-// History panels
+// History panels — try Render first, fall back to direct Supabase read
 function showCDGHist(tipo) {
-  fetch('/api/cdg')
-    .then(function(r){return r.json();})
-    .then(function(data){
+  var renderPromise = fetch('/api/cdg').then(function(r){
+    if(!r.ok) throw new Error('Render not ok');
+    return r.json();
+  });
+  var supaPromise = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    if(rows && rows.length > 0) {
+      try { var parsed = JSON.parse(rows[0].value); return parsed.cdg || {}; }
+      catch(e) { return {}; }
+    }
+    return {};
+  });
+  // Race: take whichever succeeds first, fall back to the other
+  renderPromise.catch(function(){ return supaPromise; }).then(function(data){
+    return data && Object.keys(data).length > 0 ? data : supaPromise;
+  }).then(function(data){
+    if(!data) data = {};
       var panel   = document.getElementById('cdg-hist-panel');
       var title   = document.getElementById('cdg-hist-title');
       var content = document.getElementById('cdg-hist-content');
@@ -3155,43 +3276,86 @@ function exportCDGHistExcel(rows, tipo){
   addHist('Exportó historial CDG ('+tipo+'): '+rows.length+' conteos');
 }
 
-// Export Excel reporte individual de un solo conteo CDG
+// Export reporte individual de un solo conteo CDG (Word con fotos embebidas)
 function exportCDGReporteIndividual(id, c){
   if(!c){ alert('Conteo no encontrado.'); return; }
-  var wb = XLSX.utils.book_new();
-  // Header info + items
-  var rows = [
-    ['Reporte de Conteo CDG'],
-    [],
-    ['Correlativo U25', id],
-    ['Tipo de bodega', c.tipo || 'CDG'],
-    ['Autor',          c.autor || '—'],
-    ['Fecha',          c.fecha || ''],
-    ['Estado',         c.bloqueado ? 'Finalizado' : 'Borrador'],
-    []
-  ];
-  if(c.fotos) {
-    var labels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
-    Object.keys(labels).forEach(function(k){
-      rows.push(['Foto '+labels[k], c.fotos[k] ? 'Adjunta' : '—']);
-    });
-    rows.push([]);
-  }
-  rows.push(['SKU','Descripción','Cantidad','Costo unit. Q','Costo total Q']);
+  var labels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
   var totalCosto = 0;
   (c.items||[]).forEach(function(it){
     var cu = Number(it.costo) || getCosto(it.sku) || 0;
-    var line = cu * (Number(it.qty)||0);
-    totalCosto += line;
-    rows.push([it.sku, it.desc, Number(it.qty)||0, +cu.toFixed(2), +line.toFixed(2)]);
+    totalCosto += cu * (Number(it.qty)||0);
   });
-  rows.push([]);
-  rows.push(['','','TOTAL', '', +totalCosto.toFixed(2)]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Conteo '+id.slice(0,20));
 
+  // Build header info
+  var headerHtml = '<h1 style="color:#1a1a1a;margin-bottom:6pt">Reporte de Conteo CDG</h1>'
+    +'<table border="0" cellpadding="4" style="border-collapse:collapse;font-family:Calibri,sans-serif;font-size:11pt;margin-bottom:16pt">'
+    +'<tr><td style="font-weight:bold;width:160px">Correlativo U25:</td><td>'+escH(id)+'</td></tr>'
+    +'<tr><td style="font-weight:bold">Tipo de bodega:</td><td>'+escH(c.tipo||'CDG')+'</td></tr>'
+    +'<tr><td style="font-weight:bold">Autor:</td><td>'+escH(c.autor||'—')+'</td></tr>'
+    +'<tr><td style="font-weight:bold">Fecha:</td><td>'+escH(c.fecha||'')+'</td></tr>'
+    +'<tr><td style="font-weight:bold">Estado:</td><td>'+(c.bloqueado?'🔒 Finalizado':'📝 Borrador')+'</td></tr>'
+    +'</table>';
+
+  // Photos section
+  var fotosHtml = '';
+  var fotos = c.fotos || {};
+  if(c.fotoGral && !fotos.marchamo) fotos.marchamo = c.fotoGral;
+  var anyFoto = Object.keys(labels).some(function(k){ return !!fotos[k]; });
+  if(anyFoto) {
+    fotosHtml = '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px">Evidencia fotográfica</h2>'
+      +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:10pt">';
+    Object.keys(labels).forEach(function(k){
+      if(fotos[k]) {
+        fotosHtml += '<tr><td style="width:160px;background:#f0f0ee;font-weight:bold;text-align:center;vertical-align:middle">'+escH(labels[k])+'</td>'
+          +'<td style="text-align:center;padding:8pt"><img src="'+fotos[k]+'" style="max-width:420px;max-height:320px;border:1px solid #ccc"></td></tr>';
+      }
+    });
+    fotosHtml += '</table>';
+  }
+
+  // Items table
+  var itemsHtml = '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:18pt">SKUs registrados</h2>'
+    +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:10pt">'
+    +'<thead><tr style="background:#1a1a1a;color:#fff">'
+    +'<th>SKU</th><th>Descripción</th><th style="text-align:right">Cantidad</th>'
+    +'<th style="text-align:right">Costo unit. Q</th><th style="text-align:right">Costo total Q</th>'
+    +'<th style="text-align:center">Evidencia</th>'
+    +'</tr></thead><tbody>';
+  (c.items||[]).forEach(function(it){
+    var cu = Number(it.costo) || getCosto(it.sku) || 0;
+    var line = cu * (Number(it.qty)||0);
+    itemsHtml += '<tr>'
+      +'<td>'+escH(it.sku||'')+'</td>'
+      +'<td>'+escH(it.desc||'')+'</td>'
+      +'<td style="text-align:right">'+(Number(it.qty)||0)+'</td>'
+      +'<td style="text-align:right">'+cu.toFixed(2)+'</td>'
+      +'<td style="text-align:right">'+line.toFixed(2)+'</td>'
+      +'<td style="text-align:center">'+(it.foto?'<img src="'+it.foto+'" style="max-width:120px;max-height:90px">':'—')+'</td>'
+      +'</tr>';
+  });
+  itemsHtml += '<tr style="background:#f0f0ee;font-weight:bold">'
+    +'<td colspan="4" style="text-align:right">TOTAL</td>'
+    +'<td style="text-align:right">Q'+totalCosto.toFixed(2)+'</td>'
+    +'<td></td></tr>';
+  itemsHtml += '</tbody></table>';
+
+  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    +'<head><meta charset="utf-8"><title>Reporte CDG '+escH(id)+'</title></head>'
+    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
+    +headerHtml + fotosHtml + itemsHtml
+    +'</body></html>';
+
+  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
   var today = new Date();
   var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  XLSX.writeFile(wb, 'Reporte_CDG_'+id+'_'+ds+'.xlsx');
+  a.href = url;
+  a.download = 'Reporte_CDG_'+id+'_'+ds+'.doc';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
   addHist('Exportó reporte CDG: '+id);
 }
 
@@ -3220,6 +3384,9 @@ function exportCDGReporteIndividual(id, c){
   var btnSave   = document.getElementById('btn-cdg-hall-save');
   if(!btn||!modal) return;
 
+  // Local state for the modal
+  var hallFoto = null;
+
   btn.addEventListener('click', function(){
     var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
     var el = document.getElementById('cdg-hall-cont-name');
@@ -3230,22 +3397,128 @@ function exportCDGReporteIndividual(id, c){
       var now = new Date();
       fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
     }
+    // Reset photo state
+    hallFoto = null;
+    var prev = document.getElementById('cdg-hall-foto-preview');
+    var status = document.getElementById('cdg-hall-foto-status');
+    var inp = document.getElementById('cdg-hall-foto-input');
+    if(prev) prev.style.display='none';
+    if(status) status.textContent='';
+    if(inp) inp.value='';
     modal.classList.add('open');
   });
 
   if(btnCancel) btnCancel.addEventListener('click', function(){ modal.classList.remove('open'); });
 
+  // --- Photo ---
+  var btnFoto    = document.getElementById('btn-cdg-hall-foto');
+  var fotoInput  = document.getElementById('cdg-hall-foto-input');
+  var fotoPrev   = document.getElementById('cdg-hall-foto-preview');
+  var fotoImg    = document.getElementById('cdg-hall-foto-img');
+  var fotoStatus = document.getElementById('cdg-hall-foto-status');
+  var btnFotoDel = document.getElementById('btn-cdg-hall-foto-del');
+  if(btnFoto && fotoInput) {
+    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
+    fotoInput.addEventListener('change', function(){
+      var file = this.files[0]; if(!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        hallFoto = ev.target.result;
+        if(fotoImg) fotoImg.src = ev.target.result;
+        if(fotoPrev) fotoPrev.style.display='';
+        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  if(btnFotoDel) {
+    btnFotoDel.addEventListener('click', function(){
+      hallFoto = null;
+      if(fotoImg) fotoImg.src='';
+      if(fotoPrev) fotoPrev.style.display='none';
+      if(fotoStatus) fotoStatus.textContent='';
+      if(fotoInput) fotoInput.value='';
+    });
+  }
+
+  // --- Microphone (speech-to-text) ---
+  var btnMic = document.getElementById('btn-cdg-hall-mic');
+  var micStatus = document.getElementById('cdg-hall-mic-status');
+  var micLangSel = document.getElementById('cdg-hall-mic-lang');
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var rec = null;
+  var isRecording = false;
+  if(btnMic) {
+    if(!SpeechRec) {
+      btnMic.disabled = true;
+      btnMic.title = 'Tu navegador no soporta dictado por voz';
+      btnMic.style.opacity = '0.5';
+    } else {
+      btnMic.addEventListener('click', function(){
+        if(isRecording) {
+          if(rec) rec.stop();
+          return;
+        }
+        rec = new SpeechRec();
+        rec.lang = (micLangSel && micLangSel.value) || 'es-ES';
+        rec.continuous = true;
+        rec.interimResults = false;
+        rec.onstart = function(){
+          isRecording = true;
+          btnMic.textContent = '⏹ Detener';
+          btnMic.style.background = '#fdecea';
+          btnMic.style.color = '#c0392b';
+          if(micStatus) micStatus.textContent = 'Escuchando…';
+        };
+        rec.onresult = function(e){
+          var transcript = '';
+          for(var i = e.resultIndex; i < e.results.length; i++) {
+            if(e.results[i].isFinal) transcript += e.results[i][0].transcript + ' ';
+          }
+          if(transcript) {
+            var ta = document.getElementById('cdg-hall-desc');
+            if(ta) {
+              ta.value = (ta.value ? ta.value + ' ' : '') + transcript.trim();
+            }
+          }
+        };
+        rec.onerror = function(e){
+          if(micStatus) micStatus.textContent = 'Error: '+e.error;
+        };
+        rec.onend = function(){
+          isRecording = false;
+          btnMic.textContent = '🎤 Dictar';
+          btnMic.style.background = '';
+          btnMic.style.color = '';
+          if(micStatus) micStatus.textContent = '';
+        };
+        try { rec.start(); } catch(err) {
+          if(micStatus) micStatus.textContent = 'No disponible';
+        }
+      });
+    }
+  }
+
+  // --- Save ---
   if(btnSave) btnSave.addEventListener('click', function(){
     var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
     var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
     var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
+    var tipoH  = (document.getElementById('cdg-hall-tipo')||{}).value||'';
     var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
     var u25    = (document.getElementById('cdg-u25')||{}).value||'CDG';
     if(!desc){ alert('Describe el hallazgo.'); return; }
     if(!turno){ alert('Selecciona el turno.'); return; }
+    if(!area){ alert('Selecciona el área o proceso.'); return; }
+    if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
+    // Stop any active mic before saving
+    if(isRecording && rec) { try { rec.stop(); } catch(e){} }
     var hall = {
       id: makeId(), cont: u25.trim(), tipo: 'CDG',
-      fecha: fecha, turno: turno, area: area, desc: desc,
+      fecha: fecha, turno: turno, area: area,
+      tipoHallazgo: tipoH,
+      desc: desc, quePaso: desc,
+      foto: hallFoto || null,
       autor: currentUser ? currentUser.name : '—',
       ts: new Date().toLocaleString('es')
     };
@@ -3254,12 +3527,20 @@ function exportCDGReporteIndividual(id, c){
       body:JSON.stringify({hallazgo:hall, action:'add'})})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(){});
+      .catch(function(){ saveDirectToSupabase(); });
     modal.classList.remove('open');
+    // Reset modal fields
     document.getElementById('cdg-hall-desc').value='';
     document.getElementById('cdg-hall-turno').value='';
     document.getElementById('cdg-hall-area').value='';
+    document.getElementById('cdg-hall-tipo').value='';
+    hallFoto = null;
+    if(fotoPrev) fotoPrev.style.display='none';
+    if(fotoStatus) fotoStatus.textContent='';
+    if(fotoInput) fotoInput.value='';
     flashMsg('status-bar','ok','✅ Hallazgo CDG guardado.');
+    // Refresh the global hallazgos list if it's open
+    if(typeof renderHallazgosList==='function') renderHallazgosList();
   });
 })();
 
@@ -3271,33 +3552,67 @@ function exportCDGReporteIndividual(id, c){
     <h3>⚠ Crear hallazgo CDG</h3>
     <p style="font-size:.82rem;color:#888;margin-bottom:.75rem">Conteo: <strong id="cdg-hall-cont-name"></strong></p>
     <div class="field-row">
-      <label>Fecha</label>
+      <label>1. Fecha</label>
       <input type="date" class="field-inp" id="cdg-hall-fecha">
     </div>
     <div class="field-row">
-      <label>Turno de trabajo</label>
+      <label>2. Turno de trabajo</label>
       <select class="field-inp" id="cdg-hall-turno">
         <option value="">— Selecciona —</option>
-        <option value="Mañana">1. Mañana</option>
-        <option value="Tarde">2. Tarde</option>
-        <option value="Noche">3. Noche</option>
+        <option value="Mañana">2.1 Mañana</option>
+        <option value="Tarde">2.2 Tarde</option>
+        <option value="Noche">2.3 Noche</option>
       </select>
     </div>
     <div class="field-row">
-      <label>Área o proceso</label>
+      <label>3. Área o proceso</label>
       <select class="field-inp" id="cdg-hall-area">
         <option value="">— Selecciona —</option>
-        <option value="Recepción de mercadería">1. Recepción de mercadería</option>
-        <option value="Bodega/Almacenamiento">2. Bodega/Almacenamiento</option>
-        <option value="Desconsolidación/Conteo">3. Desconsolidación/Conteo</option>
-        <option value="Documentación/Aduana">4. Documentación/Aduana</option>
-        <option value="Transporte interno">5. Transporte interno</option>
-        <option value="Otras">6. Otras</option>
+        <option value="Recepción de Mercadería">3.1 Recepción de Mercadería</option>
+        <option value="Bodega-Almacenaje">3.2 Bodega-Almacenaje</option>
+        <option value="Desconsolidación-Conteo">3.3 Desconsolidación-Conteo</option>
+        <option value="Transporte Interno">3.4 Transporte Interno</option>
+        <option value="Otras">3.5 Otras</option>
       </select>
     </div>
     <div class="field-row">
-      <label>Descripción del hallazgo</label>
+      <label>4. Tipo de hallazgo</label>
+      <select class="field-inp" id="cdg-hall-tipo">
+        <option value="">— Selecciona —</option>
+        <option value="Daño de mercadería">4.1 Daño de mercadería</option>
+        <option value="Diferencia de cantidad">4.2 Diferencia de cantidad</option>
+        <option value="Producto incorrecto">4.3 Producto incorrecto</option>
+        <option value="Documentación incompleta-incorrecta">4.4 Documentación incompleta-incorrecta</option>
+        <option value="Incumplimiento de procedimientos">4.5 Incumplimiento de procedimientos</option>
+        <option value="Retraso operativo">4.6 Retraso operativo</option>
+        <option value="Manipulación inadecuada">4.7 Manipulación inadecuada</option>
+        <option value="Falta de identificación-etiquetado">4.8 Falta de identificación-etiquetado</option>
+        <option value="Otro">4.9 Otro</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        5. Descripción breve del hallazgo
+        <button type="button" id="btn-cdg-hall-mic" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px" title="Dictar por voz">🎤 Dictar</button>
+        <span id="cdg-hall-mic-status" style="font-size:.7rem;color:#888"></span>
+        <select id="cdg-hall-mic-lang" style="font-size:.7rem;padding:1px 4px;border-radius:4px;border:1px solid #ccc">
+          <option value="es-ES">Español</option>
+          <option value="en-US">English</option>
+        </select>
+      </label>
       <textarea class="field-inp" id="cdg-hall-desc" rows="3" placeholder="Describe el hallazgo..."></textarea>
+    </div>
+    <div class="field-row">
+      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        6. Foto del hallazgo (opcional)
+        <button type="button" id="btn-cdg-hall-foto" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px">📷 Tomar / Subir</button>
+        <span id="cdg-hall-foto-status" style="font-size:.7rem;color:#888"></span>
+      </label>
+      <input type="file" id="cdg-hall-foto-input" accept="image/*" capture="environment" style="display:none">
+      <div id="cdg-hall-foto-preview" style="display:none;margin-top:6px">
+        <img id="cdg-hall-foto-img" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid #e0e0e0;display:block">
+        <button type="button" id="btn-cdg-hall-foto-del" style="margin-top:4px;font-size:.72rem;color:#c0392b;background:none;border:none;cursor:pointer;padding:0">× Eliminar foto</button>
+      </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem">
       <button class="btn" id="btn-cdg-hall-cancel" style="flex:1">Cancelar</button>
