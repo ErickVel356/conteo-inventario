@@ -722,7 +722,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div class="sec">Resumen por contenedor</div>
         <div class="tbl-wrap" style="margin-bottom:1.5rem">
           <table>
-            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Estado</th></tr></thead>
+            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th>Última revisión</th><th>Estado</th></tr></thead>
             <tbody id="tbody-resumen"></tbody>
           </table>
         </div>
@@ -1251,9 +1251,10 @@ function renderConteo(){
       +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
       +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
       +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
+      +'<td class="tc"><select class="cob-sel" data-i="'+i+'" style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'+(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'+((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'+(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'+(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>'
       +'</tr>';
   }
-  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="8" class="empty">Sin items</td></tr>';
+  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="9" class="empty">Sin items</td></tr>';
   updateProg();
   updateSelfAssignBtn();
 
@@ -1446,8 +1447,14 @@ function buildReporte(){
   conts.forEach(function(c){
     var items=teorico[c].items,fis=fisico[c],type=teorico[c].type;
     totalItems+=items.length;
+    // Get last edit date from fisico items
+    var lastTs='—';
+    if(Array.isArray(fis)){
+      fis.forEach(function(f){if(f&&f.ts&&lastTs==='—')lastTs=f.ts;});
+    }
+    var puerta=(typeof puertas!=='undefined'&&puertas[c])||'—';
     if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
+      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
       return;
     }
     done++;var ok=0,over=0,under=0;
@@ -1455,13 +1462,13 @@ function buildReporte(){
       var fiObj=fis[i];
       var fv=fiObj!=null?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:Number(fiObj)||0):0;
       var dv=fiObj!=null&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-      var tot=fv+dv,d=tot-item.qty;
+      var tot=fv,d=tot-item.qty;  // dañado es informativo, no suma
       if(d===0)ok++;else if(d>0)over++;else under++;
       if(d!==0)detRows+='<tr><td>'+escH(c)+'</td><td>'+escH(item.sku||'—')+'</td><td>'+escH(item.desc||'—')+'</td><td class="tc">'+item.qty+'</td><td class="tc">'+tot+'</td><td class="tc '+(d>0?'blue':'red')+'">'+(d>0?'+':'')+d+'</td></tr>';
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td>'+badge+'</td></tr>';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
   });
   document.getElementById('m-total').textContent=conts.length;
   document.getElementById('m-done').textContent=done;
