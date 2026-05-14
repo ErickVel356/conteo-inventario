@@ -2730,7 +2730,7 @@ function showCDGHist(tipo) {
         var h='<div style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;overflow:hidden">';
         keys.forEach(function(id){
           var c=data[id];
-          var isLocked=c.bloqueado||c.status==='closed';
+          var isLocked=c.bloqueado===true;
           var badge=isLocked
             ?'<span style="background:#fdecea;color:#c0392b;padding:2px 8px;border-radius:10px;font-size:.75rem">🔒 Finalizado</span>'
             :'<span style="background:#fef9e7;color:#b7770d;padding:2px 8px;border-radius:10px;font-size:.75rem">📝 Borrador</span>';
@@ -2778,7 +2778,7 @@ function showCDGHist(tipo) {
             fetch('/api/cdg/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({contId:id,usuario:currentUser?currentUser.name:'—'})})
               .then(function(r){return r.json();})
-              .then(function(d){ if(d.ok){showCDGHist(tipo);} });
+              .then(function(d){ if(d.ok){ lastVersion=-1; pollNow(); showCDGHist(tipo); } });
           });
         });
       }
