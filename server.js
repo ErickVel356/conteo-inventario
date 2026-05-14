@@ -4,13 +4,15 @@ const XLSX    = require('xlsx');
 const path    = require('path');
 const https   = require('https');
 
-const app = express();
+const app    = express();
+const upload = multer({ storage: multer.memoryStorage() });
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Supabase config (set via environment variables in Render) ─────────────
-const SUPABASE_URL = process.env.SUPABASE_URL;       // https://xxx.supabase.co
-const SUPABASE_KEY = process.env.SUPABASE_KEY;       // service_role key
+const SUPABASE_URL = process.env.SUPABASE_URL;  // https://xxx.supabase.co
+const SUPABASE_KEY = process.env.SUPABASE_KEY;  // service_role key
 
 // ── Simple Supabase REST client ───────────────────────────────────────────
 function supabase(method, table, body, query) {
@@ -56,25 +58,30 @@ async function dbGet(key) {
 
 async function dbSet(key, value) {
   const data = { key, value: JSON.stringify(value) };
-  // Upsert
   await supabase('POST', 'app_state', data, '?on_conflict=key');
 }
 
 // ── In-memory state ───────────────────────────────────────────────────────
 let state = {
-  teorico:      {},
-  fisico:       {},
-  asignaciones: {},
-  historial:    [],
-  costos:       {},
-  cdg:          {},
-  date:         new Date().toDateString(),
-  version:      0
+  teorico:        {},
+  fisico:         {},
+  asignaciones:   {},
+  historial:      [],
+  costos:         {},
+  cdg:            {},
+  puertas:        {},
+  hallazgos:      [],
+  conteoMetadata: {},
+  date:           new Date().toDateString(),
+  version:        0
 };
 
 // Field locks: { "contId:rowIdx": { user, since, expires } }
 let fieldLocks = {};
-const LOCK_TIMEOUT = 90000; // 90 seconds max
+const LOCK_TIMEOUT   = 90000; // 90 seconds max
+const ACTIVE_TIMEOUT = 15000;
+
+let activeUsers = {};
 
 function cleanLocks() {
   const now = Date.now();
@@ -87,8 +94,35 @@ function getLocks() {
   cleanLocks();
   return fieldLocks;
 }
-let activeUsers = {};
-const ACTIVE_TIMEOUT = 15000;
+
+function getActiveUsers() {
+  const now = Date.now();
+  Object.keys(activeUsers).forEach(n => {
+    if(now - activeUsers[n] > ACTIVE_TIMEOUT) delete activeUsers[n];
+  });
+  return Object.keys(activeUsers);
+}
+
+// Build the full daily_state payload from current memory state
+function buildDailyStatePayload() {
+  return {
+    teorico:        state.teorico,
+    fisico:         state.fisico,
+    asignaciones:   state.asignaciones,
+    historial:      state.historial.slice(-100),
+    cdg:            state.cdg,
+    puertas:        state.puertas        || {},
+    hallazgos:      state.hallazgos      || [],
+    conteoMetadata: state.conteoMetadata || {},
+    date:           state.date,
+    version:        state.version
+  };
+}
+
+function saveDailyState(label) {
+  return dbSet('daily_state', buildDailyStatePayload())
+    .catch(e => console.log((label||'save')+' error:', e.message));
+}
 
 // ── Load state from Supabase on startup ───────────────────────────────────
 async function loadState() {
@@ -100,11 +134,10 @@ async function loadState() {
     } else {
       console.log('No saved state found — starting fresh');
     }
-    // Load puertas and hallazgos
-    if(saved && saved.puertas)   state.puertas   = saved.puertas;
-    if(saved && saved.hallazgos)       state.hallazgos       = saved.hallazgos;
+    if(saved && saved.puertas)        state.puertas        = saved.puertas;
+    if(saved && saved.hallazgos)      state.hallazgos      = saved.hallazgos;
     if(saved && saved.conteoMetadata) state.conteoMetadata = saved.conteoMetadata;
-    // Also load costos
+
     const savedCostos = await dbGet('costos_state');
     if(savedCostos && savedCostos.costos) {
       state.costos = savedCostos.costos;
@@ -119,29 +152,15 @@ async function loadState() {
 let saveTimer = null;
 function scheduleSave() {
   if(saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      await dbSet('daily_state', {
-        teorico:      state.teorico,
-        fisico:       state.fisico,
-        asignaciones: state.asignaciones,
-        historial:    state.historial.slice(-100),
-        cdg:          state.cdg,
-        date:         state.date,
-        version:      state.version
-      });
-    } catch(e) { console.log('Save error:', e.message); }
-  }, 200); // save 200ms after last change
-}
-
-function resetIfNewDay() {
-  // No-op: day reset is controlled by client "Nuevo día" button only
-  // This prevents UTC timezone mismatch from wiping Guatemala data
+  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 200);
 }
 
 function addHistorial(usuario, accion, detalle) {
   state.historial.push({
-    hora: new Date().toLocaleTimeString('es'), usuario, accion, detalle:detalle||''
+    hora: new Date().toLocaleTimeString('es'),
+    usuario,
+    accion,
+    detalle: detalle || ''
   });
   if(state.historial.length > 200) state.historial.shift();
   state.version++;
@@ -150,22 +169,19 @@ function addHistorial(usuario, accion, detalle) {
 
 function publicState() {
   return {
-    teorico:      state.teorico,
-    fisico:       state.fisico,
-    asignaciones: state.asignaciones,
-    historial:    state.historial.slice(-50),
-    cdg:          state.cdg,
-    date:         state.date,
-    version:      state.version,
-    activeUsers:  getActiveUsers(),
-    locks:        getLocks()
+    teorico:        state.teorico,
+    fisico:         state.fisico,
+    asignaciones:   state.asignaciones,
+    historial:      state.historial.slice(-50),
+    cdg:            state.cdg,
+    puertas:        state.puertas        || {},
+    hallazgos:      state.hallazgos      || [],
+    conteoMetadata: state.conteoMetadata || {},
+    date:           state.date,
+    version:        state.version,
+    activeUsers:    getActiveUsers(),
+    locks:          getLocks()
   };
-}
-
-function getActiveUsers() {
-  const now = Date.now();
-  Object.keys(activeUsers).forEach(n => { if(now - activeUsers[n] > ACTIVE_TIMEOUT) delete activeUsers[n]; });
-  return Object.keys(activeUsers);
 }
 
 // ── API ───────────────────────────────────────────────────────────────────
@@ -176,15 +192,13 @@ app.post('/api/heartbeat', (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
-  resetIfNewDay();
   res.json(publicState());
 });
 
-// Full state save (from client doServerSave)
+// Full state save (from client). Merges, never deletes existing data.
 app.post('/api/state/save', (req, res) => {
-  resetIfNewDay();
   const { teorico: t, fisico: f, asignaciones: a, historial: h } = req.body;
-  // Merge teorico: add new containers but never remove existing ones
+  // Merge teorico: add new containers, never remove existing ones
   if(t && Object.keys(t).length > 0) {
     Object.keys(t).forEach(cont => {
       if(!state.teorico[cont]) state.teorico[cont] = t[cont];
@@ -197,9 +211,7 @@ app.post('/api/state/save', (req, res) => {
         state.fisico[cont] = f[cont];
       } else if(Array.isArray(f[cont])) {
         f[cont].forEach((item, i) => {
-          // Only use client data if server has nothing for this cell
-          if(item && item.lastAt && (!state.fisico[cont] || !state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
-            if(!state.fisico[cont]) state.fisico[cont] = [];
+          if(item && item.lastAt && (!state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
             state.fisico[cont][i] = item;
           }
         });
@@ -207,69 +219,70 @@ app.post('/api/state/save', (req, res) => {
     });
   }
   if(a) state.asignaciones = a;
-  if(h) { state.historial = h; }
+  if(h) state.historial    = h;
   state.version++;
   scheduleSave();
   res.json({ ok:true, version:state.version });
 });
 
 app.post('/api/conteo', (req, res) => {
-  resetIfNewDay();
   const { cont, data, usuario } = req.body;
   if(!cont || !data) return res.status(400).json({ ok:false });
   state.fisico[cont] = data;
   addHistorial(usuario||'—', 'Conteo guardado', cont);
-  dbSet('daily_state', {
-    teorico:state.teorico, fisico:state.fisico,
-    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
-  }).catch(e=>console.log('Conteo save error:',e.message));
+  saveDailyState('Conteo save');
   res.json({ ok:true, version:state.version });
 });
 
 app.post('/api/asign', (req, res) => {
-  resetIfNewDay();
   const { cont, name, action, usuario } = req.body;
   if(!cont) return res.status(400).json({ ok:false });
   if(!state.asignaciones[cont]) state.asignaciones[cont] = [];
-  if(action==='add') {
+  if(action === 'add') {
     if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
     addHistorial(usuario||'—', 'Asignación', cont+' → '+name);
-  } else if(action==='remove') {
-    state.asignaciones[cont] = state.asignaciones[cont].filter(n=>n!==name);
+  } else if(action === 'remove') {
+    state.asignaciones[cont] = state.asignaciones[cont].filter(n => n !== name);
     addHistorial(usuario||'—', 'Asignación removida', cont+' ← '+name);
-  } else if(action==='self') {
+  } else if(action === 'self') {
     if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
     addHistorial(name, 'Auto-asignación', cont);
   }
   state.version++;
-  dbSet('daily_state', {
-    teorico:state.teorico, fisico:state.fisico,
-    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
-  }).catch(e=>console.log('Asign save error:',e.message));
+  saveDailyState('Asign save');
   res.json({ ok:true, version:state.version });
 });
 
-// CDG
-app.get('/api/cdg', (req,res) => res.json(state.cdg||{}));
+// ── CDG ───────────────────────────────────────────────────────────────────
+app.get('/api/cdg', (req, res) => res.json(state.cdg||{}));
 
-app.post('/api/cdg/save', (req,res) => {
+app.post('/api/cdg/save', (req, res) => {
   const { contId, items, usuario, tipo, fotoGral } = req.body;
-  if(!contId) return res.status(400).json({ok:false});
-  if(!state.cdg[contId]) state.cdg[contId]={items:[],status:'open',autor:usuario,fecha:new Date().toLocaleDateString('es')};
-  state.cdg[contId].items=items; state.cdg[contId].lastEditor=usuario; if(req.body.tipo) state.cdg[contId].tipo=req.body.tipo; if(req.body.fotoGral) state.cdg[contId].fotoGral=req.body.fotoGral;
-  addHistorial(usuario,'CDG guardado',contId);
-  state.version++; scheduleSave();
-  res.json({ok:true,version:state.version});
+  if(!contId) return res.status(400).json({ ok:false });
+  if(!state.cdg[contId]) {
+    state.cdg[contId] = {
+      items:  [],
+      status: 'open',
+      autor:  usuario,
+      fecha:  new Date().toLocaleDateString('es')
+    };
+  }
+  state.cdg[contId].items      = items;
+  state.cdg[contId].lastEditor = usuario;
+  if(tipo)     state.cdg[contId].tipo     = tipo;
+  if(fotoGral) state.cdg[contId].fotoGral = fotoGral;
+  addHistorial(usuario, 'CDG guardado', contId);
+  state.version++;
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
 });
 
-// CDG Unlock (supervisor only - enforced client-side)
+// CDG Unlock (supervisor only — enforced client-side)
 app.post('/api/cdg/unlock', (req, res) => {
   const { contId, usuario } = req.body;
-  if(!contId) return res.status(400).json({ok:false});
+  if(!contId) return res.status(400).json({ ok:false });
   if(state.cdg[contId]) {
-    state.cdg[contId].bloqueado = false;
+    state.cdg[contId].bloqueado       = false;
     state.cdg[contId].desbloqueadoPor = usuario;
     state.cdg[contId].desbloqueadoTs  = new Date().toLocaleString('es');
   }
@@ -277,133 +290,150 @@ app.post('/api/cdg/unlock', (req, res) => {
   if(state.teorico[contId]) state.teorico[contId].cdgBloqueado = false;
   addHistorial(usuario||'—', 'Desbloqueó CDG', contId);
   state.version++;
-  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
-    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
-    hallazgos:state.hallazgos||[],conteoMetadata:state.conteoMetadata||{},
-    date:state.date,version:state.version}).catch(e=>console.log(e.message));
-  res.json({ok:true});
+  saveDailyState('CDG unlock');
+  res.json({ ok:true });
 });
 
-app.post('/api/cdg/finalizar', (req,res) => {
+app.post('/api/cdg/finalizar', (req, res) => {
   const { contId, items, usuario, traslado, tipo, fotoGral, bloqueado } = req.body;
-  if(!contId) return res.status(400).json({ok:false});
-  state.cdg[contId]={items,status:'closed',autor:usuario,fecha:new Date().toLocaleDateString('es'),traslado,tipo:tipo||'CDG',fotoGral:fotoGral||null,bloqueado:bloqueado||false};
-  const num=traslado||contId;
+  if(!contId) return res.status(400).json({ ok:false });
+  state.cdg[contId] = {
+    items,
+    status:    'closed',
+    autor:     usuario,
+    fecha:     new Date().toLocaleDateString('es'),
+    traslado,
+    tipo:      tipo || 'CDG',
+    fotoGral:  fotoGral || null,
+    bloqueado: bloqueado || false
+  };
+  const num = traslado || contId;
   if(!state.teorico[num]) {
-    state.teorico[num]={type:'Traslados',fromCDG:true,cdgRef:contId,cdgValidado:true,cdgBloqueado:true,
-      items:items.map(i=>({sku:i.sku,desc:i.desc,qty:i.qty,
-        raw:{origen:'CDG',status:'CDG Validado',fecha:new Date().toLocaleDateString('es')}}))};
-    state.fisico[num]=null;
+    state.teorico[num] = {
+      type:         'Traslados',
+      fromCDG:      true,
+      cdgRef:       contId,
+      cdgValidado:  true,
+      cdgBloqueado: true,
+      items: items.map(i => ({
+        sku:  i.sku,
+        desc: i.desc,
+        qty:  i.qty,
+        raw:  { origen:'CDG', status:'CDG Validado', fecha:new Date().toLocaleDateString('es') }
+      }))
+    };
+    state.fisico[num] = null;
   } else {
-    state.teorico[num].cdgValidado=true;
+    state.teorico[num].cdgValidado = true;
   }
-  addHistorial(usuario,'CDG finalizado → Traslado',contId+' → '+num);
+  addHistorial(usuario, 'CDG finalizado → Traslado', contId+' → '+num);
   state.version++;
-  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
-    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
-    hallazgos:state.hallazgos||[],date:state.date,version:state.version})
-    .catch(e=>console.log('CDG final save:',e.message));
-  res.json({ok:true,traslado:num,version:state.version});
+  saveDailyState('CDG final save');
+  res.json({ ok:true, traslado:num, version:state.version });
 });
 
-// Costos
-const upload = multer({ storage: multer.memoryStorage() });
-app.post('/api/costos', upload.single('file'), (req,res) => {
+// ── Costos ────────────────────────────────────────────────────────────────
+app.post('/api/costos', upload.single('file'), (req, res) => {
   try {
-    const wb=XLSX.read(req.file.buffer,{type:'buffer',raw:false});
-    const sn=wb.SheetNames.find(n=>n.toLowerCase().includes('existencia')||n.toLowerCase().includes('sap'))||wb.SheetNames[0];
-    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:'',raw:false});
-    const hdr=rows[0].map(h=>norm(String(h)));
-    const cSku=findCol(hdr,['articulo','artículo','sku','codigo']);
-    const cCost=findCol(hdr,['costo promedio','costo']);
-    if(cSku<0||cCost<0) return res.status(400).json({ok:false,error:'Columnas no encontradas'});
-    const raw={};
-    rows.slice(1).forEach(row=>{
-      const sku=String(row[cSku]||'').trim(),cost=parseFloat(String(row[cCost]).replace(',','.'));
-      if(sku&&!isNaN(cost)&&cost>0){if(!raw[sku])raw[sku]={sum:0,n:0};raw[sku].sum+=cost;raw[sku].n++;}
+    const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    const sn = wb.SheetNames.find(n =>
+      n.toLowerCase().includes('existencia') || n.toLowerCase().includes('sap')
+    ) || wb.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'', raw:false });
+    const hdr  = rows[0].map(h => norm(String(h)));
+    const cSku  = findCol(hdr, ['articulo','artículo','sku','codigo']);
+    const cCost = findCol(hdr, ['costo promedio','costo']);
+    if(cSku < 0 || cCost < 0) {
+      return res.status(400).json({ ok:false, error:'Columnas no encontradas' });
+    }
+    const raw = {};
+    rows.slice(1).forEach(row => {
+      const sku  = String(row[cSku]||'').trim();
+      const cost = parseFloat(String(row[cCost]).replace(',','.'));
+      if(sku && !isNaN(cost) && cost > 0) {
+        if(!raw[sku]) raw[sku] = { sum:0, n:0 };
+        raw[sku].sum += cost;
+        raw[sku].n++;
+      }
     });
-    state.costos={}; let cnt=0;
-    Object.keys(raw).forEach(sku=>{state.costos[sku]=raw[sku].sum/raw[sku].n;cnt++;});
-    res.json({ok:true,count:cnt});
-  } catch(e){res.status(500).json({ok:false,error:e.message});}
+    state.costos = {};
+    let cnt = 0;
+    Object.keys(raw).forEach(sku => {
+      state.costos[sku] = raw[sku].sum / raw[sku].n;
+      cnt++;
+    });
+    res.json({ ok:true, count:cnt });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
 });
-// Hallazgos save
+
+// Save pre-processed costos from client
+app.post('/api/costos-save', (req, res) => {
+  const { costos: c } = req.body;
+  if(c && Object.keys(c).length > 0) {
+    state.costos = c;
+    dbSet('costos_state', { costos: c }).catch(e => console.log('Costos save error:', e.message));
+    res.json({ ok:true, count: Object.keys(c).length });
+  } else {
+    res.json({ ok:false });
+  }
+});
+
+app.get('/api/costos', (req, res) => res.json(state.costos));
+
+// ── Hallazgos ─────────────────────────────────────────────────────────────
 app.post('/api/hallazgo', (req, res) => {
   const { hallazgo, action, id } = req.body;
   if(!state.hallazgos) state.hallazgos = [];
-  if(action==='add' && hallazgo) {
+  if(action === 'add' && hallazgo) {
     state.hallazgos.push(hallazgo);
-  } else if(action==='edit' && id) {
-    const idx = state.hallazgos.findIndex(h=>h.id===id);
-    if(idx>=0) state.hallazgos[idx] = hallazgo;
+  } else if(action === 'edit' && id) {
+    const idx = state.hallazgos.findIndex(h => h.id === id);
+    if(idx >= 0) state.hallazgos[idx] = hallazgo;
   }
   state.version++;
-  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
-    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
-    hallazgos:state.hallazgos,date:state.date,version:state.version})
-    .catch(e=>console.log('Hallazgo save:',e.message));
-  res.json({ok:true,version:state.version});
+  saveDailyState('Hallazgo save');
+  res.json({ ok:true, version:state.version });
 });
 
-// Metadata (puerta, fechaIngreso, fechaFurgon, placas per container)
+// ── Metadata (puerta, fechaIngreso, fechaFurgon, placas per container) ────
 app.post('/api/metadata', (req, res) => {
   const { cont, metadata, puerta, usuario } = req.body;
-  if(!cont) return res.status(400).json({ok:false});
+  if(!cont) return res.status(400).json({ ok:false });
   if(!state.conteoMetadata) state.conteoMetadata = {};
-  if(!state.puertas) state.puertas = {};
-  if(metadata) state.conteoMetadata[cont] = metadata;
-  if(puerta !== undefined) state.puertas[cont] = puerta;
+  if(!state.puertas)        state.puertas        = {};
+  if(metadata)             state.conteoMetadata[cont] = metadata;
+  if(puerta !== undefined) state.puertas[cont]        = puerta;
   addHistorial(usuario||'—', 'Metadata actualizada', cont);
   state.version++;
-  dbSet('daily_state',{teorico:state.teorico,fisico:state.fisico,asignaciones:state.asignaciones,
-    historial:state.historial.slice(-100),cdg:state.cdg,puertas:state.puertas||{},
-    hallazgos:state.hallazgos||[],conteoMetadata:state.conteoMetadata||{},
-    date:state.date,version:state.version})
-    .catch(e=>console.log('Metadata save:',e.message));
-  res.json({ok:true,version:state.version});
+  saveDailyState('Metadata save');
+  res.json({ ok:true, version:state.version });
 });
 
-// Chat
+// ── Chat ──────────────────────────────────────────────────────────────────
 app.post('/api/chat', (req, res) => {
   const { id, user, msg, ts } = req.body;
-  if(!msg || !user) return res.status(400).json({ok:false});
+  if(!msg || !user) return res.status(400).json({ ok:false });
   if(!state.chat) state.chat = [];
-  // Remove expired (>5min) and add new
-  state.chat = state.chat.filter(m => Date.now()-m.ts < 300000);
-  state.chat.push({id:id||Date.now().toString(), user, msg, ts:ts||Date.now()});
+  // Remove messages older than 5 minutes, then add the new one
+  state.chat = state.chat.filter(m => Date.now() - m.ts < 300000);
+  state.chat.push({ id: id || Date.now().toString(), user, msg, ts: ts || Date.now() });
   state.version++;
-  res.json({ok:true});
+  res.json({ ok:true });
 });
 
-// Puerta
+// ── Puerta ────────────────────────────────────────────────────────────────
 app.post('/api/puerta', (req, res) => {
   const { cont, puerta, usuario } = req.body;
-  if(!cont) return res.status(400).json({ok:false});
+  if(!cont) return res.status(400).json({ ok:false });
   if(!state.puertas) state.puertas = {};
   state.puertas[cont] = puerta;
   addHistorial(usuario||'—', 'Puerta asignada', cont+' → '+puerta);
   state.version++;
-  dbSet('daily_state', {
-    teorico:state.teorico, fisico:state.fisico,
-    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas, date:state.date, version:state.version
-  }).catch(e=>console.log('Puerta save:',e.message));
-  res.json({ok:true, version:state.version});
+  saveDailyState('Puerta save');
+  res.json({ ok:true, version:state.version });
 });
-
-// Save pre-processed costos from client
-app.post('/api/costos-save', (req,res) => {
-  const { costos: c } = req.body;
-  if(c && Object.keys(c).length > 0) {
-    state.costos = c;
-    dbSet('costos_state', {costos: c}).catch(e=>console.log('Costos save error:',e.message));
-    res.json({ok:true, count:Object.keys(c).length});
-  } else {
-    res.json({ok:false});
-  }
-});
-
-app.get('/api/costos',(req,res)=>res.json(state.costos));
 
 // ── Field locking ─────────────────────────────────────────────────────────
 app.post('/api/lock', (req, res) => {
@@ -411,11 +441,10 @@ app.post('/api/lock', (req, res) => {
   const { cont, idx, user } = req.body;
   const key = cont + ':' + idx;
   const existing = fieldLocks[key];
-  // Already locked by someone else and not expired
   if(existing && existing.user !== user && existing.expires > Date.now()) {
     return res.json({ ok:false, lockedBy: existing.user, since: existing.since });
   }
-  fieldLocks[key] = { user, since: Date.now(), expires: Date.now() + 90000 };
+  fieldLocks[key] = { user, since: Date.now(), expires: Date.now() + LOCK_TIMEOUT };
   state.version++;
   res.json({ ok:true });
 });
@@ -430,16 +459,14 @@ app.post('/api/unlock', (req, res) => {
 
 // Auto-save single field
 app.post('/api/conteo/field', (req, res) => {
-  resetIfNewDay();
-  const { cont, idx, fisico, daniado, usuario } = req.body;
-  if(cont === undefined || idx === undefined) return res.status(400).json({ok:false});
-  if(!state.fisico[cont]) state.fisico[cont] = [];
+  const { cont, idx, fisico, daniado, cobertura, usuario } = req.body;
+  if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
   state.fisico[cont][idx] = {
-    fisico:    fisico    !== undefined ? fisico    : prev.fisico||0,
-    daniado:   daniado   !== undefined ? daniado   : prev.daniado||0,
-    cobertura: req.body.cobertura !== undefined ? req.body.cobertura : (prev.cobertura||'En revisión'),
+    fisico:    fisico    !== undefined ? fisico    : (prev.fisico  || 0),
+    daniado:   daniado   !== undefined ? daniado   : (prev.daniado || 0),
+    cobertura: cobertura !== undefined ? cobertura : (prev.cobertura || 'En revisión'),
     quien:     usuario,
     ts:        new Date().toLocaleString('es'),
     lastUser:  usuario,
@@ -447,106 +474,140 @@ app.post('/api/conteo/field', (req, res) => {
   };
   state.version++;
   // Save immediately to Supabase — don't wait for debounce
-  dbSet('daily_state', {
-    teorico:state.teorico, fisico:state.fisico,
-    asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-    cdg:state.cdg, puertas:state.puertas||{}, hallazgos:state.hallazgos||[], conteoMetadata:state.conteoMetadata||{}, date:state.date, version:state.version
-  }).catch(e=>console.log('Immediate save error:',e.message));
+  saveDailyState('Field save');
   res.json({ ok:true, version:state.version });
 });
 
-// Upload teorico
-app.post('/api/upload', upload.single('file'), (req,res) => {
+// ── Upload teórico ────────────────────────────────────────────────────────
+app.post('/api/upload', upload.single('file'), (req, res) => {
   try {
-    resetIfNewDay();
-    const wb=XLSX.read(req.file.buffer,{type:'buffer',raw:false});
-    const usuario=req.body.usuario||'—';
-    let loaded=[];
-    wb.SheetNames.forEach(sn=>{
-      const nl=sn.toLowerCase();
-      const type=nl.includes('traslado')?'Traslados':nl.includes('embarque')?'Embarques':null;
+    const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    const usuario = req.body.usuario || '—';
+    let loaded = [];
+    wb.SheetNames.forEach(sn => {
+      const nl = sn.toLowerCase();
+      const type = nl.includes('traslado') ? 'Traslados'
+                 : nl.includes('embarque') ? 'Embarques'
+                 : null;
       if(!type) return;
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:'',raw:false});
-      const count=mergeSheet(rows,type);
-      if(count>0){loaded.push(sn+'('+count+')');addHistorial(usuario,'Teórico cargado',type+' — '+count+' contenedores');}
+      const rows  = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'', raw:false });
+      const count = mergeSheet(rows, type);
+      if(count > 0) {
+        loaded.push(sn+'('+count+')');
+        addHistorial(usuario, 'Teórico cargado', type+' — '+count+' contenedores');
+      }
     });
-    if(loaded.length===0){
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:'',raw:false});
-      const count=mergeSheet(rows,'General');
-      if(count>0) loaded.push(wb.SheetNames[0]+'('+count+')');
-      addHistorial(usuario,'Teórico cargado',loaded.join());
+    if(loaded.length === 0) {
+      const rows  = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'', raw:false });
+      const count = mergeSheet(rows, 'General');
+      if(count > 0) loaded.push(wb.SheetNames[0]+'('+count+')');
+      addHistorial(usuario, 'Teórico cargado', loaded.join());
     }
     state.version++;
-    // Save immediately to Supabase after upload
-    dbSet('daily_state', {
-      teorico:state.teorico, fisico:state.fisico,
-      asignaciones:state.asignaciones, historial:state.historial.slice(-100),
-      cdg:state.cdg, date:state.date, version:state.version
-    }).catch(e=>console.log('Upload save error:',e.message));
-    res.json({ok:true,loaded});
-  } catch(e){res.status(500).json({ok:false,error:e.message});}
+    saveDailyState('Upload save');
+    res.json({ ok:true, loaded });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-function norm(s){return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
-function findCol(hdr,terms){
-  for(const t of terms){const i=hdr.findIndex(h=>h===norm(t));if(i>=0)return i;}
-  for(const t of terms){const i=hdr.findIndex(h=>h.includes(norm(t)));if(i>=0)return i;}
+function norm(s) {
+  return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function findCol(hdr, terms) {
+  for(const t of terms) { const i = hdr.findIndex(h => h === norm(t)); if(i >= 0) return i; }
+  for(const t of terms) { const i = hdr.findIndex(h => h.includes(norm(t))); if(i >= 0) return i; }
   return -1;
 }
-function mergeSheet(rows,type){
-  if(!rows||rows.length<2)return 0;
+
+function mergeSheet(rows, type) {
+  if(!rows || rows.length < 2) return 0;
   // Find actual header row (contains 'sku' or 'numero')
   let hdrRowIdx = 0;
-  for(let ri=0;ri<Math.min(rows.length,10);ri++){
-    const r=rows[ri].map(h=>norm(h));
-    if(r.some(h=>h==='sku'||h.includes('sku'))||r.some(h=>h==='numero'||h==='número')){
-      hdrRowIdx=ri; break;
+  for(let ri = 0; ri < Math.min(rows.length, 10); ri++) {
+    const r = rows[ri].map(h => norm(h));
+    if(r.some(h => h === 'sku' || h.includes('sku')) ||
+       r.some(h => h === 'numero' || h === 'número')) {
+      hdrRowIdx = ri;
+      break;
     }
   }
-  const hdr=rows[hdrRowIdx].map(h=>norm(h));
-  const dataRows=rows.slice(hdrRowIdx+1);
-  const colCont=findCol(hdr,['numero','número']);
-  const colSku=findCol(hdr,['sku']);
-  const colQty=findCol(hdr,['cant.','cant','cantidad']);
-  let colDesc=-1;
-  for(let i=colSku+1;i<hdr.length;i++){if(hdr[i].includes('nombre')||hdr[i].includes('descripcion')){colDesc=i;break;}}
-  if(colDesc<0)colDesc=findCol(hdr,['nombre','descripcion']);
-  if(colCont<0||colSku<0||colDesc<0||colQty<0)return 0;
-  const g=(row,i)=>i>=0?row[i]:'';
-  const ex={
-    cFecha:findCol(hdr,['fecha']),cCodProv:findCol(hdr,['proveedor','código de proveedor']),
-    cLineas:findCol(hdr,['lineas','líneas']),cStatus:findCol(hdr,['status']),
-    cOC:findCol(hdr,['orden de compra','# orden']),cIngr:findCol(hdr,['ingresado']),
-    cColoc:findCol(hdr,['colocado']),cFalt:findCol(hdr,['faltantes']),
-    cSobr:findCol(hdr,['sobrantes']),cDan:findCol(hdr,['dañado','danado']),
-    cOrigen:findCol(hdr,['origen']),cIngreso:findCol(hdr,['# ingreso','ingreso']),
-    cDocSap:findCol(hdr,['doc. sap','doc sap']),cTipo:findCol(hdr,['tipo']),
-    cUnidad:findCol(hdr,['unidad']),cUnidades:findCol(hdr,['unidades']),cDestino:findCol(hdr,['destino'])
+  const hdr      = rows[hdrRowIdx].map(h => norm(h));
+  const dataRows = rows.slice(hdrRowIdx + 1);
+  const colCont = findCol(hdr, ['numero','número']);
+  const colSku  = findCol(hdr, ['sku']);
+  const colQty  = findCol(hdr, ['cant.','cant','cantidad']);
+  let colDesc = -1;
+  for(let i = colSku + 1; i < hdr.length; i++) {
+    if(hdr[i].includes('nombre') || hdr[i].includes('descripcion')) { colDesc = i; break; }
+  }
+  if(colDesc < 0) colDesc = findCol(hdr, ['nombre','descripcion']);
+  if(colCont < 0 || colSku < 0 || colDesc < 0 || colQty < 0) return 0;
+
+  const g = (row, i) => i >= 0 ? row[i] : '';
+  const ex = {
+    cFecha:    findCol(hdr, ['fecha']),
+    cCodProv:  findCol(hdr, ['proveedor','código de proveedor']),
+    cLineas:   findCol(hdr, ['lineas','líneas']),
+    cStatus:   findCol(hdr, ['status']),
+    cOC:       findCol(hdr, ['orden de compra','# orden']),
+    cIngr:     findCol(hdr, ['ingresado']),
+    cColoc:    findCol(hdr, ['colocado']),
+    cFalt:     findCol(hdr, ['faltantes']),
+    cSobr:     findCol(hdr, ['sobrantes']),
+    cDan:      findCol(hdr, ['dañado','danado']),
+    cOrigen:   findCol(hdr, ['origen']),
+    cIngreso:  findCol(hdr, ['# ingreso','ingreso']),
+    cDocSap:   findCol(hdr, ['doc. sap','doc sap']),
+    cTipo:     findCol(hdr, ['tipo']),
+    cUnidad:   findCol(hdr, ['unidad']),
+    cUnidades: findCol(hdr, ['unidades']),
+    cDestino:  findCol(hdr, ['destino'])
   };
-  const newConts={};
-  dataRows.filter(r=>r&&r.some(c=>String(c).trim()!=='')).forEach(row=>{
-    const cont=String(row[colCont]||'').trim();if(!cont)return;
-    if(!newConts[cont])newConts[cont]=[];
-    newConts[cont].push({sku:String(row[colSku]||'').trim(),desc:String(row[colDesc]||'').trim(),
-      qty:parseFloat(String(row[colQty]).replace(',','.'))||0,
-      raw:{fecha:g(row,ex.cFecha),codProv:g(row,ex.cCodProv),lineas:g(row,ex.cLineas),
-        status:g(row,ex.cStatus),oc:g(row,ex.cOC),ingresado:g(row,ex.cIngr),
-        colocado:g(row,ex.cColoc),faltantes:g(row,ex.cFalt),sobrantes:g(row,ex.cSobr),
-        daniado:g(row,ex.cDan),origen:g(row,ex.cOrigen),ingreso:g(row,ex.cIngreso),
-        docSap:g(row,ex.cDocSap),tipo:g(row,ex.cTipo),unidad:g(row,ex.cUnidad),
-        unidades:g(row,ex.cUnidades),destino:g(row,ex.cDestino)}});
-  });
-  Object.keys(newConts).forEach(cont=>{
+  const newConts = {};
+  dataRows
+    .filter(r => r && r.some(c => String(c).trim() !== ''))
+    .forEach(row => {
+      const cont = String(row[colCont]||'').trim();
+      if(!cont) return;
+      if(!newConts[cont]) newConts[cont] = [];
+      newConts[cont].push({
+        sku:  String(row[colSku] ||'').trim(),
+        desc: String(row[colDesc]||'').trim(),
+        qty:  parseFloat(String(row[colQty]).replace(',','.')) || 0,
+        raw: {
+          fecha:     g(row, ex.cFecha),
+          codProv:   g(row, ex.cCodProv),
+          lineas:    g(row, ex.cLineas),
+          status:    g(row, ex.cStatus),
+          oc:        g(row, ex.cOC),
+          ingresado: g(row, ex.cIngr),
+          colocado:  g(row, ex.cColoc),
+          faltantes: g(row, ex.cFalt),
+          sobrantes: g(row, ex.cSobr),
+          daniado:   g(row, ex.cDan),
+          origen:    g(row, ex.cOrigen),
+          ingreso:   g(row, ex.cIngreso),
+          docSap:    g(row, ex.cDocSap),
+          tipo:      g(row, ex.cTipo),
+          unidad:    g(row, ex.cUnidad),
+          unidades:  g(row, ex.cUnidades),
+          destino:   g(row, ex.cDestino)
+        }
+      });
+    });
+
+  Object.keys(newConts).forEach(cont => {
     // Don't overwrite CDG-validated containers from teorico upload
-    if(state.teorico[cont]&&state.teorico[cont].fromCDG) {
-      state.teorico[cont].cdgValidado=true;
+    if(state.teorico[cont] && state.teorico[cont].fromCDG) {
+      state.teorico[cont].cdgValidado = true;
       return;
     }
-    state.teorico[cont]={items:newConts[cont],type};
+    state.teorico[cont] = { items: newConts[cont], type };
     // Preserve existing fisico data — never overwrite conteo work
-    if(!state.fisico[cont]) state.fisico[cont]=null;
-    // else: keep existing fisico[cont] as-is
+    if(!state.fisico[cont]) state.fisico[cont] = null;
   });
   return Object.keys(newConts).length;
 }
