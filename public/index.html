@@ -889,6 +889,66 @@ function todayISO(){ return new Date().toISOString().slice(0,10); }
 ══════════════════════════════════════════════════════════════════ */
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// Build an MHTML document from an HTML string. MHTML packs each image into a
+// separate MIME part, which is what Microsoft Word actually loads. Pure
+// data:base64 URLs inside `.doc` are silently dropped by Word desktop —
+// only browsers and online viewers display them.
+function htmlToMhtml(htmlBody, title){
+  var imgRe = /<img\s+[^>]*src="(data:image\/([a-z]+);base64,([^"]+))"[^>]*>/gi;
+  var parts = [];
+  var idx = 0;
+  // Replace each data: URL with a cid: reference and collect the binary parts
+  var newHtml = htmlBody.replace(imgRe, function(match, fullData, mime, b64){
+    idx++;
+    var cid = 'image' + idx + '@local';
+    parts.push({ cid: cid, mime: 'image/' + mime, b64: b64 });
+    return match.replace(fullData, 'cid:' + cid);
+  });
+  var boundary = '----=_NextPart_' + Math.random().toString(36).slice(2);
+  var lines = [];
+  lines.push('MIME-Version: 1.0');
+  lines.push('Content-Type: multipart/related; boundary="' + boundary + '"; type="text/html"');
+  lines.push('Subject: ' + (title || 'Document'));
+  lines.push('');
+  lines.push('--' + boundary);
+  lines.push('Content-Type: text/html; charset="utf-8"');
+  lines.push('Content-Transfer-Encoding: quoted-printable');
+  lines.push('Content-Location: index.html');
+  lines.push('');
+  // Encode HTML as quoted-printable (simplified: just keep ASCII and escape =)
+  var qp = newHtml.replace(/=/g, '=3D');
+  lines.push(qp);
+  parts.forEach(function(p){
+    lines.push('');
+    lines.push('--' + boundary);
+    lines.push('Content-Type: ' + p.mime);
+    lines.push('Content-Transfer-Encoding: base64');
+    lines.push('Content-Location: ' + p.cid);
+    lines.push('Content-ID: <' + p.cid + '>');
+    lines.push('');
+    // Wrap base64 every 76 chars (RFC standard)
+    var wrapped = p.b64.match(/.{1,76}/g);
+    lines.push(wrapped ? wrapped.join('\r\n') : p.b64);
+  });
+  lines.push('');
+  lines.push('--' + boundary + '--');
+  return lines.join('\r\n');
+}
+
+// Trigger download of a Word doc that displays embedded images correctly.
+// Uses MHTML (multipart) so Microsoft Word loads each image as a real attachment.
+function downloadWordWithImages(htmlBody, filename, title){
+  var mhtml = htmlToMhtml(htmlBody, title || filename);
+  var blob = new Blob([mhtml], { type: 'message/rfc822' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+}
+
 // Reusable speech-to-text helper. Returns true if mic was attached, false if browser doesn't support it.
 function setupMic(btnId, langSelId, statusId, targetTextareaId){
   var btn = document.getElementById(btnId);
@@ -1685,7 +1745,7 @@ function buildReporte(){
     });
     totalCosto += contCosto;
     if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+contCosto.toFixed(2)+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
+      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
       return;
     }
     done++;var ok=0,over=0,under=0;
@@ -1699,14 +1759,14 @@ function buildReporte(){
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+contCosto.toFixed(2)+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
   });
   document.getElementById('m-total').textContent=contsFiltrados.length;
   document.getElementById('m-done').textContent=done;
   document.getElementById('m-diffs').textContent=totalDiffs;
   document.getElementById('m-items').textContent=totalItems;
   var mCosto = document.getElementById('m-costo');
-  if(mCosto) mCosto.textContent = totalCosto.toFixed(2);
+  if(mCosto) mCosto.textContent = 'Q' + Math.round(totalCosto).toLocaleString('es-GT');
   document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="10" class="empty">Sin contenedores en esta fecha.</td></tr>';
   document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
 }
@@ -1982,15 +2042,8 @@ function exportHallazgosWord(){
     +sections
     +'</body></html>';
 
-  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
-  var ds   = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  a.href     = url;
-  a.download = 'Hallazgos_'+ds+'.doc';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  downloadWordWithImages(docHtml, 'Hallazgos_'+ds+'.doc', 'Reporte de Hallazgos');
   addHist('Exportó reporte Word de hallazgos ('+hallazgos.length+')');
 }
 
@@ -2885,25 +2938,56 @@ function scheduleFieldSave(idx) {
 
 function saveField(idx) {
   if(!current || !currentUser) return;
-  var fv = parseFloat((document.getElementById('fi'+idx)||{}).value);
-  var dv = parseFloat((document.getElementById('da'+idx)||{}).value);
-  if(isNaN(fv) && isNaN(dv)) return;
+  var fiEl   = document.getElementById('fi'+idx);
+  var daEl   = document.getElementById('da'+idx);
+  var calcEl = document.getElementById('calc'+idx);
+  var fiRaw  = fiEl ? fiEl.value : '';
+  var daRaw  = daEl ? daEl.value : '';
+  var calcRaw = calcEl ? calcEl.value : '';
+  // Distinguish empty ('') from zero ('0')
+  var fv = fiRaw === '' ? null : (parseFloat(fiRaw)||0);
+  var dv = daRaw === '' ? null : (parseFloat(daRaw)||0);
+  if(fv === null && dv === null) return; // nothing entered yet
   if(!fisico[current] || !Array.isArray(fisico[current])) fisico[current]=[];
   var prev = fisico[current][idx] || {};
+  // Promote cobertura from "En revisión" to "Auditado" when the user enters a value.
+  // Respect existing "Auditado" / "No auditado" choices.
+  var prevCob = prev.cobertura || 'En revisión';
+  var newCob;
+  if(prevCob === 'No auditado' || prevCob === 'Auditado') {
+    newCob = prevCob;
+  } else {
+    newCob = (fv !== null || dv !== null) ? 'Auditado' : 'En revisión';
+  }
   fisico[current][idx] = {
-    fisico:  isNaN(fv) ? prev.fisico||0  : fv,
-    daniado: isNaN(dv) ? prev.daniado||0 : dv,
-    lastUser: currentUser.name,
-    lastAt:   Date.now()
+    fisico:    fv !== null ? fv : prev.fisico,
+    daniado:   dv !== null ? dv : prev.daniado,
+    cobertura: newCob,
+    calcExpr:  calcRaw || prev.calcExpr || '',
+    quien:     currentUser.name,
+    ts:        nowStr(),
+    lastUser:  currentUser.name,
+    lastAt:    Date.now()
   };
+  // Reflect cobertura back into the select
+  var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+  if(cobSel && cobSel.value !== newCob) {
+    cobSel.value = newCob;
+    cobSel.style.background = newCob==='Auditado' ? '#eafaf1' : newCob==='No auditado' ? '#fdecea' : '#fef9e7';
+  }
+  if(typeof updateSummaryCard==='function') updateSummaryCard();
   fetch('/api/conteo/field', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({cont:current, idx:idx,
-      fisico:  isNaN(fv) ? undefined : fv,
-      daniado: isNaN(dv) ? undefined : dv,
+      fisico:  fv,
+      daniado: dv,
+      cobertura: newCob,
+      calcExpr: calcRaw || prev.calcExpr || '',
       usuario: currentUser.name})})
     .then(function(r){return r.json();})
     .then(function(d){if(d.ok){lastVersion=d.version;releaseLock(idx);}})
     .catch(function(e){console.warn('saveField:',e);});
+  // Always backup to Supabase
+  if(typeof saveDirectToSupabase==='function') saveDirectToSupabase();
 }
 
 // Patch afterLogin to start polling
@@ -2929,10 +3013,14 @@ renderConteo = function() {
     (function(idx){
       var fi = document.getElementById('fi'+idx);
       var da = document.getElementById('da'+idx);
+      var calc = document.getElementById('calc'+idx);
+      var cob = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
       var lock = window.serverLocks[current+':'+idx];
       if(lock && lock.user !== myName) {
         if(fi){fi.disabled=true;fi.style.borderColor='#e0c96e';fi.style.background='#fffef0';}
-        if(da) da.disabled=true;
+        if(da)   da.disabled=true;
+        if(calc){ calc.disabled=true; calc.style.background='#f5f5f3'; }
+        if(cob)  cob.disabled=true;
         var parent = fi ? fi.parentNode : null;
         if(parent && !parent.querySelector('.srv-lock')){
           var badge=document.createElement('div');
@@ -2941,6 +3029,12 @@ renderConteo = function() {
           badge.textContent='🔒 '+lock.user+' contando...';
           parent.appendChild(badge);
         }
+      } else {
+        // No lock or I own it — make sure inputs are enabled
+        if(fi)   fi.disabled=false;
+        if(da)   da.disabled=false;
+        if(calc){ calc.disabled=false; calc.style.background=''; }
+        if(cob)  cob.disabled=false;
       }
       // Last editor info
       var sv = fisico[current] && fisico[current][idx] ? fisico[current][idx] : null;
@@ -2968,6 +3062,52 @@ renderConteo = function() {
         da.addEventListener('focus', function(){ acquireLock(idx); });
         da.addEventListener('input', function(){ scheduleFieldSave(idx); });
         da.addEventListener('blur',  function(){ scheduleFieldSave(idx); });
+      }
+      if(calc && !calc._srv){
+        calc._srv = 1;
+        // Acquire lock as soon as the user touches the calc field.
+        // This blocks other users from BOTH the calc and the physical field,
+        // because acquireLock locks the whole row.
+        calc.addEventListener('focus', function(){ acquireLock(idx); });
+        // Whenever the user types in the calc, evaluate the expression,
+        // mirror the result into the physical input, and trigger the save
+        // pipeline (scheduleFieldSave reads the physical input value).
+        calc.addEventListener('input', function(){
+          // Always (re-)acquire the lock on first keystroke so that even if
+          // focus didn't fire (some browsers + autofill) we still claim it.
+          acquireLock(idx);
+          var expr = this.value.replace(/[^0-9+\-*/().\s]/g, '');
+          if(!expr) {
+            // Empty calc → clear the physical field and still save
+            var fiEmpty = document.getElementById('fi'+idx);
+            if(fiEmpty && !fiEmpty.disabled) {
+              fiEmpty.value = '';
+              if(typeof updateTotDiff==='function') updateTotDiff(idx);
+              scheduleFieldSave(idx);
+            }
+            return;
+          }
+          try {
+            var result = Math.round(Function('"use strict";return(' + expr + ')')() * 100) / 100;
+            if(!isNaN(result) && isFinite(result)) {
+              var fiEl = document.getElementById('fi'+idx);
+              if(fiEl && !fiEl.disabled) {
+                fiEl.value = result;
+                if(typeof updateTotDiff==='function') updateTotDiff(idx);
+                // KEY FIX: trigger the save pipeline that actually persists to the server.
+                // Setting .value programmatically does NOT fire 'input', so we call directly.
+                scheduleFieldSave(idx);
+              }
+            }
+          } catch(e) { /* invalid expression — ignore until user finishes typing */ }
+        });
+        // Save on blur as well, so the final value is committed even if the
+        // user clicks away before the 3-second debounce of scheduleFieldSave fires.
+        calc.addEventListener('blur', function(){ scheduleFieldSave(idx); });
+      }
+      if(cob && !cob._srv){
+        cob._srv = 1;
+        cob.addEventListener('focus', function(){ acquireLock(idx); });
       }
     })(i);
   }
@@ -3034,22 +3174,29 @@ function updateSummaryCard() {
   var puerta  = puertas[current] || '—';
   var partic  = (asignaciones[current]||[]).join(', ') || '—';
   var contadas = 0, diffs = 0;
-  // A row counts as "contada" only when the user made a coverage decision:
-  //   - 'Auditado' (counted normally)
-  //   - 'No auditado' (explicitly skipped) — counts as resolved, not pending.
-  // 'En revisión' (default) or empty cobertura = still pending.
-  // Diffs only apply to rows that are 'Auditado' AND whose physical ≠ teórico.
+  // A row counts as "contada" when ANY of these is true:
+  //   (a) cobertura is 'Auditado'
+  //   (b) cobertura is 'No auditado'  (explicitly skipped — still counts as resolved)
+  //   (c) cobertura missing/En revisión BUT a numeric fisico is already saved
+  //       (legacy data created before the cobertura field existed).
+  // Pendientes = total - contadas. Diffs only count rows that are actually audited
+  // AND whose physical value differs from teórico.
   items.forEach(function(item, i) {
     var fiObj = (Array.isArray(fis) && fis[i]) ? fis[i] : null;
-    var cob = fiObj && fiObj.cobertura ? fiObj.cobertura : 'En revisión';
+    var cob = fiObj && fiObj.cobertura ? fiObj.cobertura : null;
+    var hasFisico = fiObj && fiObj.fisico !== null && fiObj.fisico !== undefined && fiObj.fisico !== '';
     // Live edit: if the input has a numeric value and user is typing it, treat as Auditado
-    if(cob === 'En revisión') {
+    var liveTyping = false;
+    if(!cob || cob === 'En revisión') {
       var fiEl = document.getElementById('fi'+i);
-      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) cob = 'Auditado';
+      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) liveTyping = true;
     }
-    if(cob === 'Auditado' || cob === 'No auditado') {
+    var isCounted = (cob === 'Auditado') || (cob === 'No auditado') || (!cob && hasFisico) || liveTyping;
+    if(isCounted) {
       contadas++;
-      if(cob === 'Auditado') {
+      // Diffs only for genuinely audited rows
+      var auditedForDiff = (cob === 'Auditado') || (!cob && hasFisico) || liveTyping;
+      if(auditedForDiff) {
         var fv = fiObj ? Number(fiObj.fisico) : NaN;
         if(!isNaN(fv) && fv !== item.qty) diffs++;
       }
@@ -3602,16 +3749,9 @@ function exportCDGReporteIndividual(id, c){
     +headerHtml + fotosHtml + itemsHtml
     +'</body></html>';
 
-  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
   var today = new Date();
   var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  a.href = url;
-  a.download = 'Reporte_CDG_'+id+'_'+ds+'.doc';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  downloadWordWithImages(docHtml, 'Reporte_CDG_'+id+'_'+ds+'.doc', 'Reporte CDG '+id);
   addHist('Exportó reporte CDG: '+id);
 }
 
@@ -3991,15 +4131,8 @@ function exportCDGHallazgosWord(){
     +'<strong>Total:</strong> '+cdgHall.length+' hallazgo'+(cdgHall.length!==1?'s':'')+'</p>'
     +sections
     +'</body></html>';
-  var blob = new Blob(['\ufeff', docHtml], { type:'application/msword' });
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
-  var ds   = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  a.href     = url;
-  a.download = 'Hallazgos_CDG_'+ds+'.doc';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  downloadWordWithImages(docHtml, 'Hallazgos_CDG_'+ds+'.doc', 'Hallazgos CDG');
   addHist('Exportó Word de hallazgos CDG ('+cdgHall.length+')');
 }
 
