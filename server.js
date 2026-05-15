@@ -465,9 +465,11 @@ app.post('/api/conteo/field', (req, res) => {
   if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
+  // Preserve null/undefined distinction — only fall back to prev when the
+  // new value wasn't sent (undefined). Don't coerce null to 0.
   state.fisico[cont][idx] = {
-    fisico:    fisico    !== undefined ? fisico    : (prev.fisico  || 0),
-    daniado:   daniado   !== undefined ? daniado   : (prev.daniado || 0),
+    fisico:    fisico    !== undefined ? fisico    : prev.fisico,
+    daniado:   daniado   !== undefined ? daniado   : prev.daniado,
     cobertura: cobertura !== undefined ? cobertura : (prev.cobertura || 'En revisión'),
     quien:     usuario,
     ts:        new Date().toLocaleString('es'),
