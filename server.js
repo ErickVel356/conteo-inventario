@@ -461,7 +461,7 @@ app.post('/api/unlock', (req, res) => {
 
 // Auto-save single field
 app.post('/api/conteo/field', (req, res) => {
-  const { cont, idx, fisico, daniado, cobertura, usuario } = req.body;
+  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario } = req.body;
   if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
@@ -471,6 +471,7 @@ app.post('/api/conteo/field', (req, res) => {
     fisico:    fisico    !== undefined ? fisico    : prev.fisico,
     daniado:   daniado   !== undefined ? daniado   : prev.daniado,
     cobertura: cobertura !== undefined ? cobertura : (prev.cobertura || 'En revisión'),
+    calcExpr:  calcExpr  !== undefined ? calcExpr  : (prev.calcExpr || ''),
     quien:     usuario,
     ts:        new Date().toLocaleString('es'),
     lastUser:  usuario,
