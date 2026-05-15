@@ -2936,6 +2936,12 @@ function scheduleFieldSave(idx) {
   saveTimers[idx] = setTimeout(function(){ saveField(idx); }, 3000);
 }
 
+// Force-save immediately, cancelling any pending debounce. Used on blur.
+function flushFieldSave(idx) {
+  if(saveTimers[idx]) { clearTimeout(saveTimers[idx]); saveTimers[idx] = null; }
+  saveField(idx);
+}
+
 function saveField(idx) {
   if(!current || !currentUser) return;
   var fiEl   = document.getElementById('fi'+idx);
@@ -2984,7 +2990,13 @@ function saveField(idx) {
       calcExpr: calcRaw || prev.calcExpr || '',
       usuario: currentUser.name})})
     .then(function(r){return r.json();})
-    .then(function(d){if(d.ok){lastVersion=d.version;releaseLock(idx);}})
+    .then(function(d){
+      if(d.ok) lastVersion = d.version;
+      // DO NOT release the lock here. The lock must stay until the user
+      // either leaves the field (blur), switches container, or 90 s elapse.
+      // Releasing on each successful save was making the row look unlocked
+      // to other users while the current user was still typing/calculating.
+    })
     .catch(function(e){console.warn('saveField:',e);});
   // Always backup to Supabase
   if(typeof saveDirectToSupabase==='function') saveDirectToSupabase();
@@ -3055,13 +3067,13 @@ renderConteo = function() {
         fi._srv = 1;
         fi.addEventListener('focus', function(){ acquireLock(idx); });
         fi.addEventListener('input', function(){ scheduleFieldSave(idx); });
-        fi.addEventListener('blur',  function(){ scheduleFieldSave(idx); });
+        fi.addEventListener('blur',  function(){ flushFieldSave(idx); });
       }
       if(da && !da._srv){
         da._srv = 1;
         da.addEventListener('focus', function(){ acquireLock(idx); });
         da.addEventListener('input', function(){ scheduleFieldSave(idx); });
-        da.addEventListener('blur',  function(){ scheduleFieldSave(idx); });
+        da.addEventListener('blur',  function(){ flushFieldSave(idx); });
       }
       if(calc && !calc._srv){
         calc._srv = 1;
@@ -3101,9 +3113,9 @@ renderConteo = function() {
             }
           } catch(e) { /* invalid expression — ignore until user finishes typing */ }
         });
-        // Save on blur as well, so the final value is committed even if the
-        // user clicks away before the 3-second debounce of scheduleFieldSave fires.
-        calc.addEventListener('blur', function(){ scheduleFieldSave(idx); });
+        // On blur, flush any pending save immediately so we don't lose the
+        // last keystroke if the user clicks away quickly.
+        calc.addEventListener('blur', function(){ flushFieldSave(idx); });
       }
       if(cob && !cob._srv){
         cob._srv = 1;
