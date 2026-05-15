@@ -738,13 +738,21 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="metric"><div class="lbl">Contados</div><div class="val" id="m-done">0</div></div>
           <div class="metric"><div class="lbl">Con diferencias</div><div class="val" id="m-diffs">0</div></div>
           <div class="metric"><div class="lbl">Items totales</div><div class="val" id="m-items">0</div></div>
+          <div class="metric"><div class="lbl">Costo total Q</div><div class="val" id="m-costo">0.00</div></div>
         </div>
 
         <!-- RESUMEN -->
-        <div class="sec">Resumen por contenedor</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:1.5rem 0 .75rem">
+          <div class="sec" style="margin:0">Resumen por contenedor</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <label style="font-size:.78rem;color:#666">Filtrar por fecha:</label>
+            <input type="date" id="filter-fecha-reporte" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
+            <button id="btn-filter-fecha-clear" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;min-height:34px">× Limpiar</button>
+          </div>
+        </div>
         <div class="tbl-wrap" style="margin-bottom:1.5rem">
           <table>
-            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th>Última revisión</th><th>Estado</th></tr></thead>
+            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th class="tc">Costo total Q</th><th>Última revisión</th><th>Estado</th></tr></thead>
             <tbody id="tbody-resumen"></tbody>
           </table>
         </div>
@@ -1242,8 +1250,9 @@ function renderConteo(){
   var items=teorico[current].items||[],saved=fisico[current],html='',now=Date.now();
   for(var i=0;i<items.length;i++){
     var it=items[i],sv=saved?saved[i]:null;
-    var fval=sv!=null?(sv.fisico!==undefined?sv.fisico:sv):'';
-    var dval=sv!=null&&sv.daniado!==undefined?sv.daniado:'';
+    // Treat null/undefined as empty (not 0). Only show actual numbers entered by the user.
+    var fval = (sv!=null && sv.fisico!==undefined && sv.fisico!==null) ? sv.fisico : '';
+    var dval = (sv!=null && sv.daniado!==undefined && sv.daniado!==null) ? sv.daniado : '';
     var total=(fval!==''&&dval!=='')?(Number(fval)+Number(dval)):fval!==''?Number(fval):'';
     var diff=total!==''?total-it.qty:null;
     var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
@@ -1263,12 +1272,12 @@ function renderConteo(){
       +'<td>'+escH(it.sku||'—')+'</td>'
       +'<td>'+escH(it.desc||'—')+'</td>'
       +'<td class="tc">'+it.qty+'</td>'
-      +'<td class="tc"><input class="calc-inp" type="text" placeholder="ej: 8*6+3" id="calc'+i+'" value="'+(sv&&sv.calcExpr?escH(sv.calcExpr):'')+'"></td>'
+      +'<td class="tc"><input class="calc-inp" type="text" placeholder="ej: 8*6+3" id="calc'+i+'" value="'+(sv&&sv.calcExpr?escH(sv.calcExpr):'')+'" '+disabled+'></td>'
       +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
       +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
       +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
       +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
-      +'<td class="tc"><select class="cob-sel" data-i="'+i+'" style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'+(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'+((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'+(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'+(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>'
+      +'<td class="tc"><select class="cob-sel" data-i="'+i+'" '+disabled+' style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'+(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'+((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'+(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'+(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>'
       +'</tr>';
   }
   document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="9" class="empty">Sin items</td></tr>';
@@ -1296,6 +1305,15 @@ function renderConteo(){
       }
       var da=document.getElementById('da'+idx);
       if(da&&!da.disabled) da.addEventListener('input',function(){updateTotDiff(idx);scheduleAutoSave(idx,null,null,null);});
+      // Cobertura selector — save on change
+      var cob=document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+      if(cob && !cob.disabled){
+        cob.addEventListener('change', function(){
+          saveCobertura(idx, this.value);
+          // Update the background colour to match the new selection
+          this.style.background = this.value==='Auditado' ? '#eafaf1' : this.value==='No auditado' ? '#fdecea' : '#fef9e7';
+        });
+      }
     })(j);
   }
 }
@@ -1307,24 +1325,90 @@ function setLock(idx){
   setTimeout(function(){if(locks[key]&&locks[key].quien===currentUser.name)delete locks[key];},90000);
 }
 
+// Save the cobertura field for a row. Preserves existing fisico/daniado values.
+function saveCobertura(idx, cobertura){
+  if(!teorico[current]) return;
+  if(!Array.isArray(fisico[current])) fisico[current]=new Array(teorico[current].items.length).fill(null);
+  var prev = fisico[current][idx] || {};
+  // Keep whatever fisico/daniado were already there; just update cobertura + stamp.
+  fisico[current][idx] = {
+    fisico:    prev.fisico,
+    daniado:   prev.daniado,
+    calcExpr:  prev.calcExpr || '',
+    cobertura: cobertura,
+    quien:     currentUser.name,
+    ts:        nowStr()
+  };
+  addHist('Cambió cobertura en '+current+' (fila '+(idx+1)+') a '+cobertura);
+  heartbeat();
+  if(typeof updateSummaryCard==='function') updateSummaryCard();
+  saveDirectToSupabase();
+  // Send to server
+  fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cont:current, idx:idx,
+      fisico: prev.fisico, daniado: prev.daniado,
+      cobertura: cobertura,
+      usuario: currentUser?currentUser.name:'—'})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.ok) lastVersion=d.version;})
+    .catch(function(){});
+}
+
 function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
   var key=current+'_'+idx;
   clearTimeout(_autoSave[key]);
   _autoSave[key]=setTimeout(function(){
     if(!teorico[current])return;
-    var fv=fisicoOverride!==null&&fisicoOverride!==undefined?fisicoOverride:(parseFloat((document.getElementById('fi'+idx)||{}).value)||0);
-    var dv=daniadoOverride!==null&&daniadoOverride!==undefined?daniadoOverride:(parseFloat((document.getElementById('da'+idx)||{}).value)||0);
+    // Read raw DOM values so we can distinguish empty ('') from zero ('0').
+    var fiEl = document.getElementById('fi'+idx);
+    var daEl = document.getElementById('da'+idx);
+    var fiRaw = fiEl ? fiEl.value : '';
+    var daRaw = daEl ? daEl.value : '';
+    var fv = fisicoOverride!==null&&fisicoOverride!==undefined
+      ? fisicoOverride
+      : (fiRaw==='' ? null : (parseFloat(fiRaw)||0));
+    var dv = daniadoOverride!==null&&daniadoOverride!==undefined
+      ? daniadoOverride
+      : (daRaw==='' ? null : (parseFloat(daRaw)||0));
     if(!fisico[current])fisico[current]=new Array(teorico[current].items.length).fill(null);
     var prev=fisico[current][idx]||{};
-    fisico[current][idx]={fisico:fv,daniado:dv,quien:currentUser.name,ts:nowStr(),calcExpr:calcExpr!==null?calcExpr:(prev.calcExpr||'')};
+    // Determine new cobertura. Rule:
+    //  - User already chose 'Auditado' or 'No auditado' → keep that choice.
+    //  - User has the row empty AND cobertura was 'En revisión' (default) →
+    //    flip to 'Auditado' automatically WHEN they typed a numeric value.
+    //  - Else keep prev.cobertura (default 'En revisión').
+    var prevCob = prev.cobertura || 'En revisión';
+    var newCob;
+    if(prevCob === 'No auditado') {
+      newCob = 'No auditado';
+    } else if(prevCob === 'Auditado') {
+      newCob = 'Auditado';
+    } else {
+      // Was 'En revisión' — promote to 'Auditado' only if user actually entered a value
+      newCob = (fv !== null || dv !== null) ? 'Auditado' : 'En revisión';
+    }
+    fisico[current][idx]={
+      fisico: fv,
+      daniado: dv,
+      cobertura: newCob,
+      quien: currentUser.name,
+      ts: nowStr(),
+      calcExpr: calcExpr!==null?calcExpr:(prev.calcExpr||'')
+    };
     addHist('Editó físico/dañado en '+current+' (fila '+(idx+1)+')');
     heartbeat();
     // Update summary card immediately
     if(typeof updateSummaryCard==='function') updateSummaryCard();
+    // Reflect cobertura back into the select so the user sees the badge change
+    var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+    if(cobSel && cobSel.value !== newCob) {
+      cobSel.value = newCob;
+      cobSel.style.background = newCob==='Auditado' ? '#eafaf1' : newCob==='No auditado' ? '#fdecea' : '#fef9e7';
+    }
     // Always save directly to Supabase first
     saveDirectToSupabase();
     // Also save to server
-    var _payload = JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,usuario:currentUser?currentUser.name:'—'});
+    var _payload = JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,cobertura:newCob,usuario:currentUser?currentUser.name:'—'});
     fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},body:_payload})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok)lastVersion=d.version;})
@@ -1561,8 +1645,30 @@ document.getElementById('btn-self-assign').addEventListener('click',function(){
    REPORTE
 ══════════════════════════════════════════════════════════════════ */
 function buildReporte(){
-  var totalItems=0,done=0,totalDiffs=0,sumRows='',detRows='';
-  conts.forEach(function(c){
+  var totalItems=0,done=0,totalDiffs=0,totalCosto=0,sumRows='',detRows='';
+  // Read filter
+  var fechaFilter = (document.getElementById('filter-fecha-reporte')||{}).value || '';
+  var contsFiltrados = conts.slice();
+  if(fechaFilter) {
+    // Filter contenedores by date of last revision (any item.ts whose date matches)
+    contsFiltrados = conts.filter(function(c){
+      var fis = fisico[c];
+      if(!Array.isArray(fis)) return false;
+      // Match if any item's ts contains the date in d/m/yyyy form or yyyy-m-d.
+      // Date input gives yyyy-mm-dd. ts is local string. Convert and compare day-by-day.
+      var parts = fechaFilter.split('-'); // [yyyy, mm, dd]
+      var y = parseInt(parts[0],10), m = parseInt(parts[1],10), d = parseInt(parts[2],10);
+      return fis.some(function(f){
+        if(!f || !f.lastAt) {
+          // Fall back to f.ts parse — not always reliable, so use lastAt when present
+          return false;
+        }
+        var dt = new Date(f.lastAt);
+        return dt.getFullYear()===y && (dt.getMonth()+1)===m && dt.getDate()===d;
+      });
+    });
+  }
+  contsFiltrados.forEach(function(c){
     var items=teorico[c].items,fis=fisico[c],type=teorico[c].type;
     totalItems+=items.length;
     // Get last edit date from fisico items
@@ -1571,8 +1677,15 @@ function buildReporte(){
       fis.forEach(function(f){if(f&&f.ts&&lastTs==='—')lastTs=f.ts;});
     }
     var puerta=(typeof puertas!=='undefined'&&puertas[c])||'—';
+    // Compute container cost total using teórico × costo unitario (most reliable baseline)
+    var contCosto = 0;
+    items.forEach(function(item){
+      var cu = (typeof getCosto==='function') ? (Number(getCosto(item.sku))||0) : 0;
+      contCosto += cu * (Number(item.qty)||0);
+    });
+    totalCosto += contCosto;
     if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
+      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+contCosto.toFixed(2)+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
       return;
     }
     done++;var ok=0,over=0,under=0;
@@ -1586,15 +1699,28 @@ function buildReporte(){
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+contCosto.toFixed(2)+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
   });
-  document.getElementById('m-total').textContent=conts.length;
+  document.getElementById('m-total').textContent=contsFiltrados.length;
   document.getElementById('m-done').textContent=done;
   document.getElementById('m-diffs').textContent=totalDiffs;
   document.getElementById('m-items').textContent=totalItems;
-  document.getElementById('tbody-resumen').innerHTML=sumRows;
+  var mCosto = document.getElementById('m-costo');
+  if(mCosto) mCosto.textContent = totalCosto.toFixed(2);
+  document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="10" class="empty">Sin contenedores en esta fecha.</td></tr>';
   document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
 }
+
+// Wire date filter
+(function(){
+  var fechaInp = document.getElementById('filter-fecha-reporte');
+  var btnClear = document.getElementById('btn-filter-fecha-clear');
+  if(fechaInp) fechaInp.addEventListener('change', function(){ buildReporte(); });
+  if(btnClear) btnClear.addEventListener('click', function(){
+    if(fechaInp) fechaInp.value='';
+    buildReporte();
+  });
+})();
 
 /* ══════════════════════════════════════════════════════════════════
    HALLAZGOS
@@ -2908,24 +3034,25 @@ function updateSummaryCard() {
   var puerta  = puertas[current] || '—';
   var partic  = (asignaciones[current]||[]).join(', ') || '—';
   var contadas = 0, diffs = 0;
-  // A row counts as "contada" only if it has an author stamp (quien/lastUser),
-  // which means someone actually saved it — not a server-side 0 fill.
+  // A row counts as "contada" only when the user made a coverage decision:
+  //   - 'Auditado' (counted normally)
+  //   - 'No auditado' (explicitly skipped) — counts as resolved, not pending.
+  // 'En revisión' (default) or empty cobertura = still pending.
+  // Diffs only apply to rows that are 'Auditado' AND whose physical ≠ teórico.
   items.forEach(function(item, i) {
     var fiObj = (Array.isArray(fis) && fis[i]) ? fis[i] : null;
-    var hasAuthor = fiObj && (fiObj.quien || fiObj.lastUser);
-    var fv = NaN;
-    if(hasAuthor) {
-      fv = Number(fiObj.fisico);
-    } else {
-      // Also count if user is actively typing in the DOM right now (live edit)
+    var cob = fiObj && fiObj.cobertura ? fiObj.cobertura : 'En revisión';
+    // Live edit: if the input has a numeric value and user is typing it, treat as Auditado
+    if(cob === 'En revisión') {
       var fiEl = document.getElementById('fi'+i);
-      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) {
-        fv = parseFloat(fiEl.value);
-      }
+      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) cob = 'Auditado';
     }
-    if(!isNaN(fv)) {
+    if(cob === 'Auditado' || cob === 'No auditado') {
       contadas++;
-      if(fv !== item.qty) diffs++;
+      if(cob === 'Auditado') {
+        var fv = fiObj ? Number(fiObj.fisico) : NaN;
+        if(!isNaN(fv) && fv !== item.qty) diffs++;
+      }
     }
   });
   var scCont    = document.getElementById('sc-cont');
