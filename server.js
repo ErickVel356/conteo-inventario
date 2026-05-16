@@ -196,35 +196,6 @@ app.get('/api/state', (req, res) => {
 });
 
 // Full state save (from client). Merges, never deletes existing data.
-app.post('/api/state/save', (req, res) => {
-  const { teorico: t, fisico: f, asignaciones: a, historial: h } = req.body;
-  // Merge teorico: add new containers, never remove existing ones
-  if(t && Object.keys(t).length > 0) {
-    Object.keys(t).forEach(cont => {
-      if(!state.teorico[cont]) state.teorico[cont] = t[cont];
-    });
-  }
-  if(f) {
-    // Merge fisico: server data wins over client (server has field-saves)
-    Object.keys(f).forEach(cont => {
-      if(!state.fisico[cont]) {
-        state.fisico[cont] = f[cont];
-      } else if(Array.isArray(f[cont])) {
-        f[cont].forEach((item, i) => {
-          if(item && item.lastAt && (!state.fisico[cont][i] || !state.fisico[cont][i].lastAt)) {
-            state.fisico[cont][i] = item;
-          }
-        });
-      }
-    });
-  }
-  if(a) state.asignaciones = a;
-  if(h) state.historial    = h;
-  state.version++;
-  scheduleSave();
-  res.json({ ok:true, version:state.version });
-});
-
 app.post('/api/conteo', (req, res) => {
   const { cont, data, usuario } = req.body;
   if(!cont || !data) return res.status(400).json({ ok:false });
@@ -414,29 +385,6 @@ app.post('/api/metadata', (req, res) => {
 });
 
 // ── Chat ──────────────────────────────────────────────────────────────────
-app.post('/api/chat', (req, res) => {
-  const { id, user, msg, ts } = req.body;
-  if(!msg || !user) return res.status(400).json({ ok:false });
-  if(!state.chat) state.chat = [];
-  // Remove messages older than 5 minutes, then add the new one
-  state.chat = state.chat.filter(m => Date.now() - m.ts < 300000);
-  state.chat.push({ id: id || Date.now().toString(), user, msg, ts: ts || Date.now() });
-  state.version++;
-  res.json({ ok:true });
-});
-
-// ── Puerta ────────────────────────────────────────────────────────────────
-app.post('/api/puerta', (req, res) => {
-  const { cont, puerta, usuario } = req.body;
-  if(!cont) return res.status(400).json({ ok:false });
-  if(!state.puertas) state.puertas = {};
-  state.puertas[cont] = puerta;
-  addHistorial(usuario||'—', 'Puerta asignada', cont+' → '+puerta);
-  state.version++;
-  saveDailyState('Puerta save');
-  res.json({ ok:true, version:state.version });
-});
-
 // ── Field locking ─────────────────────────────────────────────────────────
 app.post('/api/lock', (req, res) => {
   cleanLocks();
