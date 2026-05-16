@@ -1,7 +1,7 @@
 services:
-  - type: web
-    name: conteo-inventario
-    env: node
-    buildCommand: npm install
-    startCommand: node server.js
-    plan: free
+     - type: web
+       name: conteo-inventario
+       env: node
+       buildCommand: npm install
+       startCommand: node --max-old-space-size=460 server.js
+       plan: free
