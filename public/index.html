@@ -861,7 +861,6 @@ var loadedSheets = {};
 var cdgSkus      = [];
 var locks        = {};   // { contId_idx: {quien, at} }  — solo offline (90s)
 var onlineUsers  = {};   // { nombre: timestamp }  — solo offline (15s)
-var _autoSave    = {};
 var _currentFilter = ''; // 'Embarques' | 'Traslados' | 'CDG' | ''
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1132,9 +1131,10 @@ function afterLogin(){
       if(typeof switchTab === 'function') switchTab('conteo');
     }
   }
-  // Ping propio
+  // Initial heartbeat. After that, the polling loop (every 5 s) sends
+  // heartbeats automatically via /api/heartbeat — no need for a separate
+  // timer.
   heartbeat();
-  setInterval(heartbeat,8000);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1344,140 +1344,9 @@ function renderConteo(){
   updateProg();
   updateSelfAssignBtn();
 
-  for(var j=0;j<items.length;j++){
-    (function(idx){
-      var calc=document.getElementById('calc'+idx);
-      if(calc) calc.addEventListener('input',function(){
-        var expr=this.value.replace(/[^0-9+\-*/().\s]/g,'');
-        if(!expr)return;
-        try{
-          var result=Math.round(Function('"use strict";return('+expr+')')() *100)/100;
-          if(!isNaN(result)&&isFinite(result)){
-            var fi=document.getElementById('fi'+idx);
-            if(fi&&!fi.disabled){fi.value=result;updateTotDiff(idx);scheduleAutoSave(idx,result,null,expr);}
-          }
-        }catch(e){}
-      });
-      var fi=document.getElementById('fi'+idx);
-      if(fi&&!fi.disabled){
-        fi.addEventListener('focus',function(){setLock(idx);});
-        fi.addEventListener('input',function(){updateTotDiff(idx);scheduleAutoSave(idx,null,null,null);});
-      }
-      var da=document.getElementById('da'+idx);
-      if(da&&!da.disabled) da.addEventListener('input',function(){updateTotDiff(idx);scheduleAutoSave(idx,null,null,null);});
-      // Cobertura selector — save on change
-      var cob=document.querySelector('select.cob-sel[data-i="'+idx+'"]');
-      if(cob && !cob.disabled){
-        cob.addEventListener('change', function(){
-          saveCobertura(idx, this.value);
-          // Update the background colour to match the new selection
-          this.style.background = this.value==='Auditado' ? '#eafaf1' : this.value==='No auditado' ? '#fdecea' : '#fef9e7';
-        });
-      }
-    })(j);
-  }
-}
-
-function setLock(idx){
-  var key=current+'_'+idx;
-  locks[key]={quien:currentUser.name,at:Date.now()};
-  // Auto-release after 90s
-  setTimeout(function(){if(locks[key]&&locks[key].quien===currentUser.name)delete locks[key];},90000);
-}
-
-// Save the cobertura field for a row. Preserves existing fisico/daniado values.
-function saveCobertura(idx, cobertura){
-  if(!teorico[current]) return;
-  if(!Array.isArray(fisico[current])) fisico[current]=new Array(teorico[current].items.length).fill(null);
-  var prev = fisico[current][idx] || {};
-  // Keep whatever fisico/daniado were already there; just update cobertura + stamp.
-  fisico[current][idx] = {
-    fisico:    prev.fisico,
-    daniado:   prev.daniado,
-    calcExpr:  prev.calcExpr || '',
-    cobertura: cobertura,
-    quien:     currentUser.name,
-    ts:        nowStr()
-  };
-  addHist('Cambió cobertura en '+current+' (fila '+(idx+1)+') a '+cobertura);
-  heartbeat();
-  if(typeof updateSummaryCard==='function') updateSummaryCard();
-  saveDirectToSupabase();
-  // Send to server
-  fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont:current, idx:idx,
-      fisico: prev.fisico, daniado: prev.daniado,
-      cobertura: cobertura,
-      usuario: currentUser?currentUser.name:'—'})})
-    .then(function(r){return r.json();})
-    .then(function(d){if(d.ok) lastVersion=d.version;})
-    .catch(function(){});
-}
-
-function scheduleAutoSave(idx,fisicoOverride,daniadoOverride,calcExpr){
-  var key=current+'_'+idx;
-  clearTimeout(_autoSave[key]);
-  _autoSave[key]=setTimeout(function(){
-    if(!teorico[current])return;
-    // Read raw DOM values so we can distinguish empty ('') from zero ('0').
-    var fiEl = document.getElementById('fi'+idx);
-    var daEl = document.getElementById('da'+idx);
-    var fiRaw = fiEl ? fiEl.value : '';
-    var daRaw = daEl ? daEl.value : '';
-    var fv = fisicoOverride!==null&&fisicoOverride!==undefined
-      ? fisicoOverride
-      : (fiRaw==='' ? null : (parseFloat(fiRaw)||0));
-    var dv = daniadoOverride!==null&&daniadoOverride!==undefined
-      ? daniadoOverride
-      : (daRaw==='' ? null : (parseFloat(daRaw)||0));
-    if(!fisico[current])fisico[current]=new Array(teorico[current].items.length).fill(null);
-    var prev=fisico[current][idx]||{};
-    // Determine new cobertura. Rule:
-    //  - User already chose 'Auditado' or 'No auditado' → keep that choice.
-    //  - User has the row empty AND cobertura was 'En revisión' (default) →
-    //    flip to 'Auditado' automatically WHEN they typed a numeric value.
-    //  - Else keep prev.cobertura (default 'En revisión').
-    var prevCob = prev.cobertura || 'En revisión';
-    var newCob;
-    if(prevCob === 'No auditado') {
-      newCob = 'No auditado';
-    } else if(prevCob === 'Auditado') {
-      newCob = 'Auditado';
-    } else {
-      // Was 'En revisión' — promote to 'Auditado' only if user actually entered a value
-      newCob = (fv !== null || dv !== null) ? 'Auditado' : 'En revisión';
-    }
-    fisico[current][idx]={
-      fisico: fv,
-      daniado: dv,
-      cobertura: newCob,
-      quien: currentUser.name,
-      ts: nowStr(),
-      calcExpr: calcExpr!==null?calcExpr:(prev.calcExpr||'')
-    };
-    addHist('Editó físico/dañado en '+current+' (fila '+(idx+1)+')');
-    heartbeat();
-    // Update summary card immediately
-    if(typeof updateSummaryCard==='function') updateSummaryCard();
-    // Reflect cobertura back into the select so the user sees the badge change
-    var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
-    if(cobSel && cobSel.value !== newCob) {
-      cobSel.value = newCob;
-      cobSel.style.background = newCob==='Auditado' ? '#eafaf1' : newCob==='No auditado' ? '#fdecea' : '#fef9e7';
-    }
-    // Always save directly to Supabase first
-    saveDirectToSupabase();
-    // Also save to server
-    var _payload = JSON.stringify({cont:current,idx:idx,fisico:fv,daniado:dv,cobertura:newCob,usuario:currentUser?currentUser.name:'—'});
-    fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},body:_payload})
-      .then(function(r){return r.json();})
-      .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(e){
-        // Server down - save directly to Supabase
-        console.warn('Server down, saving directly to Supabase');
-        saveDirectToSupabase();
-      });
-  },800);
+  // NOTE: Event listeners are registered by the renderConteo patch further down
+  // (acquireLock / scheduleFieldSave / saveField). Don't add listeners here —
+  // they cause double-save bugs.
 }
 
 // Direct Supabase save (bypass server when it's down)
@@ -2734,7 +2603,9 @@ window.serverLocks = {};
 function startPolling() {
   if(pollInterval) clearInterval(pollInterval);
   pollNow();
-  pollInterval = setInterval(pollNow, 3000);
+  // Polling every 5 s — balances "live feel" with Render bandwidth cost.
+  // Previously was 3 s which consumed ~67% more bandwidth.
+  pollInterval = setInterval(pollNow, 5000);
 }
 
 function stopPolling() {
@@ -2944,62 +2815,118 @@ function flushFieldSave(idx) {
 
 function saveField(idx) {
   if(!current || !currentUser) return;
+  if(!teorico[current]) return;
+
+  // Read raw DOM values. Distinguish empty ('') from zero ('0').
   var fiEl   = document.getElementById('fi'+idx);
   var daEl   = document.getElementById('da'+idx);
   var calcEl = document.getElementById('calc'+idx);
-  var fiRaw  = fiEl ? fiEl.value : '';
-  var daRaw  = daEl ? daEl.value : '';
+  var fiRaw   = fiEl   ? fiEl.value   : '';
+  var daRaw   = daEl   ? daEl.value   : '';
   var calcRaw = calcEl ? calcEl.value : '';
-  // Distinguish empty ('') from zero ('0')
-  var fv = fiRaw === '' ? null : (parseFloat(fiRaw)||0);
-  var dv = daRaw === '' ? null : (parseFloat(daRaw)||0);
-  if(fv === null && dv === null) return; // nothing entered yet
-  if(!fisico[current] || !Array.isArray(fisico[current])) fisico[current]=[];
-  var prev = fisico[current][idx] || {};
-  // Promote cobertura from "En revisión" to "Auditado" when the user enters a value.
-  // Respect existing "Auditado" / "No auditado" choices.
-  var prevCob = prev.cobertura || 'En revisión';
-  var newCob;
-  if(prevCob === 'No auditado' || prevCob === 'Auditado') {
-    newCob = prevCob;
-  } else {
-    newCob = (fv !== null || dv !== null) ? 'Auditado' : 'En revisión';
+
+  // Parse: empty string → null (not counted), number → numeric value
+  var fv = fiRaw === '' ? null : parseFloat(fiRaw);
+  if(fv !== null && isNaN(fv)) fv = null;
+  var dv = daRaw === '' ? null : parseFloat(daRaw);
+  if(dv !== null && isNaN(dv)) dv = null;
+
+  // Read the cobertura the user picked from the dropdown (if any)
+  var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+  var cobFromDom = cobSel ? cobSel.value : null;
+
+  // Ensure fisico[current] is an array of correct length
+  if(!fisico[current] || !Array.isArray(fisico[current])) {
+    fisico[current] = new Array(teorico[current].items.length).fill(null);
   }
+  var prev = fisico[current][idx] || {};
+
+  // ─── RULE #3: Cobertura logic ──────────────────────────────────────────
+  // - If the user explicitly picked 'No auditado' → respect that choice.
+  // - If the user explicitly picked 'Auditado'  → respect (and physical can be anything).
+  // - Otherwise: cobertura defaults to 'Auditado' as soon as a numeric value
+  //   exists in fisico (rule #3: numeric → Auditado automatic).
+  // - If all numeric fields are empty AND no explicit pick → 'En revisión'.
+  var newCob;
+  if(cobFromDom === 'No auditado') {
+    newCob = 'No auditado';
+  } else if(cobFromDom === 'Auditado') {
+    newCob = 'Auditado';
+  } else if(prev.cobertura === 'No auditado') {
+    // Preserve previous "No auditado" choice unless user changed dropdown
+    newCob = 'No auditado';
+  } else if(fv !== null) {
+    // Rule #3: numeric value in fisico → Auditado automatically
+    newCob = 'Auditado';
+  } else {
+    newCob = 'En revisión';
+  }
+
+  // ─── Determine if save is meaningful ────────────────────────────────────
+  // Save when: (a) user entered/changed fisico, (b) user entered daniado,
+  // (c) user typed calc expression, or (d) cobertura changed.
+  var prevFv      = prev.fisico    !== undefined ? prev.fisico    : null;
+  var prevDv      = prev.daniado   !== undefined ? prev.daniado   : null;
+  var prevCalc    = prev.calcExpr  || '';
+  var prevCob     = prev.cobertura || 'En revisión';
+  var changed =
+    (fv      !== prevFv)   ||
+    (dv      !== prevDv)   ||
+    (calcRaw !== prevCalc) ||
+    (newCob  !== prevCob);
+  if(!changed) return;
+
+  // ─── Persist locally (rule #2: store BOTH calc expression AND result) ───
   fisico[current][idx] = {
-    fisico:    fv !== null ? fv : prev.fisico,
-    daniado:   dv !== null ? dv : prev.daniado,
+    fisico:    fv,                              // numeric or null (empty)
+    daniado:   dv,                              // numeric or null (empty)
     cobertura: newCob,
-    calcExpr:  calcRaw || prev.calcExpr || '',
+    calcExpr:  calcRaw,                         // expression like "3*4" or ''
     quien:     currentUser.name,
     ts:        nowStr(),
     lastUser:  currentUser.name,
     lastAt:    Date.now()
   };
-  // Reflect cobertura back into the select
-  var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+
+  // ─── Reflect cobertura back into the dropdown (visual sync) ─────────────
   if(cobSel && cobSel.value !== newCob) {
     cobSel.value = newCob;
-    cobSel.style.background = newCob==='Auditado' ? '#eafaf1' : newCob==='No auditado' ? '#fdecea' : '#fef9e7';
+    cobSel.style.background =
+      newCob === 'Auditado'    ? '#eafaf1' :
+      newCob === 'No auditado' ? '#fdecea' : '#fef9e7';
   }
-  if(typeof updateSummaryCard==='function') updateSummaryCard();
-  fetch('/api/conteo/field', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, idx:idx,
-      fisico:  fv,
-      daniado: dv,
+
+  if(typeof updateSummaryCard === 'function') updateSummaryCard();
+
+  // ─── Send to server ─────────────────────────────────────────────────────
+  fetch('/api/conteo/field', {
+    method:  'POST',
+    headers: {'Content-Type':'application/json'},
+    body:    JSON.stringify({
+      cont:      current,
+      idx:       idx,
+      fisico:    fv,
+      daniado:   dv,
       cobertura: newCob,
-      calcExpr: calcRaw || prev.calcExpr || '',
-      usuario: currentUser.name})})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok) lastVersion = d.version;
-      // DO NOT release the lock here. The lock must stay until the user
-      // either leaves the field (blur), switches container, or 90 s elapse.
-      // Releasing on each successful save was making the row look unlocked
-      // to other users while the current user was still typing/calculating.
+      calcExpr:  calcRaw,
+      usuario:   currentUser.name
     })
-    .catch(function(e){console.warn('saveField:',e);});
-  // Always backup to Supabase
-  if(typeof saveDirectToSupabase==='function') saveDirectToSupabase();
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok) lastVersion = d.version;
+    // Lock stays until user blurs / 90s timeout / container change.
+    // Releasing on each save was making the row look unlocked to others.
+  })
+  .catch(function(e){
+    // Server unreachable — direct save will be retried via saveDirectToSupabase
+    console.warn('saveField server error:', e);
+  });
+
+  // ─── Defensive: also save directly to Supabase ──────────────────────────
+  // This is our insurance policy against Render sleeping. It debounces,
+  // so multiple saveField calls in quick succession only fire once.
+  if(typeof saveDirectToSupabase === 'function') saveDirectToSupabase();
 }
 
 // Patch afterLogin to start polling
@@ -3021,105 +2948,116 @@ renderConteo = function() {
   if(!teorico[current]) return;
   var items = teorico[current].items || [];
   var myName = currentUser ? currentUser.name : '';
-  for(var i=0; i<items.length; i++) {
+
+  for(var i = 0; i < items.length; i++) {
     (function(idx){
-      var fi = document.getElementById('fi'+idx);
-      var da = document.getElementById('da'+idx);
+      var fi   = document.getElementById('fi'+idx);
+      var da   = document.getElementById('da'+idx);
       var calc = document.getElementById('calc'+idx);
-      var cob = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
-      var lock = window.serverLocks[current+':'+idx];
-      if(lock && lock.user !== myName) {
-        if(fi){fi.disabled=true;fi.style.borderColor='#e0c96e';fi.style.background='#fffef0';}
-        if(da)   da.disabled=true;
-        if(calc){ calc.disabled=true; calc.style.background='#f5f5f3'; }
-        if(cob)  cob.disabled=true;
+      var cob  = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
+
+      // ───── 1. LOCK STATE: disable inputs if someone else holds the row ───
+      var lock = window.serverLocks ? window.serverLocks[current+':'+idx] : null;
+      var isLockedByOther = lock && lock.user !== myName;
+      if(isLockedByOther) {
+        if(fi)   { fi.disabled  = true; fi.style.borderColor='#e0c96e'; fi.style.background='#fffef0'; }
+        if(da)     da.disabled  = true;
+        if(calc) { calc.disabled = true; calc.style.background='#f5f5f3'; }
+        if(cob)    cob.disabled = true;
         var parent = fi ? fi.parentNode : null;
-        if(parent && !parent.querySelector('.srv-lock')){
-          var badge=document.createElement('div');
-          badge.className='srv-lock';
-          badge.style.cssText='font-size:.68rem;color:#e67e22;margin-top:2px';
-          badge.textContent='🔒 '+lock.user+' contando...';
+        if(parent && !parent.querySelector('.srv-lock')) {
+          var badge = document.createElement('div');
+          badge.className = 'srv-lock';
+          badge.style.cssText = 'font-size:.68rem;color:#e67e22;margin-top:2px';
+          badge.textContent = '🔒 ' + lock.user + ' contando...';
           parent.appendChild(badge);
         }
       } else {
-        // No lock or I own it — make sure inputs are enabled
-        if(fi)   fi.disabled=false;
-        if(da)   da.disabled=false;
-        if(calc){ calc.disabled=false; calc.style.background=''; }
-        if(cob)  cob.disabled=false;
+        if(fi)   { fi.disabled  = false; }
+        if(da)     da.disabled  = false;
+        if(calc) { calc.disabled = false; calc.style.background=''; }
+        if(cob)    cob.disabled = false;
       }
-      // Last editor info
+
+      // ───── 2. LAST EDITOR INFO ──────────────────────────────────────────
       var sv = fisico[current] && fisico[current][idx] ? fisico[current][idx] : null;
-      if(sv && sv.lastUser && fi){
+      if(sv && sv.lastUser && fi) {
         var parent2 = fi.parentNode;
-        if(parent2 && !parent2.querySelector('.edit-info-srv')){
-          var ei=document.createElement('div');
-          ei.className='edit-info-srv';
-          ei.style.cssText='font-size:.68rem;color:#888;margin-top:2px';
-          var ago = sv.lastAt ? Math.round((Date.now()-sv.lastAt)/1000) : null;
-          var agoStr = ago!==null ? (ago<60?ago+'s':Math.round(ago/60)+'min') : '';
-          ei.textContent = '✏️ '+sv.lastUser+(agoStr?' · '+agoStr:'');
+        if(parent2 && !parent2.querySelector('.edit-info-srv')) {
+          var ei = document.createElement('div');
+          ei.className = 'edit-info-srv';
+          ei.style.cssText = 'font-size:.68rem;color:#888;margin-top:2px';
+          var ago = sv.lastAt ? Math.round((Date.now() - sv.lastAt) / 1000) : null;
+          var agoStr = ago !== null ? (ago < 60 ? ago + 's' : Math.round(ago/60) + 'min') : '';
+          ei.textContent = '✏️ ' + sv.lastUser + (agoStr ? ' · ' + agoStr : '');
           parent2.appendChild(ei);
         }
       }
-      // Focus/input listeners for locking + auto-save
-      if(fi && !fi._srv){
+
+      // ───── 3. EVENT LISTENERS — registered ONCE per input ───────────────
+      // Single source of truth: every input change flows through saveField().
+
+      if(fi && !fi._srv) {
         fi._srv = 1;
         fi.addEventListener('focus', function(){ acquireLock(idx); });
-        fi.addEventListener('input', function(){ scheduleFieldSave(idx); });
+        fi.addEventListener('input', function(){ updateTotDiff(idx); scheduleFieldSave(idx); });
         fi.addEventListener('blur',  function(){ flushFieldSave(idx); });
       }
-      if(da && !da._srv){
+
+      if(da && !da._srv) {
         da._srv = 1;
         da.addEventListener('focus', function(){ acquireLock(idx); });
-        da.addEventListener('input', function(){ scheduleFieldSave(idx); });
+        da.addEventListener('input', function(){ updateTotDiff(idx); scheduleFieldSave(idx); });
         da.addEventListener('blur',  function(){ flushFieldSave(idx); });
       }
-      if(calc && !calc._srv){
+
+      if(calc && !calc._srv) {
         calc._srv = 1;
-        // Acquire lock as soon as the user touches the calc field.
-        // This blocks other users from BOTH the calc and the physical field,
-        // because acquireLock locks the whole row.
         calc.addEventListener('focus', function(){ acquireLock(idx); });
-        // Whenever the user types in the calc, evaluate the expression,
-        // mirror the result into the physical input, and trigger the save
-        // pipeline (scheduleFieldSave reads the physical input value).
+        // When the user types a calculation:
+        //   - Sanitize the expression
+        //   - Evaluate it (rule #2: result goes to Físico, expression saved as audit trail)
+        //   - Mirror the result to the Físico input
+        //   - Trigger save (will pick up both Físico value AND calc expression)
         calc.addEventListener('input', function(){
-          // Always (re-)acquire the lock on first keystroke so that even if
-          // focus didn't fire (some browsers + autofill) we still claim it.
           acquireLock(idx);
           var expr = this.value.replace(/[^0-9+\-*/().\s]/g, '');
+          var fiEl2 = document.getElementById('fi'+idx);
+          if(!fiEl2 || fiEl2.disabled) return;
           if(!expr) {
-            // Empty calc → clear the physical field and still save
-            var fiEmpty = document.getElementById('fi'+idx);
-            if(fiEmpty && !fiEmpty.disabled) {
-              fiEmpty.value = '';
-              if(typeof updateTotDiff==='function') updateTotDiff(idx);
-              scheduleFieldSave(idx);
-            }
+            // Empty calc → clear physical too
+            fiEl2.value = '';
+            updateTotDiff(idx);
+            scheduleFieldSave(idx);
             return;
           }
           try {
-            var result = Math.round(Function('"use strict";return(' + expr + ')')() * 100) / 100;
-            if(!isNaN(result) && isFinite(result)) {
-              var fiEl = document.getElementById('fi'+idx);
-              if(fiEl && !fiEl.disabled) {
-                fiEl.value = result;
-                if(typeof updateTotDiff==='function') updateTotDiff(idx);
-                // KEY FIX: trigger the save pipeline that actually persists to the server.
-                // Setting .value programmatically does NOT fire 'input', so we call directly.
-                scheduleFieldSave(idx);
-              }
+            var result = Function('"use strict";return(' + expr + ')')();
+            if(typeof result === 'number' && isFinite(result)) {
+              // Round to 2 decimals to avoid float garbage like 0.30000000004
+              result = Math.round(result * 100) / 100;
+              fiEl2.value = result;
+              updateTotDiff(idx);
+              scheduleFieldSave(idx);
             }
-          } catch(e) { /* invalid expression — ignore until user finishes typing */ }
+          } catch(e) {
+            // Incomplete expression like "3*" — wait for more typing
+          }
         });
-        // On blur, flush any pending save immediately so we don't lose the
-        // last keystroke if the user clicks away quickly.
         calc.addEventListener('blur', function(){ flushFieldSave(idx); });
       }
-      if(cob && !cob._srv){
+
+      if(cob && !cob._srv) {
         cob._srv = 1;
         cob.addEventListener('focus', function(){ acquireLock(idx); });
+        // Cobertura is saved on 'change' (when user picks a new option)
+        cob.addEventListener('change', function(){
+          flushFieldSave(idx);
+          // Update background to reflect new selection immediately
+          this.style.background =
+            this.value === 'Auditado'    ? '#eafaf1' :
+            this.value === 'No auditado' ? '#fdecea' : '#fef9e7';
+        });
       }
     })(i);
   }
