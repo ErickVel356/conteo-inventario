@@ -7,7 +7,11 @@ const https   = require('https');
 const app    = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(express.json({ limit: '50mb' }));
+// Límite a 5MB es suficiente para conteos por campo, asignaciones, hallazgos,
+// metadata, CDG. Antes era 50MB lo que abría puerta a payloads gigantes que
+// matan la RAM del free tier. Uploads de teorico/costos NO pasan por aquí,
+// usan multer (memoryStorage), que tiene su propio límite.
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Supabase config (set via environment variables in Render) ─────────────
@@ -149,10 +153,15 @@ async function loadState() {
 }
 
 // ── Save state to Supabase (debounced) ───────────────────────────────────
+// Debounce a 1500ms para agrupar escrituras frecuentes (varios users tecleando
+// simultáneamente). Antes era 200ms — provocaba serializar el state completo
+// (~7MB) por cada tecleo, lo que dispara el uso de RAM en Render free (512MB)
+// y causa "heap out of memory". 1.5s aún es lo suficientemente rápido para no
+// perder datos en cierres normales (beforeunload del frontend hace flush).
 let saveTimer = null;
 function scheduleSave() {
   if(saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 200);
+  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 1500);
 }
 
 function addHistorial(usuario, accion, detalle) {
@@ -201,7 +210,8 @@ app.post('/api/conteo', (req, res) => {
   if(!cont || !data) return res.status(400).json({ ok:false });
   state.fisico[cont] = data;
   addHistorial(usuario||'—', 'Conteo guardado', cont);
-  saveDailyState('Conteo save');
+  // Debounced — agrupa escrituras concurrentes. addHistorial ya llama scheduleSave,
+  // así que aquí no hace falta llamar de nuevo.
   res.json({ ok:true, version:state.version });
 });
 
@@ -220,7 +230,7 @@ app.post('/api/asign', (req, res) => {
     addHistorial(name, 'Auto-asignación', cont);
   }
   state.version++;
-  saveDailyState('Asign save');
+  // Debounced — addHistorial dentro de cada rama ya llamó scheduleSave.
   res.json({ ok:true, version:state.version });
 });
 
@@ -262,7 +272,7 @@ app.post('/api/cdg/unlock', (req, res) => {
   if(state.teorico[contId]) state.teorico[contId].cdgBloqueado = false;
   addHistorial(usuario||'—', 'Desbloqueó CDG', contId);
   state.version++;
-  saveDailyState('CDG unlock');
+  // Debounced — addHistorial ya disparó scheduleSave.
   res.json({ ok:true });
 });
 
@@ -366,7 +376,8 @@ app.post('/api/hallazgo', (req, res) => {
     if(idx >= 0) state.hallazgos[idx] = hallazgo;
   }
   state.version++;
-  saveDailyState('Hallazgo save');
+  // Debounced — hallazgos pueden venir en ráfaga
+  scheduleSave();
   res.json({ ok:true, version:state.version });
 });
 
@@ -380,7 +391,7 @@ app.post('/api/metadata', (req, res) => {
   if(puerta !== undefined) state.puertas[cont]        = puerta;
   addHistorial(usuario||'—', 'Metadata actualizada', cont);
   state.version++;
-  saveDailyState('Metadata save');
+  // Debounced — addHistorial ya disparó scheduleSave.
   res.json({ ok:true, version:state.version });
 });
 
@@ -426,8 +437,10 @@ app.post('/api/conteo/field', (req, res) => {
     lastAt:    Date.now()
   };
   state.version++;
-  // Save immediately to Supabase — don't wait for debounce
-  saveDailyState('Field save');
+  // Debounced (1.5s) — agrupa multiples tecleos seguidos del mismo o varios
+  // usuarios. Antes hacía saveDailyState() sync por cada keystroke, lo que
+  // serializaba el state completo (~7MB) en cada request y agotaba el heap.
+  scheduleSave();
   res.json({ ok:true, version:state.version });
 });
 
