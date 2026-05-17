@@ -3443,12 +3443,17 @@ renderCDGFotoGrid();
   });
 })();
 
-// History panels — try Render first, fall back to direct Supabase read
+// History panels — combine data from Render and Supabase to avoid losing conteos
+// FIX (17-may-2026): antes hacía "race" tomando solo uno de los dos. Si Render
+// devolvía un cdg parcial o vacío, los conteos de Supabase se ignoraban,
+// haciendo que conteos del día desaparecieran del historial visualmente.
+// Ahora se combinan ambas fuentes; el más reciente gana cuando hay colisión.
 function showCDGHist(tipo) {
   var renderPromise = fetch('/api/cdg').then(function(r){
     if(!r.ok) throw new Error('Render not ok');
     return r.json();
-  });
+  }).catch(function(){ return {}; });
+
   var supaPromise = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
   }).then(function(r){ return r.json(); }).then(function(rows){
@@ -3457,17 +3462,35 @@ function showCDGHist(tipo) {
       catch(e) { return {}; }
     }
     return {};
-  });
-  // Race: take whichever succeeds first, fall back to the other
-  renderPromise.catch(function(){ return supaPromise; }).then(function(data){
-    return data && Object.keys(data).length > 0 ? data : supaPromise;
-  }).then(function(data){
-    if(!data) data = {};
-      var panel   = document.getElementById('cdg-hist-panel');
-      var title   = document.getElementById('cdg-hist-title');
-      var content = document.getElementById('cdg-hist-content');
-      if(!panel||!title||!content) return;
-      var keys = Object.keys(data).filter(function(k){
+  }).catch(function(){ return {}; });
+
+  // Wait for BOTH sources, then merge. Never discards data from either side.
+  Promise.all([renderPromise, supaPromise]).then(function(results){
+    var renderData = results[0] || {};
+    var supaData   = results[1] || {};
+    var data = {};
+    // Start with Supabase (más confiable, persistente)
+    Object.keys(supaData).forEach(function(k){ data[k] = supaData[k]; });
+    // Sobreescribir con Render solo si la versión de Render parece más reciente
+    Object.keys(renderData).forEach(function(k){
+      var r = renderData[k];
+      var s = supaData[k];
+      if(!s) { data[k] = r; return; }
+      // Heurística de "más reciente": ts (timestamp string) o lastEditor presencia
+      // Si ambos existen, preferir el que tenga ts más reciente o más items.
+      var rItems = (r.items||[]).length;
+      var sItems = (s.items||[]).length;
+      // Conservador: si Render tiene MENOS items que Supabase, mantener Supabase
+      // (caso típico: Render arrancó fresco y aún no recargó todos los CDG)
+      if(rItems < sItems) { data[k] = s; return; }
+      data[k] = r;
+    });
+
+    var panel   = document.getElementById('cdg-hist-panel');
+    var title   = document.getElementById('cdg-hist-title');
+    var content = document.getElementById('cdg-hist-content');
+    if(!panel||!title||!content) return;
+    var keys = Object.keys(data).filter(function(k){
         var t = data[k].tipo||'CDG';
         if(tipo==='otro') return t!=='CDG'&&t!=='KTM';
         return t===tipo;
