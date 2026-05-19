@@ -2679,7 +2679,103 @@ function pollNow() {
 
       // Merge server state into local
       if(s.teorico && Object.keys(s.teorico).length > 0) teorico = s.teorico;
-      if(s.fisico)       fisico       = s.fisico;
+      // FIX (lun 18-may-2026 noche): MERGE SELECTIVO de fisico — protege
+      // cambios locales pendientes (debounce activo), filas que el usuario
+      // actual está editando, y la ventana de carrera post-saveField
+      // pre-respuesta-poll.
+      //
+      // Antes: fisico = s.fisico; reemplazaba TODO, perdiendo lo que el
+      // usuario estaba editando en vivo. Caso confirmado: Alexander Grijalva,
+      // HP26-0596, lunes 18/5/2026 12:30 PM.
+      //
+      // Cuatro señales en OR. Cualquiera dispara protección de local.
+      //   Señal 1 (timer): saveTimers[i] activo para idx en current.
+      //   Señal 2 (lock): myLocks tiene el lock de current:i.
+      //   Señal 3 (foco): activeElement es input fi/da/calc de este idx.
+      //   Señal 4 (lastAt): local más nuevo que servidor — red de seguridad
+      //                      transitoria. NO es fuente de verdad del negocio
+      //                      (eso lo hacen 1-3). Se monitorea por console.warn
+      //                      y window._mergeWarnings.
+      if(s.fisico) {
+        if(!fisico || typeof fisico !== 'object') {
+          fisico = s.fisico;
+        } else {
+          var activeEl = document.activeElement;
+          var activeIdInput = (activeEl && activeEl.id && /^(fi|da|calc)(\d+)$/.exec(activeEl.id));
+          var activeIdx = activeIdInput ? parseInt(activeIdInput[2], 10) : -1;
+          var mergeStats = { kept: 0, applied: 0, signal4: 0 };
+
+          Object.keys(s.fisico).forEach(function(cont){
+            var srvArr = s.fisico[cont];
+            var locArr = fisico[cont];
+
+            if(!Array.isArray(locArr)) { fisico[cont] = srvArr; return; }
+            if(!Array.isArray(srvArr)) { fisico[cont] = srvArr; return; }
+
+            while(locArr.length < srvArr.length) locArr.push(null);
+
+            for(var i = 0; i < srvArr.length; i++) {
+              var locVal = locArr[i];
+              var srvVal = srvArr[i];
+
+              var isCurrentCont = (cont === current);
+
+              // Señal 1: timer de debounce activo (cambio pendiente sin enviar).
+              var hasPendingTimer = isCurrentCont && saveTimers && saveTimers[i];
+
+              // Señal 2: lock propio en esta fila.
+              var hasMyLock = isCurrentCont && myLocks && myLocks[cont + ':' + i];
+
+              // Señal 3: foco actual en input fi/da/calc de esta fila.
+              var hasFocus = isCurrentCont && (activeIdx === i);
+
+              if(hasPendingTimer || hasMyLock || hasFocus) {
+                mergeStats.kept++;
+                // Descomentar si necesitás depurar conservación de local;
+                // volver a comentar después para no contaminar la consola.
+                // console.debug('Merge: keep local', cont, i, {timer:hasPendingTimer, lock:hasMyLock, focus:hasFocus});
+                continue;
+              }
+
+              // Señal 4 (red de seguridad): local con lastAt más nuevo.
+              // Usa != null para distinguir 0 legítimo de undefined.
+              var locAt = (locVal && locVal.lastAt != null) ? locVal.lastAt : 0;
+              var srvAt = (srvVal && srvVal.lastAt != null) ? srvVal.lastAt : 0;
+              if(locAt > srvAt) {
+                mergeStats.kept++;
+                mergeStats.signal4++;
+                console.warn('Merge: keep local by lastAt', cont, i, {locAt:locAt, srvAt:srvAt});
+                // Acumulador en memoria para revisión post-sesión sin
+                // necesidad de DevTools abierto. Pedirle al equipo
+                // "abrime consola y pegame window._mergeWarnings".
+                window._mergeWarnings = window._mergeWarnings || [];
+                window._mergeWarnings.push({cont:cont, idx:i, locAt:locAt, srvAt:srvAt, t:Date.now()});
+                if(window._mergeWarnings.length > 200) window._mergeWarnings.shift();
+                continue;
+              }
+
+              // Default: tomar servidor.
+              locArr[i] = srvVal;
+              mergeStats.applied++;
+            }
+
+            if(locArr.length > srvArr.length) {
+              locArr.length = srvArr.length;
+            }
+          });
+
+          // Borrar contenedores del local que el servidor ya no tiene.
+          Object.keys(fisico).forEach(function(cont){
+            if(!s.fisico.hasOwnProperty(cont)) {
+              delete fisico[cont];
+            }
+          });
+
+          if(mergeStats.kept > 0 || mergeStats.signal4 > 0) {
+            console.debug('Poll merge stats:', mergeStats);
+          }
+        }
+      }
       if(s.asignaciones)    asignaciones    = s.asignaciones;
       if(s.historial)       historial       = s.historial;
       if(s.hallazgos)       hallazgos       = s.hallazgos;
@@ -2802,6 +2898,19 @@ function updateLockBadges() {
 // Field locking
 var myLocks    = {};
 var saveTimers = {};
+
+// FIX (lun 18-may-2026 noche): clearAllSaveTimers limpia todos los timers de
+// debounce pendientes. Se llama al cambiar de contenedor para evitar que un
+// timer disparado por edición en contenedor A se ejecute con el DOM ya
+// mostrando contenedor B.
+function clearAllSaveTimers() {
+  Object.keys(saveTimers).forEach(function(k){
+    if(saveTimers[k]) {
+      clearTimeout(saveTimers[k]);
+      saveTimers[k] = null;
+    }
+  });
+}
 
 function acquireLock(idx) {
   if(!current || !currentUser) return;
@@ -3100,7 +3209,32 @@ saveConteo = function() {
 
 // Patch sel-cont change to release locks
 var selCont = document.getElementById('sel-cont');
-if(selCont) selCont.addEventListener('change', function(){ releaseAllLocks(); });
+// FIX (lun 18-may-2026 noche): flush obligatorio antes de clear+release,
+// para preservar cambios escritos justo antes del cambio de contenedor,
+// aun si el blur natural no se disparó (caso típico en tablets con touch,
+// dropdown rápido o navegación gestual).
+// El DOM aún muestra el contenedor anterior en este punto (renderConteo se
+// ejecuta DESPUÉS del listener change), así que flushFieldSave lee los
+// valores correctos. flushFieldSave ya limpia su propio timer antes de
+// llamar a saveField (ver línea 2840), así que no hay doble-save.
+if(selCont) selCont.addEventListener('change', function(){
+  // PASO 1: flush de timers pendientes ANTES de limpiarlos.
+  if(typeof flushFieldSave === 'function' && saveTimers) {
+    Object.keys(saveTimers).forEach(function(k){
+      if(saveTimers[k]) {
+        var idx = parseInt(k, 10);
+        if(!isNaN(idx)) {
+          try { flushFieldSave(idx); }
+          catch(e) { console.warn('flushFieldSave failed for idx', idx, e); }
+        }
+      }
+    });
+  }
+  // PASO 2: limpiar timers (defensa por si flushFieldSave dejó alguno).
+  clearAllSaveTimers();
+  // PASO 3: liberar locks como antes.
+  releaseAllLocks();
+});
 
 window.addEventListener('beforeunload', function(){ releaseAllLocks(); });
 
