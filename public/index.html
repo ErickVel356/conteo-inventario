@@ -225,8 +225,21 @@ input[type=number]{width:88px;padding:8px 6px;font-size:1rem;border:1px solid #c
 input[type=number]:focus{outline:none;border-color:#555;box-shadow:0 0 0 3px rgba(0,0,0,.08)}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 input[type=number]:disabled{background:#f5f5f3;color:#aaa;cursor:not-allowed}
-.calc-inp{width:100px;padding:6px 8px;font-size:.85rem;border:1px solid #e0c96e;border-radius:6px;background:#fffef0;text-align:center;min-height:44px;-webkit-appearance:none;appearance:none;font-family:inherit}
-.calc-inp:focus{outline:none;border-color:#c9a800}
+.calc-fab{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#5a6fd8;color:#fff;font-size:24px;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.25);cursor:pointer;z-index:9999;display:flex;align-items:center;justify-content:center}
+.calc-fab:active{transform:scale(0.95)}
+.calc-panel{position:fixed;bottom:90px;right:20px;width:320px;max-width:calc(100vw - 40px);background:#fff;border-radius:12px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:9998;visibility:hidden;opacity:0;transform:translateY(20px);pointer-events:none;transition:transform 0.2s,opacity 0.2s,visibility 0.2s}
+.calc-panel.open{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto}
+.calc-panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-weight:600;font-size:15px;color:#2c3e50}
+.calc-panel-header button{background:none;border:none;font-size:24px;cursor:pointer;color:#888;padding:0 4px;line-height:1;min-width:32px;min-height:32px}
+.calc-panel-input{width:100%;font-size:20px;padding:12px;border:2px solid #e0e0e0;border-radius:8px;text-align:right;font-family:monospace;margin-bottom:12px;min-height:48px;-webkit-appearance:none;box-sizing:border-box}
+.calc-panel-input:focus{outline:none;border-color:#5a6fd8}
+.calc-panel-result{font-size:14px;text-align:right;padding:8px 12px;background:#f5f7fa;border-radius:6px;margin-bottom:12px;color:#888}
+.calc-panel-result-value{font-weight:700;font-size:24px;color:#2c3e50;margin-left:6px}
+.calc-panel-actions{display:flex;gap:8px;margin-bottom:8px}
+.calc-panel-actions button{flex:1;padding:12px;font-size:15px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;min-height:44px}
+.calc-panel-actions button.primary{background:#5a6fd8;color:#fff;border-color:#5a6fd8}
+.calc-panel-hint{font-size:11px;color:#888;text-align:center;margin-top:8px;line-height:1.4}
+@media (max-width:600px){.calc-panel{bottom:84px;right:12px;width:calc(100vw - 24px)}}
 input[type=text].field-inp,textarea.field-inp{width:100%;padding:9px 12px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;background:#fff;font-family:inherit;min-height:44px}
 input[type=text].field-inp:focus,textarea.field-inp:focus{outline:none;border-color:#555}
 textarea.field-inp{resize:vertical;min-height:72px}
@@ -328,7 +341,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
   table { font-size: .8rem !important; }
   th, td { padding: 6px 7px !important; }
   input[type=number] { width: 58px !important; font-size: .85rem !important; }
-  .calc-inp { width: 66px !important; font-size: .8rem !important; }
+  
 }
 @media (max-width: 480px) {
   .tab-pill button { padding: 6px 9px !important; font-size: .77rem !important; }
@@ -686,7 +699,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <thead><tr>
               <th>SKU</th><th>Nombre / Descripción</th>
               <th class="tc">Teórico</th>
-              <th class="tc">🧮 Cálculo</th>
               <th class="tc">Físico</th>
               <th class="tc">Dañado</th>
               <th class="tc">Total físico</th>
@@ -851,6 +863,8 @@ var STORE_KEY = 'conteo_fisico_v4';
 var currentUser  = null;
 var teorico      = {};   // { contId: { items, type, cdgValidado? } }
 var fisico       = {};   // { contId: [{fisico,daniado,quien,ts,calcExpr}] | null }
+                          // calcExpr: legacy histórico, ya no se setea desde UI desde 19/5/2026,
+                          // solo se preserva valor previo en saveField.
 var costos       = {};
 var hallazgos    = [];
 var asignaciones = {};   // { contId: [nombre, ...] }
@@ -1306,7 +1320,7 @@ function updateStatusBar(){
 ══════════════════════════════════════════════════════════════════ */
 function renderConteo(){
   current=document.getElementById('sel-cont').value;
-  if(!current||!teorico[current]){document.getElementById('tbody-conteo').innerHTML='<tr><td colspan="8" class="empty">Selecciona un contenedor.</td></tr>';return;}
+  if(!current||!teorico[current]){document.getElementById('tbody-conteo').innerHTML='<tr><td colspan="7" class="empty">Selecciona un contenedor.</td></tr>';return;}
   var items=teorico[current].items||[],saved=fisico[current],html='',now=Date.now();
   for(var i=0;i<items.length;i++){
     var it=items[i],sv=saved?saved[i]:null;
@@ -1332,7 +1346,6 @@ function renderConteo(){
       +'<td>'+escH(it.sku||'—')+'</td>'
       +'<td>'+escH(it.desc||'—')+'</td>'
       +'<td class="tc">'+it.qty+'</td>'
-      +'<td class="tc"><input class="calc-inp" type="text" placeholder="ej: 8*6+3" id="calc'+i+'" value="'+(sv&&sv.calcExpr?escH(sv.calcExpr):'')+'" '+disabled+'></td>'
       +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
       +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
       +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
@@ -1340,7 +1353,7 @@ function renderConteo(){
       +'<td class="tc"><select class="cob-sel" data-i="'+i+'" '+disabled+' style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'+(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'+((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'+(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'+(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>'
       +'</tr>';
   }
-  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="9" class="empty">Sin items</td></tr>';
+  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="8" class="empty">Sin items</td></tr>';
   updateProg();
   updateSelfAssignBtn();
 
@@ -2702,7 +2715,7 @@ function pollNow() {
           fisico = s.fisico;
         } else {
           var activeEl = document.activeElement;
-          var activeIdInput = (activeEl && activeEl.id && /^(fi|da|calc)(\d+)$/.exec(activeEl.id));
+          var activeIdInput = (activeEl && activeEl.id && /^(fi|da)(\d+)$/.exec(activeEl.id));
           var activeIdx = activeIdInput ? parseInt(activeIdInput[2], 10) : -1;
           var mergeStats = { kept: 0, applied: 0 };
 
@@ -2949,10 +2962,8 @@ function saveField(idx) {
   // Read raw DOM values. Distinguish empty ('') from zero ('0').
   var fiEl   = document.getElementById('fi'+idx);
   var daEl   = document.getElementById('da'+idx);
-  var calcEl = document.getElementById('calc'+idx);
   var fiRaw   = fiEl   ? fiEl.value   : '';
   var daRaw   = daEl   ? daEl.value   : '';
-  var calcRaw = calcEl ? calcEl.value : '';
 
   // Parse: empty string → null (not counted), number → numeric value
   var fv = fiRaw === '' ? null : parseFloat(fiRaw);
@@ -2969,6 +2980,12 @@ function saveField(idx) {
     fisico[current] = new Array(teorico[current].items.length).fill(null);
   }
   var prev = fisico[current][idx] || {};
+
+  // FIX (mar 19-may-2026): calcExpr ya no se edita desde UI (campo Cálculo
+  // eliminado). Preservamos el valor histórico previo si existe — pero NO
+  // lo enviamos al server, así el guard de server.js usa su propia regla
+  // de preservación (no se sobrescribe lo histórico con '').
+  var preservedCalcExpr = (prev && prev.calcExpr) || '';
 
   // ─── RULE #3: Cobertura logic ──────────────────────────────────────────
   // - If the user explicitly picked 'No auditado' → respect that choice.
@@ -2993,24 +3010,22 @@ function saveField(idx) {
 
   // ─── Determine if save is meaningful ────────────────────────────────────
   // Save when: (a) user entered/changed fisico, (b) user entered daniado,
-  // (c) user typed calc expression, or (d) cobertura changed.
+  // or (c) cobertura changed. calcExpr ya no se evalúa desde UI.
   var prevFv      = prev.fisico    !== undefined ? prev.fisico    : null;
   var prevDv      = prev.daniado   !== undefined ? prev.daniado   : null;
-  var prevCalc    = prev.calcExpr  || '';
   var prevCob     = prev.cobertura || 'En revisión';
   var changed =
     (fv      !== prevFv)   ||
     (dv      !== prevDv)   ||
-    (calcRaw !== prevCalc) ||
     (newCob  !== prevCob);
   if(!changed) return;
 
-  // ─── Persist locally (rule #2: store BOTH calc expression AND result) ───
+  // ─── Persist locally (preserva calcExpr histórico) ──────────────────────
   fisico[current][idx] = {
     fisico:    fv,                              // numeric or null (empty)
     daniado:   dv,                              // numeric or null (empty)
     cobertura: newCob,
-    calcExpr:  calcRaw,                         // expression like "3*4" or ''
+    calcExpr:  preservedCalcExpr,               // legacy histórico, ya no se edita
     quien:     currentUser.name,
     ts:        nowStr(),
     lastUser:  currentUser.name,
@@ -3027,7 +3042,7 @@ function saveField(idx) {
 
   if(typeof updateSummaryCard === 'function') updateSummaryCard();
 
-  // ─── Send to server ─────────────────────────────────────────────────────
+  // ─── Send to server (sin calcExpr — server preserva el suyo) ────────────
   fetch('/api/conteo/field', {
     method:  'POST',
     headers: {'Content-Type':'application/json'},
@@ -3037,7 +3052,6 @@ function saveField(idx) {
       fisico:    fv,
       daniado:   dv,
       cobertura: newCob,
-      calcExpr:  calcRaw,
       usuario:   currentUser.name
     })
   })
@@ -3082,7 +3096,6 @@ renderConteo = function() {
     (function(idx){
       var fi   = document.getElementById('fi'+idx);
       var da   = document.getElementById('da'+idx);
-      var calc = document.getElementById('calc'+idx);
       var cob  = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
 
       // ───── 1. LOCK STATE: disable inputs if someone else holds the row ───
@@ -3091,7 +3104,6 @@ renderConteo = function() {
       if(isLockedByOther) {
         if(fi)   { fi.disabled  = true; fi.style.borderColor='#e0c96e'; fi.style.background='#fffef0'; }
         if(da)     da.disabled  = true;
-        if(calc) { calc.disabled = true; calc.style.background='#f5f5f3'; }
         if(cob)    cob.disabled = true;
         var parent = fi ? fi.parentNode : null;
         if(parent && !parent.querySelector('.srv-lock')) {
@@ -3104,7 +3116,6 @@ renderConteo = function() {
       } else {
         if(fi)   { fi.disabled  = false; }
         if(da)     da.disabled  = false;
-        if(calc) { calc.disabled = false; calc.style.background=''; }
         if(cob)    cob.disabled = false;
       }
 
@@ -3140,41 +3151,10 @@ renderConteo = function() {
         da.addEventListener('blur',  function(){ flushFieldSave(idx); });
       }
 
-      if(calc && !calc._srv) {
-        calc._srv = 1;
-        calc.addEventListener('focus', function(){ acquireLock(idx); });
-        // When the user types a calculation:
-        //   - Sanitize the expression
-        //   - Evaluate it (rule #2: result goes to Físico, expression saved as audit trail)
-        //   - Mirror the result to the Físico input
-        //   - Trigger save (will pick up both Físico value AND calc expression)
-        calc.addEventListener('input', function(){
-          acquireLock(idx);
-          var expr = this.value.replace(/[^0-9+\-*/().\s]/g, '');
-          var fiEl2 = document.getElementById('fi'+idx);
-          if(!fiEl2 || fiEl2.disabled) return;
-          if(!expr) {
-            // Empty calc → clear physical too
-            fiEl2.value = '';
-            updateTotDiff(idx);
-            scheduleFieldSave(idx);
-            return;
-          }
-          try {
-            var result = Function('"use strict";return(' + expr + ')')();
-            if(typeof result === 'number' && isFinite(result)) {
-              // Round to 2 decimals to avoid float garbage like 0.30000000004
-              result = Math.round(result * 100) / 100;
-              fiEl2.value = result;
-              updateTotDiff(idx);
-              scheduleFieldSave(idx);
-            }
-          } catch(e) {
-            // Incomplete expression like "3*" — wait for more typing
-          }
-        });
-        calc.addEventListener('blur', function(){ flushFieldSave(idx); });
-      }
+      // FIX (mar 19-may-2026): bloque de listener para calc{idx} eliminado.
+      // El campo Cálculo fue reemplazado por una calculadora flotante
+      // desacoplada (ver al final del body). calcExpr histórico se preserva
+      // pero ya no se edita desde la UI por fila.
 
       if(cob && !cob._srv) {
         cob._srv = 1;
@@ -4286,6 +4266,142 @@ function exportCDGHallazgosWord(){
   }
 })();
 
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CALCULADORA FLOTANTE — DESACOPLADA de la app (mar 19-may-2026)
+     Reemplaza el campo Cálculo por fila. Cero interacción con fisico,
+     locks, polling, saveField. El usuario calcula afuera y escribe el
+     resultado a mano en el campo Físico.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<button id="calc-fab" class="calc-fab" type="button" aria-label="Abrir calculadora">🧮</button>
+<div id="calc-panel" class="calc-panel" role="dialog" aria-label="Calculadora" aria-hidden="true">
+  <div class="calc-panel-header">
+    <span>🧮 Calculadora</span>
+    <button id="calc-panel-close" type="button" aria-label="Cerrar calculadora">×</button>
+  </div>
+  <input id="calc-panel-input" class="calc-panel-input" type="text"
+         placeholder="Ej: 8*6+3 o (2+3)*4" autocomplete="off"
+         autocorrect="off" autocapitalize="off" spellcheck="false">
+  <div class="calc-panel-result">
+    Resultado: <span id="calc-panel-result-value" class="calc-panel-result-value">—</span>
+  </div>
+  <div class="calc-panel-actions">
+    <button id="calc-panel-clear" type="button">Limpiar</button>
+    <button id="calc-panel-copy" class="primary" type="button">Copiar resultado</button>
+  </div>
+  <div class="calc-panel-hint">
+    Operadores: + − × ÷ ( ) . , <br>
+    Escribí el resultado a mano en el campo Físico.
+  </div>
+</div>
+
+<script>
+(function(){
+  var fab    = document.getElementById('calc-fab');
+  var panel  = document.getElementById('calc-panel');
+  var input  = document.getElementById('calc-panel-input');
+  var result = document.getElementById('calc-panel-result-value');
+  var close  = document.getElementById('calc-panel-close');
+  var clear  = document.getElementById('calc-panel-clear');
+  var copy   = document.getElementById('calc-panel-copy');
+  if(!fab || !panel || !input || !result || !close || !clear || !copy) return;
+
+  var escHandler = null;
+
+  function openPanel() {
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    // Focus dentro del mismo gesture handler (iOS friendly).
+    input.focus();
+    // Listener Escape solo mientras está abierto.
+    escHandler = function(e){
+      if(e.key === 'Escape') closePanel();
+    };
+    document.addEventListener('keydown', escHandler);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    if(escHandler) {
+      document.removeEventListener('keydown', escHandler);
+      escHandler = null;
+    }
+    // Devolver foco al FAB para accesibilidad.
+    fab.focus();
+  }
+
+  fab.addEventListener('click', function(){
+    if(panel.classList.contains('open')) closePanel();
+    else openPanel();
+  });
+  close.addEventListener('click', closePanel);
+
+  clear.addEventListener('click', function(){
+    input.value = '';
+    result.textContent = '—';
+    input.focus();
+  });
+
+  copy.addEventListener('click', function(){
+    var val = result.textContent;
+    if(!val || val === '—' || val === '…') return;
+    // Intentar Clipboard API moderna; fallback a textarea legacy.
+    if(navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(String(val)).then(function(){
+        var orig = copy.textContent;
+        copy.textContent = '✓ Copiado';
+        setTimeout(function(){ copy.textContent = orig; }, 1200);
+      }).catch(function(){ legacyCopy(val); });
+    } else {
+      legacyCopy(val);
+    }
+  });
+
+  function legacyCopy(val) {
+    var ta = document.createElement('textarea');
+    ta.value = String(val);
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      var orig = copy.textContent;
+      copy.textContent = '✓ Copiado';
+      setTimeout(function(){ copy.textContent = orig; }, 1200);
+    } catch(e) {}
+    document.body.removeChild(ta);
+  }
+
+  // Evaluación de expresión.
+  // Whitelist: dígitos, + - * / ( ) . , espacios. Coma se normaliza a punto
+  // antes de evaluar (soporte para teclados en español).
+  input.addEventListener('input', function(){
+    var raw = this.value;
+    var sanitized = raw.replace(/[^0-9+\-*/().,\s]/g, '');
+    if(sanitized !== raw) {
+      // Preservar posición de cursor lo mejor posible
+      var pos = this.selectionStart - (raw.length - sanitized.length);
+      this.value = sanitized;
+      try { this.setSelectionRange(pos, pos); } catch(e) {}
+    }
+    var expr = sanitized.replace(/,/g, '.');
+    if(!expr.trim()) { result.textContent = '—'; return; }
+    // Defensa en profundidad: limitar longitud máxima.
+    if(expr.length > 200) { result.textContent = '— (expresión muy larga)'; return; }
+    try {
+      var r = Function('"use strict";return(' + expr + ')')();
+      if(typeof r === 'number' && isFinite(r)) {
+        result.textContent = Math.round(r * 100) / 100;
+      } else {
+        result.textContent = '—';
+      }
+    } catch(e) {
+      result.textContent = '…'; // expresión incompleta
+    }
+  });
+})();
 </script>
 
 </body>
