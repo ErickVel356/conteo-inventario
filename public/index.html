@@ -1501,27 +1501,55 @@ function updateTotDiff(idx){
   if(typeof updateSummaryCard==='function') updateSummaryCard();
 }
 
+// FIX (lun 18-may-2026): saveConteo reescrito para evitar pérdida de datos
+// cuando varios usuarios cuentan el mismo contenedor al mismo tiempo.
+//
+// PROBLEMA ANTERIOR: la función reconstruía el array completo de fisico[current]
+// leyendo del DOM y poniendo quien=currentUser.name en TODAS las líneas, luego
+// hacía un POST /api/conteo que sobreescribía todo el contenedor en el server.
+// Resultado: si Usuario3 guardaba con su DOM, podía borrar líneas que Usuario1
+// y Usuario2 habían contado, y se llevaba el "quien" de ellos.
+//
+// COMPORTAMIENTO NUEVO: el botón ya no sobreescribe nada. Solo hace flush de
+// los campos pendientes en debounce del usuario actual (a través de saveField),
+// que es campo-por-campo y preserva quien por línea. Los datos del contenedor
+// ya están guardados en tiempo real al escribir; el botón es confirmación
+// visual de que cualquier cambio pendiente ya se mandó.
 function saveConteo(){
-  if(!teorico[current])return;
-  var items=teorico[current].items;
-  if(!fisico[current])fisico[current]=new Array(items.length).fill(null);
-  items.forEach(function(_,i){
-    var fv=parseFloat((document.getElementById('fi'+i)||{}).value);
-    var dv=parseFloat((document.getElementById('da'+i)||{}).value);
-    var prev=fisico[current][i]||{};
-    fisico[current][i]={fisico:isNaN(fv)?0:fv,daniado:isNaN(dv)?0:dv,quien:currentUser.name,ts:nowStr(),calcExpr:prev.calcExpr||''};
+  if(!teorico[current]) return;
+  if(!currentUser) return;
+
+  // 1. Hacer flush de cualquier campo que tenga debounce pendiente.
+  //    saveField envía cada cambio individualmente a /api/conteo/field
+  //    y preserva el "quien" por línea (solo cambia el quien de la línea
+  //    que ESTE usuario tocó).
+  var items = teorico[current].items || [];
+  var pendingCount = 0;
+  items.forEach(function(_, i){
+    if(saveTimers && saveTimers[i]) {
+      flushFieldSave(i);
+      pendingCount++;
+    }
   });
-  addHist('Guardó conteo: '+current);
-  updateProg();updateStatusBar();
-  var _data=fisico[current];
-  fetch('/api/conteo',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont:current,data:_data,usuario:currentUser?currentUser.name:'—'})})
-    .then(function(r){return r.json();})
-    .then(function(d){if(d.ok)lastVersion=d.version;})
-    .catch(function(e){console.warn('save conteo:',e);});
-  var btn=document.getElementById('btn-save'),orig=btn.textContent;
-  btn.textContent='✓ Guardado';btn.style.background='#1e7e34';btn.style.borderColor='#1e7e34';btn.style.color='#fff';
-  setTimeout(function(){btn.textContent=orig;btn.style.background='';btn.style.borderColor='';btn.style.color='';},1500);
+
+  addHist('Confirmó conteo: ' + current + (pendingCount ? ' ('+pendingCount+' cambios pendientes guardados)' : ''));
+  updateProg(); updateStatusBar();
+
+  // 2. Feedback visual al usuario — el botón se ve igual que antes.
+  var btn = document.getElementById('btn-save');
+  if(btn) {
+    var orig = btn.textContent;
+    btn.textContent = '✓ Guardado';
+    btn.style.background = '#1e7e34';
+    btn.style.borderColor = '#1e7e34';
+    btn.style.color = '#fff';
+    setTimeout(function(){
+      btn.textContent = orig;
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+    }, 1500);
+  }
 }
 
 function updateProg(){
