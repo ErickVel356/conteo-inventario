@@ -430,7 +430,12 @@ app.post('/api/conteo/field', (req, res) => {
     fisico:    fisico    !== undefined ? fisico    : prev.fisico,
     daniado:   daniado   !== undefined ? daniado   : prev.daniado,
     cobertura: cobertura !== undefined ? cobertura : (prev.cobertura || 'En revisión'),
-    calcExpr:  calcExpr  !== undefined ? calcExpr  : (prev.calcExpr || ''),
+    // FIX (mar 19-may-2026): el cliente nuevo ya no envía calcExpr (campo
+    // Cálculo eliminado de la UI). Pero clientes con caché viejo todavía
+    // pueden mandar calcExpr: ''. Tratamos null/undefined/'' como "no enviar"
+    // y preservamos siempre el histórico previo. Solo aceptamos valores
+    // no-vacíos (compatibilidad con clientes legacy que aún calculan).
+    calcExpr:  (calcExpr != null && calcExpr !== '') ? calcExpr : ((prev && prev.calcExpr) || ''),
     quien:     usuario,
     ts:        new Date().toLocaleString('es'),
     lastUser:  usuario,
