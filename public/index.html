@@ -3170,6 +3170,17 @@ renderConteo = function() {
       }
     })(i);
   }
+
+  // FIX (mar 19-may-2026): re-aplicar filtro de búsqueda SKU si está activo.
+  // renderConteo rearma el tbody con innerHTML y eso borra el display:none
+  // de las filas filtradas. Re-aplicar al final preserva el filtro a través
+  // de polls/saves. Si applySkuSearchFilter aún no está definido (orden de
+  // carga del script de búsqueda), no pasa nada — el filtro se re-aplicará
+  // en el próximo render.
+  if(typeof window.applySkuSearchFilter === 'function') {
+    try { window.applySkuSearchFilter(); }
+    catch(e) { console.warn('applySkuSearchFilter failed:', e); }
+  }
 };
 
 // Patch saveConteo to release locks
@@ -3215,11 +3226,27 @@ window.addEventListener('beforeunload', function(){ releaseAllLocks(); });
 
 <script>
 // ── SKU Search ────────────────────────────────────────────────────────────
-document.getElementById('sku-search').addEventListener('input', function() {
-  var q = this.value.trim().toLowerCase();
+// FIX (mar 19-may-2026): refactor del filtro en función global
+// `applySkuSearchFilter()` para que pueda re-aplicarse después de cada
+// renderConteo. Antes, renderConteo rearmaba el tbody con innerHTML y
+// borraba el `display:none` de las filas filtradas. Si el usuario tenía
+// un SKU buscado y apretaba "Guardar conteo ✓", el flush hacía save al
+// server, llegaba un poll con state.version nueva, renderConteo se
+// disparaba, y el filtro se "perdía" visualmente (el input mantenía el
+// texto pero la tabla mostraba todas las filas).
+//
+// Ahora applySkuSearchFilter() se expone global y se llama:
+//   (a) en el evento 'input' del campo de búsqueda (como antes)
+//   (b) al final del patched renderConteo, para preservar el filtro
+//       después de re-renderizar
+window.applySkuSearchFilter = function() {
+  var inp = document.getElementById('sku-search');
+  if(!inp) return;
+  var q = (inp.value || '').trim().toLowerCase();
   var rows = document.querySelectorAll('#tbody-conteo tr');
   var shown = 0;
   rows.forEach(function(row) {
+    if(!row.cells || row.cells.length < 2) return;
     var sku  = (row.cells[0] ? row.cells[0].textContent : '').toLowerCase();
     var name = (row.cells[1] ? row.cells[1].textContent : '').toLowerCase();
     var match = !q || sku.indexOf(q) >= 0 || name.indexOf(q) >= 0;
@@ -3228,7 +3255,9 @@ document.getElementById('sku-search').addEventListener('input', function() {
   });
   var cnt = document.getElementById('sku-search-count');
   if(cnt) cnt.textContent = q ? (shown + ' resultado' + (shown!==1?'s':'')) : '';
-});
+};
+
+document.getElementById('sku-search').addEventListener('input', window.applySkuSearchFilter);
 
 // Clear search when switching containers
 document.getElementById('sel-cont').addEventListener('change', function() {
