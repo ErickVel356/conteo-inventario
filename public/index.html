@@ -757,14 +757,18 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:1.5rem 0 .75rem">
           <div class="sec" style="margin:0">Resumen por contenedor</div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <label style="font-size:.78rem;color:#666">Filtrar por fecha:</label>
-            <input type="date" id="filter-fecha-reporte" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
+            <label style="font-size:.78rem;color:#666">Filtrar Fecha de trabajo:</label>
+            <span style="font-size:.72rem;color:#888">Desde</span>
+            <input type="date" id="filter-fecha-desde" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
+            <span style="font-size:.72rem;color:#888">Hasta</span>
+            <input type="date" id="filter-fecha-hasta" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
             <button id="btn-filter-fecha-clear" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;min-height:34px">× Limpiar</button>
+            <span id="filter-ocultos-info" style="font-size:.72rem;color:#888;margin-left:6px"></span>
           </div>
         </div>
         <div class="tbl-wrap" style="margin-bottom:1.5rem">
           <table>
-            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th class="tc">Costo total Q</th><th>Última revisión</th><th>Estado</th></tr></thead>
+            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th class="tc">Costo total Q</th><th id="th-fecha-trabajo" style="cursor:pointer;user-select:none" title="Click para invertir orden">Fecha de trabajo <span id="th-fecha-trabajo-arrow" style="font-size:.7em;color:#5a6fd8">↓</span></th><th>Estado</th></tr></thead>
             <tbody id="tbody-resumen"></tbody>
           </table>
         </div>
@@ -1616,36 +1620,59 @@ document.getElementById('btn-self-assign').addEventListener('click',function(){
 ══════════════════════════════════════════════════════════════════ */
 function buildReporte(){
   var totalItems=0,done=0,totalDiffs=0,totalCosto=0,sumRows='',detRows='';
-  // Read filter
-  var fechaFilter = (document.getElementById('filter-fecha-reporte')||{}).value || '';
+  // Read filters
+  var fechaDesde = (document.getElementById('filter-fecha-desde')||{}).value || '';
+  var fechaHasta = (document.getElementById('filter-fecha-hasta')||{}).value || '';
   var contsFiltrados = conts.slice();
-  if(fechaFilter) {
-    // Filter contenedores by date of last revision (any item.ts whose date matches)
+
+  // FIX (mar 19-may-2026): el filtro ahora opera sobre fechaCarga del teorico
+  // (no sobre lastAt de fisico). Soporta rango Desde/Hasta inclusive.
+  // Contenedores SIN fechaCarga se ocultan cuando hay cualquier filtro activo.
+  //
+  // FIX (rev ChatGPT): contar cuántos quedaron ocultos para mostrar al usuario.
+  var ocultosSinFecha = 0;
+  var ocultosFueraRango = 0;
+  if(fechaDesde || fechaHasta) {
     contsFiltrados = conts.filter(function(c){
-      var fis = fisico[c];
-      if(!Array.isArray(fis)) return false;
-      // Match if any item's ts contains the date in d/m/yyyy form or yyyy-m-d.
-      // Date input gives yyyy-mm-dd. ts is local string. Convert and compare day-by-day.
-      var parts = fechaFilter.split('-'); // [yyyy, mm, dd]
-      var y = parseInt(parts[0],10), m = parseInt(parts[1],10), d = parseInt(parts[2],10);
-      return fis.some(function(f){
-        if(!f || !f.lastAt) {
-          // Fall back to f.ts parse — not always reliable, so use lastAt when present
-          return false;
-        }
-        var dt = new Date(f.lastAt);
-        return dt.getFullYear()===y && (dt.getMonth()+1)===m && dt.getDate()===d;
-      });
+      var fc = teorico[c] && teorico[c].fechaCarga;
+      if(!fc) { ocultosSinFecha++; return false; }
+      if(fechaDesde && fc < fechaDesde) { ocultosFueraRango++; return false; }
+      if(fechaHasta && fc > fechaHasta) { ocultosFueraRango++; return false; }
+      return true;
     });
   }
+
+  // Sort por fechaCarga (controlado por header). Estado guardado en
+  // window._sortFechaTrabajo: null=sin orden, 'asc', 'desc'.
+  if(window._sortFechaTrabajo) {
+    var dir = window._sortFechaTrabajo;
+    contsFiltrados.sort(function(a, b){
+      var fa = (teorico[a] && teorico[a].fechaCarga) || '';
+      var fb = (teorico[b] && teorico[b].fechaCarga) || '';
+      // Sin fecha siempre va al final, independiente de dir
+      if(!fa && !fb) return 0;
+      if(!fa) return 1;
+      if(!fb) return -1;
+      return dir === 'asc' ? (fa < fb ? -1 : fa > fb ? 1 : 0)
+                           : (fa > fb ? -1 : fa < fb ? 1 : 0);
+    });
+  }
+
+  // Helper para formatear fechaCarga (YYYY-MM-DD → dd/mm/yyyy)
+  function fmtFC(fc) {
+    if(!fc) return '—';
+    var p = String(fc).split('-');
+    if(p.length !== 3) return fc;
+    return p[2] + '/' + p[1] + '/' + p[0];
+  }
+
   contsFiltrados.forEach(function(c){
     var items=teorico[c].items,fis=fisico[c],type=teorico[c].type;
+    var fechaCargaCont = (teorico[c] && teorico[c].fechaCarga) || '';
     totalItems+=items.length;
-    // Get last edit date from fisico items
-    var lastTs='—';
-    if(Array.isArray(fis)){
-      fis.forEach(function(f){if(f&&f.ts&&lastTs==='—')lastTs=f.ts;});
-    }
+    // Celda de Fecha de trabajo: editable click
+    var fechaCellHtml = '<td class="fecha-trabajo-cell" data-cont="'+escH(c)+'" style="font-size:.78rem;cursor:pointer;color:'+(fechaCargaCont?'#333':'#999')+'" title="Click para editar">'+
+      (fechaCargaCont ? fmtFC(fechaCargaCont) : '— ✏️')+'</td>';
     var puerta=(typeof puertas!=='undefined'&&puertas[c])||'—';
     // Compute container cost total using teórico × costo unitario (most reliable baseline)
     var contCosto = 0;
@@ -1655,7 +1682,7 @@ function buildReporte(){
     });
     totalCosto += contCosto;
     if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td><td style="font-size:.75rem;color:#888">—</td><td><span class="badge b-pend">Pendiente</span></td></tr>';
+      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td><span class="badge b-pend">Pendiente</span></td></tr>';
       return;
     }
     done++;var ok=0,over=0,under=0;
@@ -1669,7 +1696,7 @@ function buildReporte(){
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td><td style="font-size:.75rem;color:#888">'+escH(lastTs)+'</td><td>'+badge+'</td></tr>';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td></tr>';
   });
   document.getElementById('m-total').textContent=contsFiltrados.length;
   document.getElementById('m-done').textContent=done;
@@ -1679,15 +1706,132 @@ function buildReporte(){
   if(mCosto) mCosto.textContent = 'Q' + Math.round(totalCosto).toLocaleString('es-GT');
   document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="10" class="empty">Sin contenedores en esta fecha.</td></tr>';
   document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
+
+  // FIX (rev ChatGPT): mostrar contador de contenedores ocultos por filtro
+  var infoEl = document.getElementById('filter-ocultos-info');
+  if(infoEl) {
+    if(fechaDesde || fechaHasta) {
+      var partes = [];
+      if(ocultosSinFecha > 0)    partes.push(ocultosSinFecha + ' sin fecha');
+      if(ocultosFueraRango > 0)  partes.push(ocultosFueraRango + ' fuera de rango');
+      infoEl.textContent = partes.length ? '(' + partes.join(', ') + ' ocultos)' : '';
+    } else {
+      infoEl.textContent = '';
+    }
+  }
+
+  // Wire click-to-edit en cada celda de fecha trabajo (después de pintar tbody)
+  document.querySelectorAll('.fecha-trabajo-cell').forEach(function(td){
+    td.addEventListener('click', function(){
+      if(td.querySelector('input')) return; // ya está en modo edición
+      var cont = td.getAttribute('data-cont');
+      var current = (teorico[cont] && teorico[cont].fechaCarga) || '';
+      td.innerHTML = '<input type="date" value="'+escH(current)+'" style="font-size:.78rem;padding:2px 4px;width:130px;border:1px solid #5a6fd8;border-radius:4px">';
+      var inp = td.querySelector('input');
+      inp.focus();
+      var saved = false;
+      function saveAndExit() {
+        if(saved) return;
+        saved = true;
+        var nuevoValor = inp.value || '';
+        if(nuevoValor === current) {
+          buildReporte(); // re-render sin cambios
+          return;
+        }
+        // Optimistic update local
+        if(teorico[cont]) teorico[cont].fechaCarga = nuevoValor || null;
+        // FIX (rev Claude2): marcar como pendiente para que el polling no lo pise
+        window._pendingFechaCarga = window._pendingFechaCarga || {};
+        window._pendingFechaCarga[cont] = nuevoValor || null;
+        // Re-render
+        buildReporte();
+        // Enviar al server
+        fetch('/api/teorico/fecha-carga', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            cont: cont,
+            fechaCarga: nuevoValor,
+            usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
+          })
+        }).then(function(r){
+          // Liberar pending sin importar éxito/fallo (el polling traerá el server-side)
+          if(window._pendingFechaCarga) delete window._pendingFechaCarga[cont];
+          if(!r.ok) {
+            console.warn('No se pudo guardar fechaCarga');
+            // Revertir
+            if(teorico[cont]) teorico[cont].fechaCarga = current || null;
+            buildReporte();
+            showToast('No se pudo guardar la fecha. Intentá de nuevo.', 'error');
+          } else {
+            showToast('Fecha guardada ✓', 'ok');
+          }
+        }).catch(function(e){
+          if(window._pendingFechaCarga) delete window._pendingFechaCarga[cont];
+          console.warn('Error al guardar fechaCarga:', e);
+          if(teorico[cont]) teorico[cont].fechaCarga = current || null;
+          buildReporte();
+          showToast('Error de conexión. Intentá de nuevo.', 'error');
+        });
+      }
+      inp.addEventListener('blur', saveAndExit);
+      inp.addEventListener('keydown', function(e){
+        if(e.key === 'Enter') saveAndExit();
+        else if(e.key === 'Escape') { saved = true; buildReporte(); }
+      });
+    });
+  });
 }
 
-// Wire date filter
+// FIX (rev Claude2/ChatGPT, mar 19-may): toast no-bloqueante para reemplazar
+// los alert() en operaciones de fechaCarga. UX mucho mejor en tablets.
+function showToast(msg, kind) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
+    'background:'+(kind==='error'?'#e74c3c':'#27ae60')+';color:#fff;' +
+    'padding:10px 16px;border-radius:8px;font-size:.85rem;' +
+    'box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;' +
+    'opacity:0;transition:opacity 0.2s';
+  document.body.appendChild(t);
+  // Trigger animation
+  requestAnimationFrame(function(){ t.style.opacity = '1'; });
+  setTimeout(function(){
+    t.style.opacity = '0';
+    setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 250);
+  }, 2200);
+}
+
+// Wire date filters (Desde / Hasta) + sort por header de Fecha de trabajo
 (function(){
-  var fechaInp = document.getElementById('filter-fecha-reporte');
-  var btnClear = document.getElementById('btn-filter-fecha-clear');
-  if(fechaInp) fechaInp.addEventListener('change', function(){ buildReporte(); });
-  if(btnClear) btnClear.addEventListener('click', function(){
-    if(fechaInp) fechaInp.value='';
+  var fechaDesde = document.getElementById('filter-fecha-desde');
+  var fechaHasta = document.getElementById('filter-fecha-hasta');
+  var btnClear   = document.getElementById('btn-filter-fecha-clear');
+  if(fechaDesde) fechaDesde.addEventListener('change', function(){ buildReporte(); });
+  if(fechaHasta) fechaHasta.addEventListener('change', function(){ buildReporte(); });
+  if(btnClear)   btnClear.addEventListener('click', function(){
+    if(fechaDesde) fechaDesde.value='';
+    if(fechaHasta) fechaHasta.value='';
+    buildReporte();
+  });
+
+  // Sort por header de Fecha de trabajo (ciclo de 2 estados: asc ↔ desc).
+  // FIX (rev ChatGPT): 2 estados en vez de 3 (sin orden / asc / desc).
+  // Por defecto arranca en 'desc' (más reciente primero), que es el caso de uso
+  // más común en bodega: ver lo cargado hoy/última semana primero.
+  var thFecha = document.getElementById('th-fecha-trabajo');
+  var arrow   = document.getElementById('th-fecha-trabajo-arrow');
+  // Inicializar default
+  if(!window._sortFechaTrabajo) {
+    window._sortFechaTrabajo = 'desc';
+    if(arrow) { arrow.textContent = '↓'; arrow.style.color = '#5a6fd8'; }
+  }
+  if(thFecha) thFecha.addEventListener('click', function(){
+    window._sortFechaTrabajo = (window._sortFechaTrabajo === 'asc') ? 'desc' : 'asc';
+    if(arrow) {
+      arrow.textContent = window._sortFechaTrabajo === 'asc' ? '↑' : '↓';
+      arrow.style.color = '#5a6fd8';
+    }
     buildReporte();
   });
 })();
@@ -2692,6 +2836,16 @@ function pollNow() {
 
       // Merge server state into local
       if(s.teorico && Object.keys(s.teorico).length > 0) teorico = s.teorico;
+      // FIX (rev Claude2, mar 19-may): el polling reemplaza `teorico` completo.
+      // Si el usuario editó fechaCarga y el POST aún está en vuelo, esa edición
+      // optimista se pisa silenciosamente. Re-aplicamos las fechas pendientes
+      // (con POST en vuelo) para no perderlas. Mismo razonamiento que las
+      // Señales 1-3 del merge selectivo de fisico, aplicado a teorico.fechaCarga.
+      if(window._pendingFechaCarga) {
+        Object.keys(window._pendingFechaCarga).forEach(function(c){
+          if(teorico[c]) teorico[c].fechaCarga = window._pendingFechaCarga[c];
+        });
+      }
       // FIX (lun 18-may-2026 noche): MERGE SELECTIVO de fisico — protege
       // cambios locales pendientes (debounce activo), filas que el usuario
       // actual está editando, y la ventana de carrera post-saveField
