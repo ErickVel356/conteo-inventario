@@ -42,6 +42,23 @@ function supabase(method, table, body, query) {
       let raw = '';
       res.on('data', c => raw += c);
       res.on('end', () => {
+        // FIX CRÍTICO (mié 20-may-2026, rev ChatGPT): rechazar la Promise
+        // si Supabase responde con error HTTP (4xx/5xx). Antes resolvíamos
+        // SIEMPRE con null aunque el server hubiera rechazado el guardado,
+        // lo que dejaba a saveDailyState y dbSet creyendo que todo OK.
+        // Esto era la causa raíz REAL del bug que vimos en producción.
+        if(res.statusCode >= 400) {
+          var errMsg = 'Supabase HTTP ' + res.statusCode;
+          try {
+            var errBody = raw ? JSON.parse(raw) : null;
+            if(errBody && errBody.message) errMsg += ': ' + errBody.message;
+            else if(errBody && errBody.error) errMsg += ': ' + errBody.error;
+            else if(raw) errMsg += ': ' + raw.slice(0, 200);
+          } catch(e) {
+            if(raw) errMsg += ': ' + raw.slice(0, 200);
+          }
+          return reject(new Error(errMsg));
+        }
         try { resolve(raw ? JSON.parse(raw) : null); }
         catch(e) { resolve(null); }
       });
@@ -50,6 +67,21 @@ function supabase(method, table, body, query) {
     if(data) req.write(data);
     req.end();
   });
+}
+
+// FIX CRÍTICO (mié 20-may-2026, rev Claude2): timeout para evitar que un
+// Supabase lento cuelgue al cliente hasta el límite de Render/Cloudflare
+// (~100s). Si dbSet tarda más de 15s, rechazamos para que el endpoint
+// responda con error custom al cliente. El dbSet sigue en vuelo en el
+// background — si eventualmente completa, mejor (UPSERT idempotente).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error(label + ' timeout después de ' + ms + 'ms')),
+      ms
+    ))
+  ]);
 }
 
 async function dbGet(key) {
@@ -276,7 +308,7 @@ app.post('/api/cdg/unlock', (req, res) => {
   res.json({ ok:true });
 });
 
-app.post('/api/cdg/finalizar', (req, res) => {
+app.post('/api/cdg/finalizar', async (req, res) => {
   const { contId, items, usuario, traslado, tipo, fotoGral, fotos, bloqueado } = req.body;
   if(!contId) return res.status(400).json({ ok:false });
   state.cdg[contId] = {
@@ -311,7 +343,26 @@ app.post('/api/cdg/finalizar', (req, res) => {
   }
   addHistorial(usuario, 'CDG finalizado → Traslado', contId+' → '+num);
   state.version++;
-  saveDailyState('CDG final save');
+
+  // FIX CRÍTICO (mié 20-may-2026): mismo patrón que upload. Cancelar debounced
+  // pending y awaitear el save, responder con error si Supabase falla.
+  // FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'CDG final save'
+    );
+    console.log('CDG final save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('CDG final save FAILED:', saveErr.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'El CDG sí se procesó, pero NO quedó guardado. No cierres la app. Volvé a finalizarlo. (' + saveErr.message + ')'
+    });
+  }
+
   res.json({ ok:true, traslado:num, version:state.version });
 });
 
@@ -352,14 +403,30 @@ app.post('/api/costos', upload.single('file'), (req, res) => {
 });
 
 // Save pre-processed costos from client
-app.post('/api/costos-save', (req, res) => {
+// FIX CRÍTICO (mié 20-may-2026): dbSet ya no se hace sin await. Mismo bug
+// que upload teorico — si Render reiniciaba después de responder, los costos
+// se perdían silenciosamente.
+// FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+app.post('/api/costos-save', async (req, res) => {
   const { costos: c } = req.body;
-  if(c && Object.keys(c).length > 0) {
-    state.costos = c;
-    dbSet('costos_state', { costos: c }).catch(e => console.log('Costos save error:', e.message));
+  if(!c || Object.keys(c).length === 0) {
+    return res.json({ ok:false });
+  }
+  state.costos = c;
+  try {
+    await withTimeout(
+      dbSet('costos_state', { costos: c }),
+      15000,
+      'Costos save'
+    );
+    console.log('Costos save: persisted to Supabase ✓');
     res.json({ ok:true, count: Object.keys(c).length });
-  } else {
-    res.json({ ok:false });
+  } catch(e) {
+    console.log('Costos save FAILED:', e.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Los costos sí se procesaron, pero NO quedaron guardados. No cierres la app. Volvé a subirlos. (' + e.message + ')'
+    });
   }
 });
 
@@ -480,7 +547,18 @@ app.post('/api/conteo/field', (req, res) => {
 });
 
 // ── Upload teórico ────────────────────────────────────────────────────────
-app.post('/api/upload', upload.single('file'), (req, res) => {
+// FIX CRÍTICO (mié 20-may-2026): el endpoint era sync con respuesta antes
+// del save real. Eso causó pérdida silenciosa de contenedores ayer (HP26-0357,
+// HP26-0591 entre otros). Dos problemas que se combinaban:
+//   1) saveDailyState() retornaba Promesa pero NO se awaiteaba. La respuesta
+//      {ok:true} se enviaba antes que Supabase confirmara. Si Render
+//      reiniciaba en esos ms, el upload se perdía.
+//   2) Si había un scheduleSave debounced pendiente de otro usuario, los
+//      dos saves competían en paralelo. El debounced podía ganar y pisar
+//      el upload con un state pre-upload en memoria.
+// Fix: (a) cancelar saveTimer pendiente antes del upload, (b) hacer await
+// del save crítico, (c) responder con error si el save falla.
+app.post('/api/upload', upload.single('file'), async (req, res) => {
   try {
     const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
     const usuario = req.body.usuario || '—';
@@ -505,7 +583,29 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       addHistorial(usuario, 'Teórico cargado', loaded.join());
     }
     state.version++;
-    saveDailyState('Upload save');
+
+    // Cancelar cualquier debounced save pendiente: si existe, contendría
+    // una copia del state PRE-upload y al ejecutarse pisaría el upload.
+    if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+
+    // Await: NO responder éxito hasta que Supabase confirme.
+    // Usar buildDailyStatePayload directo (no saveDailyState que swallow errores).
+    // FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+    try {
+      await withTimeout(
+        dbSet('daily_state', buildDailyStatePayload()),
+        15000,
+        'Upload save'
+      );
+      console.log('Upload save: persisted to Supabase ✓');
+    } catch(saveErr) {
+      console.log('Upload save FAILED:', saveErr.message);
+      return res.status(500).json({
+        ok: false,
+        error: 'El archivo sí se leyó, pero NO quedó guardado. No cierres la app. Volvé a subirlo. (' + saveErr.message + ')'
+      });
+    }
+
     res.json({ ok:true, loaded });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
