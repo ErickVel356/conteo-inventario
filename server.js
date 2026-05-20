@@ -26,6 +26,14 @@ function supabase(method, table, body, query) {
     }
     const url  = new URL(`${SUPABASE_URL}/rest/v1/${table}${query||''}`);
     const data = body ? JSON.stringify(body) : null;
+    // FIX BUG LATENTE (mié 20-may-2026): agregar 'resolution=merge-duplicates'
+    // al header Prefer. Sin esto, los POST con ?on_conflict=key fallan con
+    // HTTP 409 'duplicate key' porque PostgREST no sabe que debe hacer UPSERT.
+    // Antes el error se tragaba silenciosamente (resolve null) y el save NUNCA
+    // persistía vía server.js — los datos llegaban a Supabase solo por
+    // saveDirectToSupabase del cliente (que usa PATCH directo).
+    // Con el fix v8 que ahora detecta errores HTTP, este 409 se hizo visible.
+    // Esta línea lo arregla de raíz.
     const opts = {
       hostname: url.hostname,
       path:     url.pathname + url.search,
@@ -34,7 +42,7 @@ function supabase(method, table, body, query) {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',
-        'Prefer':        'return=representation'
+        'Prefer':        'resolution=merge-duplicates,return=representation'
       }
     };
     if(data) opts.headers['Content-Length'] = Buffer.byteLength(data);
