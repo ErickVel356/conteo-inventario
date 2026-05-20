@@ -477,7 +477,13 @@ app.post('/api/metadata', (req, res) => {
 //
 // FIX (rev Claude2): valida también la fecha calendáricamente, no solo
 // el formato. Rechaza overflows como 2026-02-30 o 9999-99-99.
-app.post('/api/teorico/fecha-carga', (req, res) => {
+//
+// FIX (mié 20-may-2026, post-deploy v8.1): mismo patrón que upload teorico.
+// Antes el endpoint dependía de addHistorial → scheduleSave debounced (1.5s)
+// para persistir. Si Render reiniciaba en ese gap, la edición se perdía
+// silenciosamente. Ahora cancelamos pending, awaitamos con timeout, y
+// respondemos error si Supabase falla. Igual que /api/upload y CDG finalizar.
+app.post('/api/teorico/fecha-carga', async (req, res) => {
   const { cont, fechaCarga, usuario } = req.body;
   if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
   if(!state.teorico[cont]) return res.status(404).json({ ok:false, error:'cont no existe' });
@@ -497,6 +503,24 @@ app.post('/api/teorico/fecha-carga', (req, res) => {
   state.teorico[cont].fechaCarga = fechaCarga || null;
   addHistorial(usuario||'—', 'Cambió fecha de trabajo a ' + (fechaCarga || '(vacío)'), cont);
   state.version++;
+
+  // Cancelar debounced pending y await el save para garantizar persistencia.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Fecha-carga save'
+    );
+    console.log('Fecha-carga save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Fecha-carga save FAILED:', saveErr.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'La fecha sí se actualizó, pero NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
   res.json({ ok:true, version:state.version, fechaCarga: state.teorico[cont].fechaCarga });
 });
 
