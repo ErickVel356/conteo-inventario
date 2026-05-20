@@ -644,6 +644,147 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// ── Fotos: upload a Supabase Storage ──────────────────────────────────────
+// Endpoint que recibe una foto en base64 desde el cliente y la sube al
+// bucket 'app-fotos' de Supabase Storage. Devuelve la URL pública para
+// que el cliente la guarde en el campo `foto` del hallazgo/CDG en vez de
+// almacenar el base64 completo dentro del state.
+//
+// FIX (mié 20-may-2026): migración fotos a Storage para resolver
+// PayloadTooLargeError + state inflado por base64. Decisiones del diseño:
+//   - bucket público (URLs largas+random como protección por oscuridad)
+//   - validación de tamaño max 5MB (cliente debe comprimir antes)
+//   - validación de mime type permitidos
+//   - timeout 15s (subida puede ser lenta en red mala)
+//   - path por kind: 'hallazgo-{id}.jpg', 'cdg-gral-{id}.jpg', 'cdg-sku-{id}.jpg'
+//   - si el path ya existe, sobrescribe (Prefer: x-upsert=true)
+function uploadToStorage(buffer, path, contentType) {
+  return new Promise((resolve, reject) => {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return reject(new Error('Supabase no configurado'));
+    }
+    var url = new URL(`${SUPABASE_URL}/storage/v1/object/app-fotos/${path}`);
+    var opts = {
+      hostname: url.hostname,
+      path:     url.pathname,
+      method:   'POST',
+      headers: {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  contentType,
+        'Content-Length': buffer.length,
+        'x-upsert':      'true', // sobrescribir si existe
+        'Cache-Control': '3600'
+      }
+    };
+    var req = https.request(opts, function(res){
+      var raw = '';
+      res.on('data', function(c){ raw += c; });
+      res.on('end', function(){
+        if(res.statusCode >= 400) {
+          var errMsg = 'Storage HTTP ' + res.statusCode;
+          try {
+            var b = raw ? JSON.parse(raw) : null;
+            if(b && b.message) errMsg += ': ' + b.message;
+            else if(b && b.error) errMsg += ': ' + b.error;
+            else if(raw) errMsg += ': ' + raw.slice(0, 200);
+          } catch(e) {
+            if(raw) errMsg += ': ' + raw.slice(0, 200);
+          }
+          return reject(new Error(errMsg));
+        }
+        // Construir URL pública. Para buckets públicos:
+        // https://{project}.supabase.co/storage/v1/object/public/app-fotos/{path}
+        var publicUrl = `${SUPABASE_URL}/storage/v1/object/public/app-fotos/${path}`;
+        resolve({ ok:true, url: publicUrl, key: path });
+      });
+    });
+    req.on('error', reject);
+    req.write(buffer);
+    req.end();
+  });
+}
+
+const ALLOWED_PHOTO_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
+
+app.post('/api/foto/upload', async (req, res) => {
+  try {
+    const { foto, kind, refId, usuario } = req.body;
+    if(!foto || !kind || !refId) {
+      return res.status(400).json({ ok:false, error:'faltan campos: foto, kind, refId' });
+    }
+    // kind permitido: hallazgo, cdg-gral, cdg-sku
+    if(!['hallazgo', 'cdg-gral', 'cdg-sku'].includes(kind)) {
+      return res.status(400).json({ ok:false, error:'kind inválido (debe ser hallazgo|cdg-gral|cdg-sku)' });
+    }
+    // refId sanitizado: solo alfanumérico, guiones, slashes, puntos.
+    if(!/^[A-Za-z0-9_\-./]+$/.test(String(refId))) {
+      return res.status(400).json({ ok:false, error:'refId inválido (solo A-Z 0-9 _ - . /)' });
+    }
+
+    // El foto viene como data URL: "data:image/jpeg;base64,XXX..."
+    var match = String(foto).match(/^data:([^;]+);base64,(.+)$/);
+    if(!match) {
+      return res.status(400).json({ ok:false, error:'foto debe ser data URL base64' });
+    }
+    var mimeType = match[1].toLowerCase();
+    var base64Data = match[2];
+
+    if(!ALLOWED_PHOTO_MIME.includes(mimeType)) {
+      return res.status(400).json({ ok:false, error:'mime type no permitido: ' + mimeType });
+    }
+
+    // Decodificar base64 a buffer
+    var buffer;
+    try {
+      buffer = Buffer.from(base64Data, 'base64');
+    } catch(e) {
+      return res.status(400).json({ ok:false, error:'base64 inválido' });
+    }
+
+    if(buffer.length > MAX_PHOTO_BYTES) {
+      return res.status(413).json({
+        ok: false,
+        error: 'foto muy grande (' + Math.round(buffer.length/1024) + ' KB). Máximo: ' + Math.round(MAX_PHOTO_BYTES/1024) + ' KB. Comprimí antes de subir.'
+      });
+    }
+
+    // Construir path en el bucket. Extensión a partir del mime.
+    var ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    var timestamp = Date.now();
+    var safeRefId = String(refId).replace(/[^A-Za-z0-9_\-]/g, '_');
+    var path = `${kind}/${safeRefId}_${timestamp}.${ext}`;
+
+    // Subir a Storage con timeout
+    var result;
+    try {
+      result = await withTimeout(
+        uploadToStorage(buffer, path, mimeType),
+        15000,
+        'Foto upload'
+      );
+      console.log('Foto upload OK:', path, '(' + Math.round(buffer.length/1024) + ' KB)');
+    } catch(uploadErr) {
+      console.log('Foto upload FAILED:', uploadErr.message);
+      return res.status(500).json({
+        ok: false,
+        error: 'No se pudo subir la foto al Storage. Reintentá. (' + uploadErr.message + ')'
+      });
+    }
+
+    res.json({
+      ok: true,
+      url: result.url,
+      key: result.key,
+      bytes: buffer.length
+    });
+  } catch(e) {
+    console.log('Foto upload exception:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 function norm(s) {
   return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
