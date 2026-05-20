@@ -395,6 +395,36 @@ app.post('/api/metadata', (req, res) => {
   res.json({ ok:true, version:state.version });
 });
 
+// FIX (mar 19-may-2026): edición manual de fechaCarga del teorico.
+// Permite asignar/cambiar la fecha de trabajo de un contenedor desde la UI,
+// por ejemplo para contenedores históricos que no tenían fechaCarga.
+// Formato esperado: 'YYYY-MM-DD' o cadena vacía ('') para limpiar.
+//
+// FIX (rev Claude2): valida también la fecha calendáricamente, no solo
+// el formato. Rechaza overflows como 2026-02-30 o 9999-99-99.
+app.post('/api/teorico/fecha-carga', (req, res) => {
+  const { cont, fechaCarga, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.teorico[cont]) return res.status(404).json({ ok:false, error:'cont no existe' });
+  // Validar formato + fecha calendárica real
+  if(fechaCarga !== '' && fechaCarga !== null && fechaCarga !== undefined) {
+    var s = String(fechaCarga);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      return res.status(400).json({ ok:false, error:'formato debe ser YYYY-MM-DD o vacío' });
+    }
+    // Validar fecha calendárica: el truco es comparar contra round-trip via Date.
+    // Si entró 2026-02-30, new Date lo normaliza a 2026-03-02, y la comparación falla.
+    var d = new Date(s + 'T00:00:00Z');
+    if(isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+      return res.status(400).json({ ok:false, error:'fecha calendárica inválida' });
+    }
+  }
+  state.teorico[cont].fechaCarga = fechaCarga || null;
+  addHistorial(usuario||'—', 'Cambió fecha de trabajo a ' + (fechaCarga || '(vacío)'), cont);
+  state.version++;
+  res.json({ ok:true, version:state.version, fechaCarga: state.teorico[cont].fechaCarga });
+});
+
 // ── Chat ──────────────────────────────────────────────────────────────────
 // ── Field locking ─────────────────────────────────────────────────────────
 app.post('/api/lock', (req, res) => {
@@ -576,7 +606,21 @@ function mergeSheet(rows, type) {
       state.teorico[cont].cdgValidado = true;
       return;
     }
-    state.teorico[cont] = { items: newConts[cont], type };
+    // FIX (mar 19-may-2026): preservar fechaCarga si el contenedor ya
+    // existía. Solo asignar fecha de hoy a contenedores NUEVOS.
+    // Esto evita que al re-subir el Excel maestro (que incluye contenedores
+    // previamente cargados), las fechas de los viejos se actualicen.
+    //
+    // FIX (rev Claude2): usar timezone Guatemala (America/Guatemala) en vez
+    // de UTC. Sin esto, uploads del Excel a las 18:00+ hora local quedaban
+    // con fecha del día siguiente.
+    var fechaCargaPrev = (state.teorico[cont] && state.teorico[cont].fechaCarga) || null;
+    var hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+    state.teorico[cont] = {
+      items: newConts[cont],
+      type,
+      fechaCarga: fechaCargaPrev || hoy
+    };
     // Preserve existing fisico data — never overwrite conteo work
     if(!state.fisico[cont]) state.fisico[cont] = null;
   });
