@@ -829,8 +829,8 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div class="field-row" style="margin-top:.5rem">
       <label>Foto (opcional)</label>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <button id="btn-hall-foto" class="btn btn-sm" style="min-height:38px">📷 Tomar / Subir foto</button>
-        <input type="file" id="hall-foto-input" accept="image/*" capture="environment" style="display:none">
+        <button id="btn-hall-foto" class="btn btn-sm" style="min-height:38px">📷 Tomar foto / Elegir</button>
+        <input type="file" id="hall-foto-input" accept="image/*" style="display:none">
         <span id="hall-foto-status" style="font-size:.78rem;color:#888"></span>
       </div>
       <div id="hall-foto-preview" style="margin-top:6px;display:none">
@@ -1456,6 +1456,49 @@ function saveHallazgoDirectToSupabase(hall, action) {
   });
 }
 
+// FIX (mié 20-may-2026 noche): eliminar hallazgo directo en Supabase.
+// Mismo patrón que saveHallazgoDirectToSupabase: read → modify → write.
+// Llamado desde el botón "Eliminar" visible solo para Erick Vela.
+function deleteHallazgoDirectToSupabase(hallId) {
+  if(!hallId) return Promise.resolve();
+  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    var current = {};
+    if(rows && rows.length > 0) {
+      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
+    }
+    if(!Array.isArray(current.hallazgos)) current.hallazgos = [];
+    var before = current.hallazgos.length;
+    current.hallazgos = current.hallazgos.filter(function(h){ return h.id !== hallId; });
+    if(current.hallazgos.length === before){
+      console.warn('Hallazgo no encontrado en Supabase para eliminar:', hallId);
+      return;
+    }
+    current.version = (current.version||0) + 1;
+    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
+    });
+  }).then(function(){
+    console.log('Hallazgo direct Supabase delete OK:', hallId);
+  }).catch(function(e){
+    console.warn('Hallazgo direct Supabase delete failed:', e);
+  });
+}
+
+// Helper para chequear si el usuario actual es admin (puede eliminar hallazgos).
+// Por ahora solo Erick Vela. Si esto se quisiera escalar, mover a una lista.
+function isHallazgoAdmin(){
+  return !!(currentUser && currentUser.name === 'Erick Vela');
+}
+
 function saveDirectToSupabase() {
   if(_supaTimer) clearTimeout(_supaTimer);
   _supaTimer = setTimeout(function(){
@@ -1919,7 +1962,8 @@ document.getElementById('btn-hall-save').addEventListener('click',async function
     } catch(e) {
       saveBtn.disabled = false;
       saveBtn.textContent = originalText;
-      alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá esa foto y guardá sin ella.\n\nDetalle: ' + e.message);
+      console.warn('Upload foto Hamilton falló:', e && e.message);
+      alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá la foto y guardá sin ella.');
       return; // no cerrar modal, dejar que el usuario reintente
     }
     saveBtn.textContent = originalText;
@@ -1990,7 +2034,11 @@ document.getElementById('modal-hallazgo').addEventListener('click',function(e){i
 function renderHallazgosList(){
   var list=document.getElementById('hall-list');
   var empty=document.getElementById('hall-empty');
-  if(!hallazgos.length){
+  // FIX (mié 20-may-2026 noche): excluir hallazgos creados desde CDG.
+  // Estos tienen tipo === 'CDG' y se renderizan en renderCDGHallazgosPanel.
+  // Antes aparecían duplicados en ambos listados.
+  var visibleHall = hallazgos.filter(function(h){ return h.tipo !== 'CDG'; });
+  if(!visibleHall.length){
     list.innerHTML='';
     if(empty) empty.style.display='';
     return;
@@ -1999,13 +2047,13 @@ function renderHallazgosList(){
 
   // Toolbar with Word export
   var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
-    +'<span style="font-size:.85rem;color:#666">Total: <strong>'+hallazgos.length+'</strong> hallazgo'+(hallazgos.length!==1?'s':'')+' en '+Object.keys(hallazgos.reduce(function(a,h){a[h.cont]=1;return a;},{})).length+' contenedor(es)</span>'
+    +'<span style="font-size:.85rem;color:#666">Total: <strong>'+visibleHall.length+'</strong> hallazgo'+(visibleHall.length!==1?'s':'')+' en '+Object.keys(visibleHall.reduce(function(a,h){a[h.cont]=1;return a;},{})).length+' contenedor(es)</span>'
     +'<button class="btn btn-sm btn-blue" id="btn-hall-word">📥 Exportar Word</button>'
     +'</div>';
 
   // Group by container
   var byCont = {};
-  hallazgos.forEach(function(h){
+  visibleHall.forEach(function(h){
     if(!byCont[h.cont]) byCont[h.cont]=[];
     byCont[h.cont].push(h);
   });
@@ -2035,7 +2083,9 @@ function renderHallazgosList(){
         +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+escH(hh.recomendacion)+'</p>':'')
         +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
         +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs)+'</p>':'')
-        +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
+        +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button>'
+        +(isHallazgoAdmin()?'<button class="btn btn-sm del-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px;background:#c0392b;color:#fff">🗑 Eliminar</button>':'')
+        +'</div>'
         +'</div>';
     });
   });
@@ -2049,6 +2099,30 @@ function renderHallazgosList(){
   list.querySelectorAll('.edit-hall-btn').forEach(function(btn){
     btn.addEventListener('click',function(){
       openHallazgoModal(this.dataset.id);
+    });
+  });
+  // Wire delete buttons (admin only — checked at render time and again on click)
+  list.querySelectorAll('.del-hall-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      if(!isHallazgoAdmin()){ alert('Sin permiso para eliminar.'); return; }
+      var id = this.dataset.id;
+      var h = hallazgos.find(function(x){ return x.id===id; });
+      var label = h ? (h.cont+' — '+(h.quePaso||h.desc||'(sin descripción)').substring(0,60)) : id;
+      if(!confirm('¿Eliminar este hallazgo?\n\n'+label+'\n\nEsta acción NO se puede deshacer.')) return;
+      // Local remove
+      hallazgos = hallazgos.filter(function(x){ return x.id !== id; });
+      // Direct Supabase delete (guarantee)
+      deleteHallazgoDirectToSupabase(id);
+      // Optional server notify (best-effort, no rollback if it fails)
+      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'delete', id:id})})
+        .then(function(r){return r.json();})
+        .then(function(d){if(d&&d.ok)lastVersion=d.version;})
+        .catch(function(){});
+      addHist('Eliminó hallazgo '+(h?h.cont:id));
+      renderHallazgosList();
+      if(typeof renderCDGHallazgosPanel==='function') renderCDGHallazgosPanel();
+      flashMsg('status-bar','ok','✅ Hallazgo eliminado.');
     });
   });
 }
@@ -2087,14 +2161,18 @@ function openHallazgoModal(id){
 
 // Build and download a single Word document with all hallazgos grouped by container
 function exportHallazgosWord(){
-  if(!hallazgos.length){ alert('No hay hallazgos para exportar.'); return; }
+  // FIX (mié 20-may-2026 noche): mismo filtro que renderHallazgosList — el
+  // Word de Hamilton no debe incluir hallazgos creados desde CDG (tienen su
+  // propio export Word en renderCDGHallazgosPanel).
+  var exportHall = hallazgos.filter(function(h){ return h.tipo !== 'CDG'; });
+  if(!exportHall.length){ alert('No hay hallazgos para exportar.'); return; }
   var today  = new Date();
   var fecha  = today.toLocaleDateString('es');
   var autor  = currentUser ? currentUser.name : '—';
 
   // Group by container
   var byCont = {};
-  hallazgos.forEach(function(h){
+  exportHall.forEach(function(h){
     if(!byCont[h.cont]) byCont[h.cont]=[];
     byCont[h.cont].push(h);
   });
@@ -2131,13 +2209,13 @@ function exportHallazgosWord(){
     +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
     +'<h1 style="color:#1a1a1a">Reporte de Hallazgos de Auditoría</h1>'
     +'<p><strong>Fecha:</strong> '+escH(fecha)+'<br><strong>Exportado por:</strong> '+escH(autor)+'<br>'
-    +'<strong>Total de hallazgos:</strong> '+hallazgos.length+'</p>'
+    +'<strong>Total de hallazgos:</strong> '+exportHall.length+'</p>'
     +sections
     +'</body></html>';
 
   var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
   downloadWordWithImages(docHtml, 'Hallazgos_'+ds+'.doc', 'Reporte de Hallazgos');
-  addHist('Exportó reporte Word de hallazgos ('+hallazgos.length+')');
+  addHist('Exportó reporte Word de hallazgos ('+exportHall.length+')');
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2308,7 +2386,7 @@ function renderCDGSkuList(){
       +'<td class="tc">'
         +(sk.foto?'<img src="'+sk.foto+'" style="height:32px;border-radius:4px;border:1px solid #e0e0e0">':'')
         +'<button class="btn btn-sm cdg-foto-line-btn" data-i="'+i+'" style="font-size:.72rem;padding:2px 6px;min-height:28px;margin-left:4px">📷</button>'
-        +'<input type="file" class="cdg-foto-line-input" data-i="'+i+'" accept="image/*" capture="environment" style="display:none">'
+        +'<input type="file" class="cdg-foto-line-input" data-i="'+i+'" accept="image/*" style="display:none">'
       +'</td>'
       +'<td class="tc"><button class="cdg-del-sku btn btn-sm" data-i="'+i+'" style="color:#c0392b;font-size:.9rem;min-height:28px">×</button></td>'
       +'</tr>';
@@ -3789,7 +3867,7 @@ function renderCDGFotoGrid(){
     return '<div class="cdg-foto-slot" data-key="'+slot.key+'">'
       +'<div class="slot-ico">📷</div>'
       +'<div class="slot-label">'+escH(slot.label)+'</div>'
-      +'<input type="file" accept="image/*" capture="environment" style="display:none" data-key="'+slot.key+'">'
+      +'<input type="file" accept="image/*" style="display:none" data-key="'+slot.key+'">'
       +'</div>';
   }).join('');
   // Wire slot clicks → open file picker
@@ -4267,10 +4345,10 @@ function exportCDGReporteIndividual(id, c){
     <div class="field-row">
       <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         6. Foto del hallazgo (opcional)
-        <button type="button" id="btn-cdg-hall-foto" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px">📷 Tomar / Subir</button>
+        <button type="button" id="btn-cdg-hall-foto" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px">📷 Tomar / Elegir</button>
         <span id="cdg-hall-foto-status" style="font-size:.7rem;color:#888"></span>
       </label>
-      <input type="file" id="cdg-hall-foto-input" accept="image/*" capture="environment" style="display:none">
+      <input type="file" id="cdg-hall-foto-input" accept="image/*" style="display:none">
       <div id="cdg-hall-foto-preview" style="display:none;margin-top:6px">
         <img id="cdg-hall-foto-img" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid #e0e0e0;display:block">
         <button type="button" id="btn-cdg-hall-foto-del" style="margin-top:4px;font-size:.72rem;color:#c0392b;background:none;border:none;cursor:pointer;padding:0">× Eliminar foto</button>
@@ -4358,7 +4436,7 @@ function exportCDGReporteIndividual(id, c){
   setupMic('btn-cdg-hall-mic', 'cdg-hall-mic-lang', 'cdg-hall-mic-status', 'cdg-hall-desc');
 
   // --- Save ---
-  if(btnSave) btnSave.addEventListener('click', function(){
+  if(btnSave) btnSave.addEventListener('click', async function(){
     var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
     var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
     var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
@@ -4369,23 +4447,65 @@ function exportCDGReporteIndividual(id, c){
     if(!turno){ alert('Selecciona el turno.'); return; }
     if(!area){ alert('Selecciona el área o proceso.'); return; }
     if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
-    // Photo: prefer the new pick (hallFoto), fall back to the existing one (edit mode)
-    var fotoFinal = hallFoto || window._cdgHallFotoData || null;
+    var saveBtn = this;
     var editingId = window._editingCDGHallId;
+
+    // FIX (mié 20-may-2026 noche): subir foto a Storage ANTES de guardar.
+    // Antes incrustábamos base64 directo → state crecía rápido + 500 al
+    // hacer PATCH de un payload de varios MB. Ahora la foto va a Supabase
+    // Storage y guardamos solo la URL (~150 bytes en vez de ~250 KB).
+    // Patrón idéntico al de btn-hall-save (Hamilton, línea ~1895).
+    var fotoFinal = hallFoto || window._cdgHallFotoData || null;
+    if(fotoFinal && typeof fotoFinal === 'string' && fotoFinal.indexOf('data:') === 0) {
+      saveBtn.disabled = true;
+      var originalText = saveBtn.textContent;
+      saveBtn.textContent = '⏳ Subiendo foto...';
+      var onSlow = function(){
+        saveBtn.textContent = '⏳ Subiendo foto... puede tardar por la señal';
+      };
+      try {
+        var refId = editingId || ('h' + Date.now());
+        var url = await window.uploadFotoAndGetUrl(fotoFinal, 'hallazgo', refId, onSlow);
+        fotoFinal = url;
+        console.log('Foto subida a Storage:', url);
+      } catch(e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = originalText;
+        // FIX (rev ChatGPT, mié 20-may-2026 noche): sin "Detalle:" técnico
+        // en primer plano. Si querés depurar, mirá la consola.
+        console.warn('Upload foto CDG falló:', e && e.message);
+        alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá la foto y guardá sin ella.');
+        return;
+      }
+      saveBtn.textContent = originalText;
+      saveBtn.disabled = false;
+    }
+
     var hall;
     if(editingId){
       // Update existing
       var existing = (hallazgos||[]).find(function(x){ return x.id===editingId; });
+      // FIX (mié 20-may-2026 noche, replicado de Hamilton): si el polling
+      // reemplazó hallazgos mientras subía la foto, existing puede ser
+      // undefined. Re-crear con el mismo id para que el merge en server
+      // funcione idempotente.
+      if(!existing){
+        existing = { id: editingId, tipo: 'CDG' };
+        hallazgos.push(existing);
+      }
       if(existing){
         existing.fecha = fecha;
         existing.turno = turno;
         existing.area  = area;
         existing.tipoHallazgo = tipoH;
         existing.desc = desc; existing.quePaso = desc;
-        existing.foto = fotoFinal;
+        existing.foto = fotoFinal || null;
         existing.modificadoPor = currentUser ? currentUser.name : '—';
         existing.modificadoTs  = new Date().toLocaleString('es');
         hall = existing;
+        // FIX (rev Claude 2, mié 20-may-2026 noche): addHist faltante en CDG.
+        // Hamilton sí lo llama; ahora CDG también queda en el historial.
+        addHist('Modificó hallazgo CDG en '+(existing.cont||u25));
         // GUARANTEED save: write to Supabase directly
         saveHallazgoDirectToSupabase(hall, 'edit');
         fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4401,11 +4521,13 @@ function exportCDGReporteIndividual(id, c){
         fecha: fecha, turno: turno, area: area,
         tipoHallazgo: tipoH,
         desc: desc, quePaso: desc,
-        foto: fotoFinal,
+        foto: fotoFinal || null,
         autor: currentUser ? currentUser.name : '—',
         ts: new Date().toLocaleString('es')
       };
       hallazgos.push(hall);
+      // FIX (rev Claude 2, mié 20-may-2026 noche): addHist faltante en CDG.
+      addHist('Registró hallazgo CDG en '+hall.cont);
       // GUARANTEED save: write to Supabase directly
       saveHallazgoDirectToSupabase(hall, 'add');
       fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4473,7 +4595,9 @@ function renderCDGHallazgosPanel(){
         +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.desc||hh.quePaso||'')+'</p>'
         +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:160px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
         +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs||'')+'</p>':'')
-        +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn cdg-edit-hall-btn" data-id="'+hh.id+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button></div>'
+        +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-warn cdg-edit-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button>'
+        +(isHallazgoAdmin()?'<button class="btn btn-sm cdg-del-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px;background:#c0392b;color:#fff">🗑 Eliminar</button>':'')
+        +'</div>'
         +'</div>';
     });
   });
@@ -4482,6 +4606,27 @@ function renderCDGHallazgosPanel(){
   content.querySelectorAll('.cdg-edit-hall-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       openCDGHallazgoModal(this.dataset.id);
+    });
+  });
+  // Wire delete buttons (admin only)
+  content.querySelectorAll('.cdg-del-hall-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      if(!isHallazgoAdmin()){ alert('Sin permiso para eliminar.'); return; }
+      var id = this.dataset.id;
+      var h = (hallazgos||[]).find(function(x){ return x.id===id; });
+      var label = h ? (h.cont+' — '+(h.desc||h.quePaso||'(sin descripción)').substring(0,60)) : id;
+      if(!confirm('¿Eliminar este hallazgo CDG?\n\n'+label+'\n\nEsta acción NO se puede deshacer.')) return;
+      hallazgos = hallazgos.filter(function(x){ return x.id !== id; });
+      deleteHallazgoDirectToSupabase(id);
+      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'delete', id:id})})
+        .then(function(r){return r.json();})
+        .then(function(d){if(d&&d.ok)lastVersion=d.version;})
+        .catch(function(){});
+      addHist('Eliminó hallazgo CDG '+(h?h.cont:id));
+      renderCDGHallazgosPanel();
+      if(typeof renderHallazgosList==='function') renderHallazgosList();
+      flashMsg('status-bar','ok','✅ Hallazgo CDG eliminado.');
     });
   });
 }
