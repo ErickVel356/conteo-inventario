@@ -449,6 +449,12 @@ app.post('/api/hallazgo', (req, res) => {
   } else if(action === 'edit' && id) {
     const idx = state.hallazgos.findIndex(h => h.id === id);
     if(idx >= 0) state.hallazgos[idx] = hallazgo;
+  } else if(action === 'delete' && id) {
+    // FIX (mié 20-may-2026 noche): soporte para eliminar hallazgos desde el
+    // botón "🗑 Eliminar" del cliente (visible solo para Erick Vela). Sin
+    // este case el server caería en el branch implícito y reescribiría
+    // Supabase reviviendo el hallazgo eliminado.
+    state.hallazgos = state.hallazgos.filter(h => h.id !== id);
   }
   state.version++;
   // Debounced — hallazgos pueden venir en ráfaga
