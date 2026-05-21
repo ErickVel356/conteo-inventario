@@ -1892,13 +1892,52 @@ document.getElementById('btn-hallazgo').addEventListener('click',function(){
 })();
 
 document.getElementById('btn-hall-cancel').addEventListener('click',function(){document.getElementById('modal-hallazgo').classList.remove('open');});
-document.getElementById('btn-hall-save').addEventListener('click',function(){
+document.getElementById('btn-hall-save').addEventListener('click',async function(){
   var desc=document.getElementById('hall-input').value.trim();
   if(!desc){alert('Describe qué pasó.');return;}
   var editingId = window._editingHallId;
+  var saveBtn = this;
+
+  // FIX (mié 20-may-2026): subir foto a Storage ANTES de armar el hallazgo.
+  // Antes incrustábamos base64 directo en el JSON → state crecía rápido +
+  // PayloadTooLargeError. Ahora la foto va a Supabase Storage y guardamos
+  // solo la URL.
+  var fotoFinal = window._hallFotoData; // puede ser null, base64, o URL existente
+  if(fotoFinal && typeof fotoFinal === 'string' && fotoFinal.indexOf('data:') === 0) {
+    // Es base64 nuevo, hay que subirlo
+    saveBtn.disabled = true;
+    var originalText = saveBtn.textContent;
+    saveBtn.textContent = '⏳ Subiendo foto...';
+    var onSlow = function(){
+      saveBtn.textContent = '⏳ Subiendo foto... puede tardar por la señal';
+    };
+    try {
+      var refId = editingId || ('h' + Date.now());
+      var url = await window.uploadFotoAndGetUrl(fotoFinal, 'hallazgo', refId, onSlow);
+      fotoFinal = url; // ahora es URL pública
+      console.log('Foto subida a Storage:', url);
+    } catch(e) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+      alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá esa foto y guardá sin ella.\n\nDetalle: ' + e.message);
+      return; // no cerrar modal, dejar que el usuario reintente
+    }
+    saveBtn.textContent = originalText;
+    saveBtn.disabled = false;
+  }
+
   var hall;
   if(editingId) {
     var existing = hallazgos.find(function(x){ return x.id===editingId; });
+    // FIX (rev Claude2, mié 20-may-2026): si el polling reemplazó hallazgos
+    // mientras el upload de foto estaba en vuelo (puede tardar 5-30s), el
+    // existing puede ser undefined. Re-crear con el mismo id para que el
+    // merge en server funcione idempotente. Sin esto, la foto quedaba
+    // huérfana en Storage y el hallazgo NO se guardaba.
+    if(!existing) {
+      existing = { id: editingId };
+      hallazgos.push(existing);
+    }
     if(existing) {
       existing.quePaso       = desc;
       existing.condicion     = document.getElementById('hall-condicion').value.trim();
@@ -1906,7 +1945,7 @@ document.getElementById('btn-hall-save').addEventListener('click',function(){
       existing.causa         = document.getElementById('hall-causa').value.trim();
       existing.efecto        = document.getElementById('hall-efecto').value.trim();
       existing.recomendacion = document.getElementById('hall-recomendacion').value.trim();
-      existing.foto          = window._hallFotoData || null;
+      existing.foto          = fotoFinal || null;
       existing.modificadoPor = currentUser.name;
       existing.modificadoTs  = new Date().toLocaleString('es');
       hall = existing;
@@ -1927,7 +1966,7 @@ document.getElementById('btn-hall-save').addEventListener('click',function(){
       causa:document.getElementById('hall-causa').value.trim(),
       efecto:document.getElementById('hall-efecto').value.trim(),
       recomendacion:document.getElementById('hall-recomendacion').value.trim(),
-      foto:window._hallFotoData||null,
+      foto:fotoFinal||null,
       autor:currentUser.name, ts:new Date().toLocaleString('es')
     };
     hallazgos.push(hall);
@@ -2292,7 +2331,7 @@ function renderCDGSkuList(){
   });
 }
 
-document.getElementById('btn-cdg-finish').addEventListener('click',function(){
+document.getElementById('btn-cdg-finish').addEventListener('click',async function(){
   var u25  = document.getElementById('cdg-u25').value.trim();
   var tipoSel = document.getElementById('cdg-tipo').value;
   var tipo = tipoSel==='otro'
@@ -2302,8 +2341,80 @@ document.getElementById('btn-cdg-finish').addEventListener('click',function(){
   if(!cdgSkus.length){showMsg('cdg-msg','warn','Agrega al menos un SKU.');return;}
   if(!confirm('¿Finalizar y bloquear el conteo '+u25+'? Solo un supervisor podrá desbloquearlo.')){return;}
 
-  var fotoGral = cdgFotos.marchamo || cdgFotoGral || null;
-  var fotos    = Object.assign({}, cdgFotos);  // snapshot
+  var btnFinish = this;
+
+  // FIX (mié 20-may-2026): subir TODAS las fotos del CDG a Storage antes de
+  // armar el payload. Antes incluíamos base64 directo en el JSON → state
+  // crecía y PayloadTooLargeError. Ahora cada foto va a Supabase Storage
+  // y guardamos solo la URL.
+  var fotosOriginales = Object.assign({}, cdgFotos);
+  var fotosFinales = {};
+  var fotoGralFinal = null;
+
+  // Contar fotos a subir para mostrar progreso
+  var fotosABubir = [];
+  Object.keys(fotosOriginales).forEach(function(slotKey){
+    var data = fotosOriginales[slotKey];
+    if(data && typeof data === 'string' && data.indexOf('data:') === 0) {
+      fotosABubir.push(slotKey);
+    } else if(data) {
+      // Ya es URL u otra cosa, no re-subir
+      fotosFinales[slotKey] = data;
+    }
+  });
+
+  if(fotosABubir.length > 0) {
+    btnFinish.disabled = true;
+    var originalText = btnFinish.textContent;
+    showMsg('cdg-msg', 'ok', '⏳ Subiendo ' + fotosABubir.length + ' foto(s)... no cierres la app.');
+
+    var safeU25 = String(u25).replace(/[^A-Za-z0-9_\-]/g, '_');
+    try {
+      for(var i=0; i<fotosABubir.length; i++){
+        var slotKey = fotosABubir[i];
+        btnFinish.textContent = '⏳ Foto ' + (i+1) + '/' + fotosABubir.length + '...';
+        // kind: cdg-gral para 'marchamo', cdg-sku para el resto
+        var kind = (slotKey === 'marchamo') ? 'cdg-gral' : 'cdg-sku';
+        var refId = safeU25 + '_' + slotKey;
+        var onSlowCdg = (function(idx, total){
+          return function(){
+            btnFinish.textContent = '⏳ Foto ' + (idx+1) + '/' + total + '... puede tardar por la señal';
+          };
+        })(i, fotosABubir.length);
+        try {
+          var url = await window.uploadFotoAndGetUrl(fotosOriginales[slotKey], kind, refId, onSlowCdg);
+          fotosFinales[slotKey] = url;
+          console.log('CDG foto subida (' + slotKey + '):', url);
+        } catch(e) {
+          btnFinish.disabled = false;
+          btnFinish.textContent = originalText;
+          // FIX (rev ChatGPT): mostrar cuántas fotos ya están guardadas
+          // para que el usuario sepa que puede reintentar SOLO la que falló.
+          var yaGuardadas = i; // las anteriores (0..i-1) tuvieron éxito
+          var totalFotos = fotosABubir.length;
+          var msgYa = yaGuardadas > 0
+            ? '\n\nFotos ya guardadas: ' + yaGuardadas + ' de ' + totalFotos + '.'
+            : '';
+          alert('No se pudo guardar la foto "' + slotKey + '". Intentá otra vez. Si vuelve a fallar, quitá esa foto y finalizá sin ella.' + msgYa + '\n\nDetalle: ' + e.message);
+          showMsg('cdg-msg', 'err', '⚠️ Error subiendo fotos. Reintentá.');
+          return;
+        }
+      }
+    } finally {
+      btnFinish.disabled = false;
+      btnFinish.textContent = originalText;
+    }
+  }
+
+  // fotoGral: usamos la URL ya subida de marchamo, o cdgFotoGral si era URL
+  fotoGralFinal = fotosFinales.marchamo || (
+    cdgFotoGral && typeof cdgFotoGral === 'string' && cdgFotoGral.indexOf('http') === 0
+      ? cdgFotoGral
+      : null
+  );
+
+  var fotoGral = fotoGralFinal;
+  var fotos    = fotosFinales;
   var conteo = {
     u25:u25, tipo:tipo, skus:cdgSkus.slice(),
     fotoGral:fotoGral, fotos:fotos,
@@ -4618,6 +4729,152 @@ function exportCDGHallazgosWord(){
       result.textContent = '…'; // expresión incompleta
     }
   });
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     HELPERS DE FOTO — Migración Storage (mié 20-may-2026)
+     compressImage(): redimensiona y comprime una foto antes de subirla.
+                      Target: max 1280px lado mayor, JPEG calidad 0.8.
+                      Reduce ~3-5MB original a ~200-600KB.
+     uploadFotoAndGetUrl(): toma data URL base64 → POST a /api/foto/upload
+                            → devuelve URL pública o lanza error.
+     fotoSrc(): helper para renderizar fotos en <img>. Acepta tanto base64
+                viejo (data:...) como URLs nuevas (https://...) transparente.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+
+// Comprimir imagen client-side antes de subir.
+// Input: File (de <input type="file">) o data URL string.
+// Output: Promise<string> con data URL base64 comprimido.
+window.compressImage = function(input, opts) {
+  opts = opts || {};
+  var maxSize  = opts.maxSize  || 1280;  // px lado mayor
+  var quality  = opts.quality  || 0.8;
+  var mimeType = opts.mimeType || 'image/jpeg';
+
+  return new Promise(function(resolve, reject){
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var w = img.naturalWidth;
+        var h = img.naturalHeight;
+        // FIX (rev Claude2): guarda contra imagen corrupta sin dimensiones.
+        // Sin esto, canvas queda 0x0 y toDataURL devuelve "data:," que pasaba
+        // la validación de prefijo data: y se subía como foto vacía.
+        if(!w || !h) {
+          return reject(new Error('La imagen está corrupta o vacía'));
+        }
+        // Escalar manteniendo aspect ratio
+        if(w > maxSize || h > maxSize) {
+          if(w >= h) { h = Math.round(h * maxSize / w); w = maxSize; }
+          else       { w = Math.round(w * maxSize / h); h = maxSize; }
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width  = w;
+        canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        // Fondo blanco para evitar transparencias raras en JPEG
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        var dataUrl = canvas.toDataURL(mimeType, quality);
+        resolve(dataUrl);
+      } catch(e) { reject(e); }
+    };
+    img.onerror = function(){ reject(new Error('No se pudo cargar la imagen para comprimir')); };
+
+    if(typeof input === 'string') {
+      img.src = input; // data URL
+    } else if(input instanceof File || input instanceof Blob) {
+      var reader = new FileReader();
+      reader.onload = function(e){ img.src = e.target.result; };
+      reader.onerror = function(){ reject(new Error('No se pudo leer el archivo')); };
+      reader.readAsDataURL(input);
+    } else {
+      reject(new Error('Input inválido para compressImage'));
+    }
+  });
+};
+
+// Subir foto al server. Devuelve URL pública.
+// Si la foto ya es URL https://, la devuelve sin tocar (no re-sube).
+//
+// FIX (rev Claude2 + ChatGPT, mié 20-may-2026): AbortController con timeout
+// client-side de 30s. Sin esto, una conexión débil dejaba al usuario con el
+// botón disabled y "⏳ Subiendo foto..." indefinidamente. También callback
+// opcional `onSlow` que se dispara a los 5s para que el handler pueda
+// actualizar el mensaje a "puede tardar por la señal".
+window.uploadFotoAndGetUrl = function(dataUrlOrFile, kind, refId, onSlow) {
+  return new Promise(function(resolve, reject){
+    // Si ya es URL (http/https), devolverla tal cual — no re-subir
+    if(typeof dataUrlOrFile === 'string' && /^https?:\/\//.test(dataUrlOrFile)) {
+      return resolve(dataUrlOrFile);
+    }
+
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function(){
+      controller.abort();
+    }, 30000);
+    var slowTimerId = setTimeout(function(){
+      if(typeof onSlow === 'function') {
+        try { onSlow(); } catch(e) { /* ignore */ }
+      }
+    }, 5000);
+
+    // Si es base64 o File, comprimir primero
+    window.compressImage(dataUrlOrFile)
+      .then(function(compressed){
+        return fetch('/api/foto/upload', {
+          method:  'POST',
+          headers: {'Content-Type':'application/json'},
+          signal:  controller.signal,
+          body:    JSON.stringify({
+            foto:    compressed,
+            kind:    kind,
+            refId:   refId,
+            usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
+          })
+        });
+      })
+      .then(function(r){
+        clearTimeout(timeoutId);
+        clearTimeout(slowTimerId);
+        return r.json().catch(function(){
+          // Si el server devolvió HTML/texto en vez de JSON (raro), mostrar error claro
+          throw new Error('Respuesta no válida del servidor (HTTP ' + r.status + ')');
+        });
+      })
+      .then(function(d){
+        if(d.ok && d.url) {
+          resolve(d.url);
+        } else {
+          reject(new Error(d.error || 'Error desconocido al subir foto'));
+        }
+      })
+      .catch(function(e){
+        clearTimeout(timeoutId);
+        clearTimeout(slowTimerId);
+        if(e.name === 'AbortError') {
+          reject(new Error('Tardó demasiado al subir (>30s). Verificá la señal y reintentá.'));
+        } else {
+          reject(e);
+        }
+      });
+  });
+};
+
+// Helper para usar en <img src="">. Acepta base64 viejo, URL nuevo, o null.
+window.fotoSrc = function(foto) {
+  if(!foto) return '';
+  if(typeof foto !== 'string') return '';
+  // Ambos formatos son válidos en <img src>:
+  //   - data:image/...;base64,XXX (viejo)
+  //   - https://...supabase.co/.../foto.jpg (nuevo)
+  return foto;
+};
+
 })();
 </script>
 
