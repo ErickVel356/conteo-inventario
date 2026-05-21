@@ -2404,7 +2404,7 @@ function renderCDGSkuList(){
       +'<td class="tc">'+sk.qty+'</td>'
       +'<td class="tc" style="font-size:.78rem;color:#888">'+(sk.costo?'Q'+Number(sk.costo).toFixed(2):'—')+'</td>'
       +'<td class="tc">'
-        +(sk.foto?'<img src="'+sk.foto+'" style="height:32px;border-radius:4px;border:1px solid #e0e0e0">':'')
+        +(sk.foto?'<img src="'+escH(sk.foto)+'" style="height:32px;border-radius:4px;border:1px solid #e0e0e0">':'')
         +'<button class="btn btn-sm cdg-foto-line-btn" data-i="'+i+'" style="font-size:.72rem;padding:2px 6px;min-height:28px;margin-left:4px">📷</button>'
         +'<input type="file" class="cdg-foto-line-input" data-i="'+i+'" accept="image/*" style="display:none">'
       +'</td>'
@@ -2420,11 +2420,96 @@ function renderCDGSkuList(){
     btn.addEventListener('click',function(){ el.querySelectorAll('.cdg-foto-line-input')[+this.dataset.i].click(); });
   });
   el.querySelectorAll('.cdg-foto-line-input').forEach(function(inp){
-    inp.addEventListener('change',function(){
-      var i=+this.dataset.i, file=this.files[0]; if(!file)return;
-      var reader=new FileReader();
-      reader.onload=function(e){ cdgSkus[i].foto=e.target.result; renderCDGSkuList(); };
-      reader.readAsDataURL(file);
+    // FIX (jue 21-may-2026 madrugada): subir foto a Storage al MOMENTO de
+    // seleccionarla, no al guardar. Antes guardaba base64 en cdgSkus[i].foto
+    // → inflaba el state → PayloadTooLargeError en auto-save SKU y al
+    // guardar/finalizar. Ahora cdgSkus[i].foto siempre es una URL (~150
+    // bytes) o null. Patrón inspirado en la migración de hallazgos.
+    inp.addEventListener('change', async function(){
+      var i = +this.dataset.i;
+      var file = this.files[0];
+      if(!file) return;
+      if(this.disabled) return; // evita doble selección concurrente
+
+      // FIX (rev Claude 2, jue 21-may-2026): capturar referencia al SKU
+      // por identidad de objeto, no por índice. Si el usuario elimina otro
+      // SKU mientras la foto sube, el índice i deja de apuntar al SKU
+      // original. Usar indexOf(skuRef) al asignar previene asignar la
+      // foto al SKU equivocado.
+      var skuRef = cdgSkus[i];
+      if(!skuRef) return;
+
+      // FIX (rev ChatGPT, jue 21-may-2026): bloquear foto si U25 vacío.
+      // Antes se permitía con fallback tmp_<ts>. Funcional pero confuso
+      // operativamente: las fotos quedaban descolgadas de su correlativo
+      // en Storage. Forzar U25 primero ordena el flujo.
+      var u25Now = (document.getElementById('cdg-u25')||{}).value||'';
+      if(!u25Now.trim()) {
+        try { this.value = ''; } catch(_e){}
+        alert('Primero escribí el correlativo U25.');
+        return;
+      }
+
+      // Leer el archivo como data URL para pasárselo a uploadFotoAndGetUrl
+      var dataUrl;
+      try {
+        dataUrl = await new Promise(function(resolve, reject){
+          var reader = new FileReader();
+          reader.onload = function(e){ resolve(e.target.result); };
+          reader.onerror = function(){ reject(new Error('No se pudo leer el archivo')); };
+          reader.readAsDataURL(file);
+        });
+      } catch(e) {
+        console.warn('Read foto SKU falló:', e && e.message);
+        alert('No se pudo leer el archivo. Intentá otra vez.');
+        return;
+      }
+
+      // Feedback visual mientras sube. Modificamos el botón hermano (el 📷).
+      var btnFoto = this.parentElement && this.parentElement.querySelector('.cdg-foto-line-btn');
+      var originalBtnText = btnFoto ? btnFoto.textContent : null;
+      this.disabled = true;
+      if(btnFoto) {
+        btnFoto.textContent = '⏳';
+        btnFoto.disabled = true;
+      }
+
+      // Sanitizar U25 y SKU para path
+      var safeU25 = String(u25Now.trim()).replace(/[^A-Za-z0-9_\-]/g, '_');
+      var skuCode = skuRef.sku ? String(skuRef.sku).replace(/[^A-Za-z0-9_\-]/g, '_') : ('idx' + i);
+      var refId = safeU25 + '_sku_' + skuCode;
+
+      // FIX (rev ChatGPT, jue 21-may-2026): mensaje menos técnico.
+      var onSlow = function(){
+        if(btnFoto) btnFoto.textContent = '⏳ señal lenta...';
+      };
+
+      try {
+        var url = await window.uploadFotoAndGetUrl(dataUrl, 'cdg-sku', refId, onSlow);
+        // FIX (rev Claude 2, jue 21-may-2026): asignar por identidad del
+        // objeto, NO por índice. Si el array se reordenó (eliminación de
+        // otro SKU), indexOf(skuRef) encuentra la posición correcta. Si
+        // skuRef ya fue eliminado, devuelve -1 y registramos foto huérfana.
+        var currentIdx = cdgSkus.indexOf(skuRef);
+        if(currentIdx >= 0) {
+          cdgSkus[currentIdx].foto = url;
+          console.log('CDG SKU foto subida (' + skuCode + '):', url);
+        } else {
+          console.warn('SKU "' + skuCode + '" eliminado durante upload. Foto huérfana en Storage:', url);
+        }
+        renderCDGSkuList();
+      } catch(e) {
+        console.warn('Upload foto SKU falló:', e && e.message);
+        // FIX (rev ChatGPT, jue 21-may-2026): mensaje más operativo.
+        alert('No se pudo guardar la foto de este SKU. Intentá otra vez. Si sigue fallando, dejá el SKU guardado sin foto.');
+      } finally {
+        // Restaurar UI — renderCDGSkuList recrea elementos, pero por si acaso:
+        try { this.disabled = false; this.value = ''; } catch(_e){}
+        if(btnFoto) {
+          btnFoto.disabled = false;
+          if(originalBtnText) btnFoto.textContent = originalBtnText;
+        }
+      }
     });
   });
 }
