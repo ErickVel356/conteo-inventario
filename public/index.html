@@ -383,6 +383,8 @@ textarea.field-inp{resize:vertical;min-height:72px}
     </div>
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
+    <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.4 · 22-may</div>
   </div>
 </div>
 
@@ -395,8 +397,27 @@ textarea.field-inp{resize:vertical;min-height:72px}
   <div class="topbar" id="global-topbar">
     <button class="topbar-back" id="btn-topbar-back" style="display:none">‹</button>
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
+    <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
+         el operario no piense que es un botón o texto raro. -->
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.4 · 22-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
+  </div>
+  <!-- FIX (vie 22-may-2026 noche): banner persistente de errores de red.
+       Se muestra cuando un save crítico falla. NO se cierra solo. Solo
+       desaparece cuando el usuario lo cierra manualmente con confirmación.
+       Diseño post-incidente Carlos: el auto-hide reproducía la falsa
+       tranquilidad que causó la pérdida de datos. -->
+  <div id="network-error-banner" style="display:none;position:sticky;top:0;z-index:9999;background:#c0392b;color:#fff;padding:14px 16px;font-size:.95rem;line-height:1.4;border-bottom:3px solid #8b1f15;box-shadow:0 2px 8px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:flex-start;gap:10px;max-width:100%">
+      <div style="font-size:1.5rem;line-height:1">⚠️</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;margin-bottom:4px;font-size:1.02rem">ALERTA — El conteo dejó de guardarse</div>
+        <div id="network-error-detail" style="font-size:.88rem;opacity:.95">NO sigas contando.<br>NO cierres la app: podrías perder SKUs y fotos.<br>Avisá a tu supervisor.</div>
+        <div id="network-error-count" style="font-size:.72rem;margin-top:6px;opacity:.85"></div>
+      </div>
+      <button id="network-error-dismiss" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.4);padding:6px 10px;border-radius:6px;font-size:.78rem;cursor:pointer;min-height:32px;font-family:inherit;flex-shrink:0" title="Cerrar (solo si tu supervisor lo autoriza)">Cerrar</button>
+    </div>
   </div>
   <div class="wrap">
     <div class="sub" id="fecha"></div>
@@ -1371,13 +1392,69 @@ var SUPABASE_URL = 'https://uzwhcoztwlxkhrmyeybe.supabase.co';
 var SUPABASE_KEY = 'sb_publishable_NTQKwnemAsOitW0JAIHauQ_xci8VT75';
 var _supaTimer = null;
 
+// FIX (vie 22-may-2026 noche): banner persistente de errores de red.
+// Cuenta los errores consecutivos y muestra detalle. NO se auto-oculta:
+// solo lo cierra el usuario explícitamente con confirmación. Diseño
+// post-incidente Carlos donde el auto-hide reproducía falsa tranquilidad.
+window._netErrorCount = 0;
+window._netErrorVisible = false;
+window.showNetworkBanner = function(detail) {
+  window._netErrorCount = (window._netErrorCount || 0) + 1;
+  var banner = document.getElementById('network-error-banner');
+  var detailEl = document.getElementById('network-error-detail');
+  var countEl = document.getElementById('network-error-count');
+  if(!banner) return;
+  // FIX (rev ChatGPT, vie 22-may-2026): texto operativo más directo.
+  // Versión anterior era técnica ("error de guardado") — el operario
+  // cansado no procesa. "El conteo dejó de guardarse" es operacional.
+  if(detailEl) {
+    detailEl.innerHTML = 'NO sigas contando.<br>NO cierres la app: podrías perder SKUs y fotos.<br>Avisá a tu supervisor.';
+  }
+  if(countEl) {
+    countEl.textContent = 'Errores acumulados: ' + window._netErrorCount + ' · Última: ' + new Date().toLocaleTimeString('es') + (detail ? ' · ' + detail : '');
+  }
+  banner.style.display = '';
+  window._netErrorVisible = true;
+  // Scroll arriba para que sea imposible no verlo
+  try { window.scrollTo({top: 0, behavior: 'smooth'}); } catch(_e){}
+};
+window.hideNetworkBanner = function() {
+  var banner = document.getElementById('network-error-banner');
+  if(banner) banner.style.display = 'none';
+  window._netErrorVisible = false;
+  window._netErrorCount = 0;
+};
+// FIX (rev Claude 2 C, vie 22-may-2026): registrar listener directo sin
+// wrapper DOMContentLoaded. El botón existe en el DOM cuando este script
+// corre (parseo inline) y depender de DOMContentLoaded es frágil ante
+// refactors futuros (defer, async, mover script).
+(function(){
+  var dismissBtn = document.getElementById('network-error-dismiss');
+  if(dismissBtn) {
+    dismissBtn.addEventListener('click', function(){
+      // FIX (rev ChatGPT D, vie 22-may-2026): confirm más corto.
+      // El texto largo bajo estrés no se lee. Mensaje directo.
+      if(confirm('¿Confirmás cerrar esta alerta?\nPodrían faltar datos del conteo.')) {
+        window.hideNetworkBanner();
+      }
+    });
+  }
+})();
+
 // Save a single CDG conteo directly to Supabase, merging with existing state.
 // Used as fallback when Render is sleeping/unavailable.
 function saveCDGDirectToSupabase(contId, conteoData) {
   if(!contId || !conteoData) return Promise.resolve();
   return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
+  }).then(function(r){
+    // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok explícitamente.
+    // fetch() NO rechaza en 502/520/521 — el caso de Carlos. Sin esto,
+    // un GET con error HTTP devuelve body HTML que rompe r.json() solo
+    // por suerte. Lo hacemos explícito.
+    if(!r.ok) throw new Error('GET state HTTP ' + r.status);
+    return r.json();
+  }).then(function(rows){
     var current = {};
     if(rows && rows.length > 0) {
       try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
@@ -1408,11 +1485,24 @@ function saveCDGDirectToSupabase(contId, conteoData) {
         'Prefer': 'resolution=merge-duplicates'
       },
       body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
+    }).then(function(r){
+      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
+      // Éste es el agujero del incidente Carlos — POST puede devolver
+      // 502 sin lanzar. Sin esta línea el banner no aparece.
+      if(!r.ok) throw new Error('POST state HTTP ' + r.status);
+      return r;
     });
   }).then(function(){
     console.log('CDG direct Supabase save OK:', contId);
+    // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar
+    // banner. Si está visible, queda visible hasta cierre manual.
+    // El auto-hide reproducía la falsa tranquilidad del incidente original
+    // (save exitoso de otra cosa ocultaba aviso de dato perdido).
   }).catch(function(e){
     console.warn('CDG direct Supabase save failed:', e);
+    if(typeof window.showNetworkBanner === 'function') {
+      window.showNetworkBanner('Error guardando el conteo CDG "' + (contId||'sin nombre') + '".');
+    }
   });
 }
 
@@ -1422,7 +1512,11 @@ function saveHallazgoDirectToSupabase(hall, action) {
   if(!hall) return Promise.resolve();
   return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
+  }).then(function(r){
+    // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del GET.
+    if(!r.ok) throw new Error('GET state HTTP ' + r.status);
+    return r.json();
+  }).then(function(rows){
     var current = {};
     if(rows && rows.length > 0) {
       try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
@@ -1448,11 +1542,19 @@ function saveHallazgoDirectToSupabase(hall, action) {
         'Prefer': 'resolution=merge-duplicates'
       },
       body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
+    }).then(function(r){
+      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
+      if(!r.ok) throw new Error('POST state HTTP ' + r.status);
+      return r;
     });
   }).then(function(){
     console.log('Hallazgo direct Supabase save OK:', hall.id);
+    // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar banner.
   }).catch(function(e){
     console.warn('Hallazgo direct Supabase save failed:', e);
+    if(typeof window.showNetworkBanner === 'function') {
+      window.showNetworkBanner('Error guardando hallazgo.');
+    }
   });
 }
 
@@ -1509,7 +1611,11 @@ function saveDirectToSupabase() {
         'apikey': SUPABASE_KEY,
         'Authorization': 'Bearer ' + SUPABASE_KEY
       }
-    }).then(function(r){ return r.json(); }).then(function(rows){
+    }).then(function(r){
+      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del GET.
+      if(!r.ok) throw new Error('GET state HTTP ' + r.status);
+      return r.json();
+    }).then(function(rows){
       var current = {};
       if(rows && rows.length > 0) {
         try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
@@ -1538,11 +1644,20 @@ function saveDirectToSupabase() {
           'Prefer': 'resolution=merge-duplicates'
         },
         body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(merged) })
+      }).then(function(r){
+        // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
+        // ESTE es el agujero del incidente Carlos.
+        if(!r.ok) throw new Error('POST state HTTP ' + r.status);
+        return r;
       });
     }).then(function(){
       console.log('Direct Supabase save OK');
+      // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar banner.
     }).catch(function(e){
       console.warn('Direct Supabase save failed:', e);
+      if(typeof window.showNetworkBanner === 'function') {
+        window.showNetworkBanner('Error guardando conteo principal.');
+      }
     });
   }, 500);
 }
