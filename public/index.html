@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.4 · 22-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.5 · 22-may</div>
   </div>
 </div>
 
@@ -399,10 +399,27 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.4 · 22-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.5 · 22-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
+  <!-- FIX (vie 22-may-2026): modal Ver CDG read-only. Permite a cualquier
+       usuario del equipo ver el detalle completo de un conteo CDG
+       (SKUs, fotos generales, fotos por SKU, hallazgos asociados) SIN
+       desbloquear el conteo ni modificar quien/autor/bloqueado. Cierra el
+       caso del backlog (botón "Ver" pedido desde madrugada 21-may). -->
+  <div id="cdg-view-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:9998;overflow-y:auto;overscroll-behavior:contain;padding:1rem">
+    <div style="max-width:900px;margin:1rem auto;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid #eee;background:#fafaf8;position:sticky;top:0;z-index:1">
+        <h3 style="margin:0;font-size:1.05rem;font-weight:700">👁 Vista de conteo CDG <span id="cdg-view-id" style="color:#666;font-weight:500"></span></h3>
+        <button id="cdg-view-close" class="btn btn-sm" style="padding:6px 14px;min-height:36px">× Cerrar</button>
+      </div>
+      <div id="cdg-view-content" style="padding:1.25rem">
+        <!-- contenido inyectado dinámicamente -->
+      </div>
+    </div>
+  </div>
+
   <!-- FIX (vie 22-may-2026 noche): banner persistente de errores de red.
        Se muestra cuando un save crítico falla. NO se cierra solo. Solo
        desaparece cuando el usuario lo cierra manualmente con confirmación.
@@ -4373,6 +4390,10 @@ function showCDGHist(tipo) {
           ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
           : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
         var actions = '<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">';
+        // FIX (vie 22-may-2026): botón "Ver" para cualquier usuario del equipo.
+        // Read-only: NO toca bloqueado, NO toca autor/quien, solo muestra.
+        // FIX (rev ChatGPT A): incluir texto "Ver" además del ojo — más claro.
+        actions += '<button class="btn btn-xs cdg-view-btn" data-id="'+escH(r.id)+'" title="Ver conteo (solo lectura)" style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
         actions += '<button class="btn btn-xs cdg-report-btn" data-id="'+escH(r.id)+'" title="Reporte individual">📥</button>';
         if(!isLocked) actions += '<button class="btn btn-xs cdg-continuar-btn" data-id="'+escH(r.id)+'" title="Continuar">✏️</button>';
         if(isSup() && isLocked) actions += '<button class="btn btn-xs cdg-unlock-btn" data-id="'+escH(r.id)+'" title="Desbloquear">🔓</button>';
@@ -4441,10 +4462,214 @@ function showCDGHist(tipo) {
         });
       });
 
+      // FIX (vie 22-may-2026): wire botón Ver — modal read-only.
+      content.querySelectorAll('.cdg-view-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = this.dataset.id;
+          var c = data[id];
+          if(c) viewCDGReadOnly(id, c);
+        });
+      });
+
       panel.style.display='';
     })
     .catch(function(e){ console.warn('CDG hist error:',e); });
 }
+
+// FIX (vie 22-may-2026): vista read-only de un conteo CDG. Renderiza un
+// modal con TODA la info del conteo (SKUs, fotos generales, fotos por SKU,
+// hallazgos asociados) sin tocar el state ni desbloquear. Funcional para
+// cualquier usuario del equipo. Cierra con botón × o clic fuera.
+function viewCDGReadOnly(id, c){
+  if(!id || !c) return;
+  var modal = document.getElementById('cdg-view-modal');
+  var idEl  = document.getElementById('cdg-view-id');
+  var ctEl  = document.getElementById('cdg-view-content');
+  if(!modal || !ctEl) return;
+
+  idEl.textContent = '· ' + id;
+
+  // FIX (rev ChatGPT I, vie 22-may-2026): calcular contadores arriba para
+  // mostrar resumen rápido en cabecera.
+  var items = c.items || [];
+  var fotos = Object.assign({}, c.fotos || {});
+  if(c.fotoGral && !fotos.marchamo) fotos.marchamo = c.fotoGral;
+  var fotoKeys = ['marchamo','manifiesto','placaFurgon','otro1','otro2'];
+  var fotosGralCount = fotoKeys.filter(function(k){ return !!fotos[k]; }).length;
+  var fotosSkuCount = items.filter(function(it){ return !!it.foto; }).length;
+  var fotosTotalCount = fotosGralCount + fotosSkuCount;
+  var hallazgosAsocCount = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
+    return h.tipo === 'CDG' && (h.cont === id || h.contenedor === id || h.u25 === id);
+  }).length;
+
+  var html = '';
+
+  // --- Resumen rápido (chip arriba) ---
+  html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:.85rem;font-size:.78rem">';
+  html += '<span style="background:#eef5ff;color:#0066cc;padding:4px 10px;border-radius:14px;font-weight:600">📦 SKUs: '+items.length+'</span>';
+  html += '<span style="background:#e8f7ed;color:#1e7e34;padding:4px 10px;border-radius:14px;font-weight:600">📸 Fotos: '+fotosTotalCount+'</span>';
+  html += '<span style="background:'+(hallazgosAsocCount>0?'#fff3e0':'#f5f5f3')+';color:'+(hallazgosAsocCount>0?'#b7770d':'#888')+';padding:4px 10px;border-radius:14px;font-weight:600">⚠️ Hallazgos: '+hallazgosAsocCount+'</span>';
+  html += '</div>';
+
+  // --- Encabezado: metadata del conteo ---
+  var isLocked = c.bloqueado === true;
+  var badge = isLocked
+    ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
+    : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;padding:12px;background:#fafaf8;border-radius:10px;margin-bottom:1rem;font-size:.85rem">';
+  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Correlativo U25</div><div style="font-weight:700;font-size:.95rem">'+escH(id)+'</div></div>';
+  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Tipo</div><div style="font-weight:600">'+escH(c.tipo||'—')+'</div></div>';
+  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Estado</div><div>'+badge+'</div></div>';
+  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Autor</div><div style="font-weight:600">'+escH(c.autor||'—')+'</div></div>';
+  if(c.fecha) html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Fecha</div><div>'+escH(c.fecha)+'</div></div>';
+  if(c.ts)    html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Última actualización</div><div style="font-size:.78rem">'+escH(c.ts)+'</div></div>';
+  html += '</div>';
+
+  // --- Fotos generales ---
+  // (var fotos y fotoKeys ya definidos arriba para el resumen rápido)
+  var fotoLabels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
+  var hayFotosGral = fotosGralCount > 0;
+
+  html += '<div style="margin-bottom:1.25rem">';
+  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#444;text-transform:uppercase;letter-spacing:.4px">📸 Evidencia fotográfica del traslado</h4>';
+  if(hayFotosGral){
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
+    fotoKeys.forEach(function(k){
+      var src = fotos[k];
+      if(src){
+        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(src) : src;
+        html += '<div style="border:1.5px solid #1e7e34;border-radius:10px;overflow:hidden;background:#fff;position:relative">'
+          +'<img src="'+escH(fSrc)+'" style="width:100%;height:120px;object-fit:cover;display:block" alt="'+escH(fotoLabels[k])+'" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+          +'<div style="display:none;width:100%;height:120px;align-items:center;justify-content:center;color:#888;font-size:.75rem;background:#f5f5f3">⚠️ Foto no disponible</div>'
+          +'<div style="background:rgba(0,0,0,.65);color:#fff;font-size:.65rem;padding:3px 5px;text-align:center;text-transform:uppercase;letter-spacing:.3px;font-weight:600">'+escH(fotoLabels[k])+'</div>'
+          +'</div>';
+      } else {
+        html += '<div style="border:1.5px dashed #ccc;border-radius:10px;padding:8px;background:#fafaf8;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa;font-size:.72rem;text-transform:uppercase;letter-spacing:.3px">'
+          +'<div style="font-size:1.4rem;margin-bottom:4px">📷</div>'
+          +'<div>'+escH(fotoLabels[k])+'</div>'
+          +'<div style="font-size:.65rem;color:#bbb;margin-top:2px">sin foto</div>'
+          +'</div>';
+      }
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="padding:12px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">No hay fotos generales registradas en este conteo.</div>';
+  }
+  html += '</div>';
+
+  // --- Tabla de SKUs con fotos individuales ---
+  // (var items ya definido arriba para el resumen rápido)
+  html += '<div style="margin-bottom:1.25rem">';
+  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#444;text-transform:uppercase;letter-spacing:.4px">📦 SKUs contados ('+items.length+')</h4>';
+  if(items.length === 0){
+    html += '<div style="padding:12px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">No hay SKUs registrados en este conteo.</div>';
+  } else {
+    html += '<div class="tbl-wrap" style="margin-bottom:0"><table>';
+    html += '<thead><tr><th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th class="tc">Costo</th><th>Evidencia</th></tr></thead><tbody>';
+    items.forEach(function(it){
+      var costoUnit = Number(it.costo) || (typeof getCosto === 'function' ? (getCosto(it.sku)||0) : 0);
+      var costoLinea = (Number(it.qty)||0) * costoUnit;
+      html += '<tr>';
+      html += '<td><strong>'+escH(it.sku||'—')+'</strong></td>';
+      html += '<td style="font-size:.82rem">'+escH(it.desc||'—')+'</td>';
+      html += '<td class="tc">'+escH(it.qty||0)+'</td>';
+      html += '<td class="tc" style="font-family:monospace;font-size:.78rem">'+(costoUnit ? 'Q'+costoLinea.toFixed(2) : '—')+'</td>';
+      // Foto por SKU
+      if(it.foto){
+        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(it.foto) : it.foto;
+        html += '<td><div style="display:flex;align-items:center;gap:6px">'
+          +'<img src="'+escH(fSrc)+'" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:zoom-in" data-fullsrc="'+escH(fSrc)+'" class="cdg-view-foto-thumb" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-block\'">'
+          +'<span style="display:none;color:#888;font-size:.72rem">⚠️ No disp.</span>'
+          +'</div></td>';
+      } else {
+        html += '<td style="color:#bbb;font-size:.72rem">—</td>';
+      }
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+
+  // --- Hallazgos asociados a este U25 ---
+  // FIX (rev Claude 2 A, vie 22-may-2026): los hallazgos CDG se guardan
+  // con campo h.cont (no h.contenedor ni h.u25). Verificado contra la
+  // creación en línea 5003 y el panel CDG existente. Sin este fix la
+  // sección siempre estaba vacía aunque hubiera hallazgos reales.
+  // (count ya calculado arriba como hallazgosAsocCount)
+  var hallazgosAsoc = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
+    return h.tipo === 'CDG' && (h.cont === id || h.contenedor === id || h.u25 === id);
+  });
+  // FIX (rev ChatGPT F, vie 22-may-2026): siempre mostrar sección de
+  // hallazgos. Si no hay, decirlo explícitamente — evita la duda
+  // "¿no hay o no existe la sección?".
+  html += '<div style="margin-bottom:1rem">';
+  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#b7770d;text-transform:uppercase;letter-spacing:.4px">⚠️ Hallazgos asociados ('+hallazgosAsoc.length+')</h4>';
+  if(hallazgosAsoc.length === 0){
+    html += '<div style="padding:10px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">Sin hallazgos asociados a este conteo.</div>';
+  } else {
+    hallazgosAsoc.forEach(function(h){
+      html += '<div style="border:1px solid #fcd9a4;background:#fff8ed;border-radius:8px;padding:10px 12px;margin-bottom:8px">';
+      // FIX (rev Claude 2 A, vie 22-may-2026): los hallazgos CDG guardan
+      // el autor en h.autor (no h.usuario ni h.quien). Sin este fix
+      // siempre mostraba "—" en el campo autor.
+      html += '<div style="font-size:.78rem;color:#888;margin-bottom:4px">'+escH(h.fecha||'')+' · '+escH(h.autor||h.usuario||h.quien||'—')+'</div>';
+      // h.desc es el campo real (verificado en creación de hallazgo CDG)
+      html += '<div style="font-size:.88rem;color:#333;white-space:pre-wrap">'+escH(h.desc||h.descripcion||'(sin descripción)')+'</div>';
+      // FIX adicional: mostrar campo quePaso si existe (es el campo real
+      // de "qué pasó" en hallazgos CDG verificado en código de creación)
+      if(h.quePaso){
+        html += '<div style="font-size:.82rem;color:#555;margin-top:6px;font-style:italic">'+escH(h.quePaso)+'</div>';
+      }
+      if(h.foto){
+        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(h.foto) : h.foto;
+        html += '<div style="margin-top:8px"><img src="'+escH(fSrc)+'" style="max-width:200px;max-height:150px;border-radius:6px;border:1px solid #ddd;cursor:zoom-in" data-fullsrc="'+escH(fSrc)+'" class="cdg-view-foto-thumb"></div>';
+      }
+      html += '</div>';
+    });
+  }
+  html += '</div>';
+
+  // --- Footer info ---
+  // FIX (rev ChatGPT D, vie 22-may-2026): texto más corto y directo.
+  html += '<div style="margin-top:1.25rem;padding:10px;background:#e8f4ff;border-radius:8px;font-size:.78rem;color:#0066cc;text-align:center">';
+  html += 'ℹ️ Solo lectura. Para editar, usá ✏️ o pedí desbloqueo.';
+  html += '</div>';
+
+  ctEl.innerHTML = html;
+
+  // Wire: zoom en thumbs (abrir foto en nueva pestaña)
+  ctEl.querySelectorAll('.cdg-view-foto-thumb').forEach(function(img){
+    img.addEventListener('click', function(){
+      var url = this.dataset.fullsrc;
+      if(url) {
+        try { window.open(url, '_blank'); } catch(_e){}
+      }
+    });
+  });
+
+  // Mostrar modal y scroll arriba
+  modal.style.display = '';
+  try { modal.scrollTop = 0; } catch(_e){}
+}
+
+// FIX (vie 22-may-2026): wire cierre del modal Ver CDG.
+// Listener directo (sin DOMContentLoaded wrapper) — el elemento existe en
+// el DOM cuando este script corre.
+(function(){
+  var btnClose = document.getElementById('cdg-view-close');
+  var modal    = document.getElementById('cdg-view-modal');
+  if(btnClose){
+    btnClose.addEventListener('click', function(){
+      if(modal) modal.style.display = 'none';
+    });
+  }
+  // Cerrar al hacer click fuera del cuadro blanco (en el overlay oscuro)
+  if(modal){
+    modal.addEventListener('click', function(e){
+      if(e.target === modal) modal.style.display = 'none';
+    });
+  }
+})();
 
 // Export Excel del historial completo de un tipo
 function exportCDGHistExcel(rows, tipo){
