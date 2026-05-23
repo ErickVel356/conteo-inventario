@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.7 · 22-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.8 · 23-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.7 · 22-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.8 · 23-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -2116,28 +2116,63 @@ function buildReporte(){
       // valor especial null para que el polling también lo respete.
       window._pendingClasificacion[cont] = (nuevoValor === automaticoLoc) ? null : nuevoValor;
 
-      // Persistir via saveDirectToSupabase (debounce ya integrado).
-      // La limpieza del pending se hace con un timeout (saveDirectToSupabase
-      // es debounced 500ms; con 3000ms el POST debería haber completado).
-      if(typeof saveDirectToSupabase === 'function') {
-        saveDirectToSupabase();
-        setTimeout(function(){
+      // FIX (sáb 23-may-2026): usar endpoint /api/clasificacion/set en lugar de
+      // saveDirectToSupabase (que persistía a Supabase pero dejaba el server.js
+      // con state desactualizado en memoria — bug B1). El endpoint nuevo
+      // actualiza memoria del server Y persiste a Supabase atómicamente.
+      // La limpieza del pending se hace en finally para que pase en éxito o error.
+      var bodyClasif = {
+        cont: cont,
+        clasificacion: (nuevoValor === automaticoLoc) ? null : nuevoValor,
+        manual: (nuevoValor !== automaticoLoc),
+        usuario: (currentUser && currentUser.name) || '—'
+      };
+
+      // FIX (rev ChatGPT, sáb 23-may-2026): feedback visual durante el guardado.
+      // El endpoint puede tardar hasta 15s en mala señal. Sin esto, el supervisor
+      // no sabe si la app está procesando o se colgó, y puede volver a tocar.
+      //   1) Deshabilitar dropdown durante el fetch (evita doble cambio)
+      //   2) Mostrar toast persistente "Guardando..." con spinner
+      //   3) Cerrar toast al terminar + mostrar toast definitivo (✓ o error)
+      var dropdown = this;
+      dropdown.disabled = true;
+      var savingToast = (typeof showToastPersistent === 'function')
+        ? showToastPersistent('Guardando clasificación...')
+        : null;
+
+      fetch('/api/clasificacion/set', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(bodyClasif)
+      }).then(function(r){ return r.json(); })
+        .then(function(resp){
+          if(!resp || !resp.ok) {
+            console.log('Clasificación set FAILED:', (resp && resp.error) || 'sin respuesta');
+            if(typeof showToast === 'function') showToast('Error al guardar clasificación: ' + ((resp && resp.error) || 'reintenta'), 'error');
+          } else {
+            if(typeof showToast === 'function') showToast('Clasificación guardada ✓', 'ok');
+          }
+        })
+        .catch(function(err){
+          console.log('Clasificación set network error:', err.message);
+          if(typeof showToast === 'function') showToast('Sin conexión al guardar clasificación. Reintentá.', 'error');
+        })
+        .finally(function(){
+          // Cerrar toast persistente, rehabilitar dropdown, limpiar pending,
+          // y re-render. El re-render aquí (en vez de antes del fetch) garantiza
+          // que el dropdown queda deshabilitado durante TODO el fetch — si
+          // re-renderizáramos antes, buildReporte() recrearía el dropdown sin
+          // el .disabled aplicado. El optimistic update ya está en memoria
+          // (líneas 2104-2109) así que el re-render muestra el nuevo color.
+          if(savingToast) savingToast.close();
+          dropdown.disabled = false;
           if(window._pendingClasificacion) delete window._pendingClasificacion[cont];
-        }, 3000);
-      }
-      // Log audit
-      try {
-        if(typeof historial !== 'undefined' && Array.isArray(historial)) {
-          historial.push({
-            ts: (typeof nowStr === 'function' ? nowStr() : new Date().toISOString()),
-            usuario: (currentUser && currentUser.name) || '—',
-            accion: 'Clasificación de "'+cont+'": '+(anterior||'(auto)')+' → '+nuevoValor + (nuevoValor === automaticoLoc ? ' (=automático, sin override)' : '')
-          });
-        }
-      } catch(_e){}
-      // Re-render para actualizar badge color del dropdown (border azul si override)
-      buildReporte();
-      if(typeof showToast === 'function') showToast('Clasificación actualizada ✓', 'ok');
+          if(typeof buildReporte === 'function') buildReporte();
+        });
+      // FIX (rev Claude2, sáb 23-may-2026): historial.push del cliente removido.
+      // El server.js ahora hace addHistorial en /api/clasificacion/set y es la
+      // fuente autoritativa. Tener ambos generaba entradas duplicadas en el
+      // log de auditoría (con timestamps y wording ligeramente distintos).
     });
   });
 }
@@ -2159,6 +2194,38 @@ function showToast(msg, kind) {
     t.style.opacity = '0';
     setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 250);
   }, 2200);
+}
+
+// FIX (rev ChatGPT, sáb 23-may-2026): toast PERSISTENTE para operaciones que
+// pueden tardar hasta 15s (clasificación, fecha-carga, etc). Retorna un objeto
+// con close() para cerrarlo cuando termina la operación. Sin esto, en mala
+// señal el supervisor no tiene feedback de que el guardado está en proceso,
+// y puede volver a tocar el dropdown pensando que no respondió.
+function showToastPersistent(msg) {
+  var t = document.createElement('div');
+  // Texto con un pequeño spinner CSS
+  t.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;animation:claudeSpin 0.7s linear infinite;margin-right:8px;vertical-align:middle"></span><span style="vertical-align:middle">' + msg + '</span>';
+  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
+    'background:#34495e;color:#fff;padding:10px 16px;border-radius:8px;font-size:.85rem;' +
+    'box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;' +
+    'opacity:0;transition:opacity 0.2s';
+  // Inyectar keyframes una sola vez
+  if(!document.getElementById('claude-spin-style')){
+    var st = document.createElement('style');
+    st.id = 'claude-spin-style';
+    st.textContent = '@keyframes claudeSpin { to { transform: rotate(360deg); } }';
+    document.head.appendChild(st);
+  }
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity = '1'; });
+  return {
+    close: function(){
+      try {
+        t.style.opacity = '0';
+        setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 250);
+      } catch(_e){}
+    }
+  };
 }
 
 // Wire date filters (Desde / Hasta) + sort por header de Fecha de trabajo
