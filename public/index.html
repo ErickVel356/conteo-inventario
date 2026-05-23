@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.10 · 23-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.11 · 23-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.10 · 23-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.11 · 23-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -3196,6 +3196,16 @@ function exportExcel(){
     // Lo que no esté en eso es CDG.
     var cod = String(origenCod||'').trim();
     if(cod){
+      // FIX (sáb 23-may-2026, rev Claude2): respetar KTM como categoría propia.
+      // El server v13 marca raw.origen='KTM' al finalizar conteos CDG con tipo='KTM'.
+      // Antes todos caían al fallback "CDG", mezclando KTM con CDG en el export.
+      // Ever García confirmó 23-may que KTM debe verse como categoría distinta.
+      // NOTA: la opción "Otro..." del select CDG no se usa en producción hoy;
+      // si en el futuro se usa, hay que cerrar el flujo cliente→server→export
+      // (Claude2 detectó que el texto libre del usuario se exporta como "CDG").
+      // Documentado en backlog.
+      var codUpper = cod.toUpperCase();
+      if(codUpper === 'KTM') return 'KTM';
       var first = cod.charAt(0).toUpperCase();
       if(first === '7') return 'Carga Global Z21';
       if(first === '4') return 'CATM2';
