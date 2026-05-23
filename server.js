@@ -530,6 +530,207 @@ app.post('/api/teorico/fecha-carga', async (req, res) => {
   res.json({ ok:true, version:state.version, fechaCarga: state.teorico[cont].fechaCarga });
 });
 
+// FIX (sáb 23-may-2026): endpoint para clasificación manual de contenedores.
+// Resuelve el bug B1 (server-memory desactualizada): antes el cliente llamaba
+// saveDirectToSupabase con PATCH directo, lo que persistía en Supabase pero
+// dejaba al server.js con state.teorico EN MEMORIA sin la clasificación.
+// En el siguiente GET /api/state el server respondía con su memoria vieja
+// y el cliente perdía visualmente la clasificación manual.
+//
+// Ahora el cliente llama este endpoint. El server:
+//   1. Actualiza state.teorico[cont].clasificacion + clasificacionManual
+//   2. Awaitea el save a Supabase con timeout 15s (mismo patrón que fecha-carga)
+//   3. Cancela debounced pending para que no pise el cambio
+//
+// Permite limpiar el override (clasificacion=null, manual=false) para
+// soportar la lógica "quitar manual si coincide con el automático" del UI.
+app.post('/api/clasificacion/set', async (req, res) => {
+  const { cont, clasificacion, manual, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.teorico[cont]) return res.status(404).json({ ok:false, error:'cont no existe' });
+
+  // Validar clasificación si viene con valor
+  if(clasificacion !== null && clasificacion !== undefined && clasificacion !== '') {
+    var allowed = ['Auditado', 'En Revisión', 'No auditado'];
+    if(!allowed.includes(String(clasificacion))) {
+      return res.status(400).json({ ok:false, error:'clasificacion inválida (debe ser ' + allowed.join('|') + ')' });
+    }
+  }
+
+  // FIX (sáb 23-may-2026, rev Claude2): capturar estado previo para rollback
+  // si dbSet falla. Sin esto, en path de error queda divergencia memoria-Supabase
+  // (variante acotada de B1 al revés).
+  var prev = {
+    hadClasif:    'clasificacion' in state.teorico[cont],
+    clasif:       state.teorico[cont].clasificacion,
+    hadManual:    'clasificacionManual' in state.teorico[cont],
+    manual:       state.teorico[cont].clasificacionManual,
+    version:      state.version
+  };
+
+  // Si clasificacion es null/vacío Y manual no es true → quitar override
+  if((clasificacion === null || clasificacion === undefined || clasificacion === '') && !manual) {
+    delete state.teorico[cont].clasificacion;
+    delete state.teorico[cont].clasificacionManual;
+    addHistorial(usuario||'—', 'Quitó clasificación manual', cont);
+  } else {
+    state.teorico[cont].clasificacion = clasificacion;
+    state.teorico[cont].clasificacionManual = !!manual;
+    addHistorial(usuario||'—', 'Clasificación ' + (manual ? 'manual' : 'auto') + ': ' + clasificacion, cont);
+  }
+  state.version++;
+
+  // Cancelar debounced pending y await el save para garantizar persistencia.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Clasificación save'
+    );
+    console.log('Clasificación save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Clasificación save FAILED:', saveErr.message);
+    // FIX (rev Claude2): rollback de memoria. Sin esto, el server quedaría
+    // con la clasificación nueva en memoria pero Supabase sin ella; al
+    // próximo polling cualquier cliente vería el cambio como guardado,
+    // y si Render reinicia se perdería. Volvemos memoria al estado previo.
+    try {
+      if(prev.hadClasif) state.teorico[cont].clasificacion = prev.clasif;
+      else delete state.teorico[cont].clasificacion;
+      if(prev.hadManual) state.teorico[cont].clasificacionManual = prev.manual;
+      else delete state.teorico[cont].clasificacionManual;
+      state.version = prev.version;
+      // Nota: addHistorial ya empujó un item. Lo dejamos como evidencia del intento.
+      console.log('Clasificación save: rollback memoria OK');
+    } catch(rbErr) {
+      console.log('Clasificación save: rollback memoria FAILED (raro):', rbErr.message);
+    }
+    return res.status(500).json({
+      ok: false,
+      error: 'La clasificación no se pudo guardar. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({
+    ok: true,
+    version: state.version,
+    clasificacion: state.teorico[cont].clasificacion || null,
+    manual: !!state.teorico[cont].clasificacionManual
+  });
+});
+
+// FIX (sáb 23-may-2026): endpoint para borrar CDG.
+// Misma motivación que /api/clasificacion/set: evitar bug B1.
+// Cuando se borra un CDG, también se borra el contenedor Traslado que
+// se creó a partir de él (decisión Erick 23-may: limpio total).
+//
+// Identificación del Traslado asociado:
+//   - El CDG tiene state.cdg[contId].traslado (asignado en /api/cdg/finalizar)
+//   - El Traslado tiene state.teorico[num].cdgRef === contId
+//   - Borramos AMBOS con todas sus referencias (teorico + fisico + asignaciones)
+app.post('/api/cdg/delete', async (req, res) => {
+  const { contId, usuario } = req.body;
+  if(!contId) return res.status(400).json({ ok:false, error:'falta contId' });
+  if(!state.cdg[contId]) return res.status(404).json({ ok:false, error:'CDG no existe' });
+
+  // Identificar el contenedor Traslado asociado
+  var trasladoNum = state.cdg[contId].traslado || null;
+
+  // FIX (sáb 23-may-2026, rev Claude2): capturar TODO lo que vamos a borrar
+  // para poder revertir si dbSet falla. Sin esto, en path de error el CDG y
+  // el Traslado desaparecen de memoria pero siguen en Supabase, y al
+  // próximo restart del server vuelven a aparecer en memoria del cliente.
+  var prev = {
+    cdg:           JSON.parse(JSON.stringify(state.cdg[contId])),
+    version:       state.version,
+    teoricoSaved:  {},     // {contKey: teoricoObj}
+    fisicoSaved:   {},     // {contKey: fisicoArr}
+    asignSaved:    {},     // {contKey: asignArr}
+    puertaSaved:   {},     // {contKey: puertaStr}
+    metaSaved:     {}      // {contKey: metaObj}
+  };
+
+  // Helper: guardar copia profunda de un cont antes de borrarlo
+  function backupCont(k){
+    if(state.teorico[k] !== undefined)        prev.teoricoSaved[k] = JSON.parse(JSON.stringify(state.teorico[k]));
+    if(state.fisico[k] !== undefined)         prev.fisicoSaved[k]  = JSON.parse(JSON.stringify(state.fisico[k]));
+    if(state.asignaciones[k] !== undefined)   prev.asignSaved[k]   = JSON.parse(JSON.stringify(state.asignaciones[k]));
+    if(state.puertas && state.puertas[k] !== undefined)               prev.puertaSaved[k] = state.puertas[k];
+    if(state.conteoMetadata && state.conteoMetadata[k] !== undefined) prev.metaSaved[k]   = JSON.parse(JSON.stringify(state.conteoMetadata[k]));
+  }
+
+  // Borrar el CDG
+  delete state.cdg[contId];
+
+  // Borrar el contenedor Traslado asociado si existe y vino del CDG
+  if(trasladoNum && state.teorico[trasladoNum] && state.teorico[trasladoNum].cdgRef === contId) {
+    backupCont(trasladoNum);
+    delete state.teorico[trasladoNum];
+    if(state.fisico[trasladoNum])       delete state.fisico[trasladoNum];
+    if(state.asignaciones[trasladoNum]) delete state.asignaciones[trasladoNum];
+    if(state.puertas && state.puertas[trasladoNum]) delete state.puertas[trasladoNum];
+    if(state.conteoMetadata && state.conteoMetadata[trasladoNum]) delete state.conteoMetadata[trasladoNum];
+  }
+
+  // Fallback: por si el traslado no estaba en .traslado pero sí en teorico con cdgRef
+  // (escenario raro pero defensivo)
+  Object.keys(state.teorico).forEach(function(k){
+    if(state.teorico[k] && state.teorico[k].cdgRef === contId) {
+      backupCont(k);
+      delete state.teorico[k];
+      if(state.fisico[k])       delete state.fisico[k];
+      if(state.asignaciones[k]) delete state.asignaciones[k];
+      if(state.puertas && state.puertas[k]) delete state.puertas[k];
+      if(state.conteoMetadata && state.conteoMetadata[k]) delete state.conteoMetadata[k];
+    }
+  });
+
+  addHistorial(usuario||'—', 'CDG eliminado (+ Traslado asociado)', contId + (trasladoNum ? ' → ' + trasladoNum : ''));
+  state.version++;
+
+  // Cancelar debounced pending y await el save
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'CDG delete save'
+    );
+    console.log('CDG delete save: persisted to Supabase ✓ (CDG ' + contId + ', Traslado ' + (trasladoNum||'—') + ')');
+  } catch(saveErr) {
+    console.log('CDG delete save FAILED:', saveErr.message);
+    // FIX (rev Claude2): rollback de TODO lo que se borró. Sin esto, el
+    // server tiene el CDG y Traslado borrados de memoria pero Supabase los
+    // sigue conteniendo. Al reiniciar Render, vuelven a aparecer y el delete
+    // se "deshace" silenciosamente. Restauramos memoria a estado previo.
+    try {
+      state.cdg[contId] = prev.cdg;
+      Object.keys(prev.teoricoSaved).forEach(function(k){ state.teorico[k] = prev.teoricoSaved[k]; });
+      Object.keys(prev.fisicoSaved).forEach(function(k){  state.fisico[k]  = prev.fisicoSaved[k]; });
+      Object.keys(prev.asignSaved).forEach(function(k){   state.asignaciones[k] = prev.asignSaved[k]; });
+      Object.keys(prev.puertaSaved).forEach(function(k){
+        if(!state.puertas) state.puertas = {};
+        state.puertas[k] = prev.puertaSaved[k];
+      });
+      Object.keys(prev.metaSaved).forEach(function(k){
+        if(!state.conteoMetadata) state.conteoMetadata = {};
+        state.conteoMetadata[k] = prev.metaSaved[k];
+      });
+      state.version = prev.version;
+      console.log('CDG delete save: rollback memoria OK');
+    } catch(rbErr) {
+      console.log('CDG delete save: rollback memoria FAILED (raro):', rbErr.message);
+    }
+    return res.status(500).json({
+      ok: false,
+      error: 'No se pudo borrar el CDG. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({ ok:true, version:state.version, deletedCDG:contId, deletedTraslado:trasladoNum });
+});
+
 // ── Chat ──────────────────────────────────────────────────────────────────
 // ── Field locking ─────────────────────────────────────────────────────────
 app.post('/api/lock', (req, res) => {
