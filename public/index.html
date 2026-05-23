@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.5 · 22-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.7 · 22-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.5 · 22-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.7 · 22-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -795,6 +795,16 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:1.5rem 0 .75rem">
           <div class="sec" style="margin:0">Resumen por contenedor</div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <!-- FIX (vie 22-may-2026 noche): filtro Tipo. Permite ver
+                 solo Embarques, solo Traslados, o Ambos. Botones tipo
+                 toggle para que sea claro qué está activo. -->
+            <label style="font-size:.78rem;color:#666">Tipo:</label>
+            <div id="filter-tipo-group" role="group" style="display:inline-flex;gap:2px;background:#f0f0ee;padding:3px;border-radius:8px">
+              <button class="filter-tipo-btn" data-tipo="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Ambos</button>
+              <button class="filter-tipo-btn" data-tipo="Embarques" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Embarques</button>
+              <button class="filter-tipo-btn" data-tipo="Traslados" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Traslados</button>
+            </div>
+            <span style="display:inline-block;width:1px;height:24px;background:#ddd;margin:0 4px"></span>
             <label style="font-size:.78rem;color:#666">Filtrar Fecha de trabajo:</label>
             <span style="font-size:.72rem;color:#888">Desde</span>
             <input type="date" id="filter-fecha-desde" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
@@ -805,8 +815,21 @@ textarea.field-inp{resize:vertical;min-height:72px}
           </div>
         </div>
         <div class="tbl-wrap" style="margin-bottom:1.5rem">
+          <!-- FIX (rev ChatGPT G, vie 22-may-2026): mini leyenda explicativa
+               sobre la columna Clasificación. Aclara el origen automático
+               y que el supervisor puede ajustar. Reduce la confusión al
+               primer encuentro. -->
+          <div style="font-size:.72rem;color:#888;margin-bottom:6px;padding:6px 10px;background:#f8f9fa;border-left:3px solid #5a6fd8;border-radius:4px">
+            ℹ️ <strong>Clasificación:</strong> calculada automáticamente por % cobertura. Los supervisores pueden ajustarla manualmente (queda marcada como ★ Manual).
+          </div>
           <table>
-            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th>Puerta</th><th class="tc">Costo total Q</th><th id="th-fecha-trabajo" style="cursor:pointer;user-select:none" title="Click para invertir orden">Fecha de trabajo <span id="th-fecha-trabajo-arrow" style="font-size:.7em;color:#5a6fd8">↓</span></th><th>Estado</th></tr></thead>
+            <!-- FIX (vie 22-may-2026 noche): nuevas columnas Cobertura %
+                 y Clasificación. La columna Cobertura es calculada
+                 (contadas/total). La columna Clasificación es editable
+                 solo para supervisores (isSup), con valor inicial
+                 calculado por cobertura pero overrideable manualmente
+                 desde el state (teorico[c].clasificacion). -->
+            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th class="tc">% Cobertura</th><th>Puerta</th><th class="tc">Costo total Q</th><th id="th-fecha-trabajo" style="cursor:pointer;user-select:none" title="Click para invertir orden">Fecha de trabajo <span id="th-fecha-trabajo-arrow" style="font-size:.7em;color:#5a6fd8">↓</span></th><th>Estado</th><th>Clasificación</th></tr></thead>
             <tbody id="tbody-resumen"></tbody>
           </table>
         </div>
@@ -1798,7 +1821,18 @@ function buildReporte(){
   // Read filters
   var fechaDesde = (document.getElementById('filter-fecha-desde')||{}).value || '';
   var fechaHasta = (document.getElementById('filter-fecha-hasta')||{}).value || '';
+  // FIX (vie 22-may-2026 noche): filtro Tipo (Embarques / Traslados / Ambos).
+  // Estado guardado en window._filterTipo ('todos' | 'Embarques' | 'Traslados').
+  // Default 'todos' (sin filtrar). Se persiste en memoria mientras dura la sesión.
+  var filterTipo = window._filterTipo || 'todos';
   var contsFiltrados = conts.slice();
+
+  // Aplicar filtro Tipo (antes que filtros de fecha para mejor performance)
+  if(filterTipo && filterTipo !== 'todos') {
+    contsFiltrados = contsFiltrados.filter(function(c){
+      return teorico[c] && teorico[c].type === filterTipo;
+    });
+  }
 
   // FIX (mar 19-may-2026): el filtro ahora opera sobre fechaCarga del teorico
   // (no sobre lastAt de fisico). Soporta rango Desde/Hasta inclusive.
@@ -1808,7 +1842,7 @@ function buildReporte(){
   var ocultosSinFecha = 0;
   var ocultosFueraRango = 0;
   if(fechaDesde || fechaHasta) {
-    contsFiltrados = conts.filter(function(c){
+    contsFiltrados = contsFiltrados.filter(function(c){
       var fc = teorico[c] && teorico[c].fechaCarga;
       if(!fc) { ocultosSinFecha++; return false; }
       if(fechaDesde && fc < fechaDesde) { ocultosFueraRango++; return false; }
@@ -1841,6 +1875,53 @@ function buildReporte(){
     return p[2] + '/' + p[1] + '/' + p[0];
   }
 
+  // FIX (vie 22-may-2026 noche): helper para calcular clasificación automática
+  // a partir del % de cobertura. Esta es la clasificación POR DEFECTO si el
+  // supervisor no la ha editado manualmente.
+  function clasificacionAutomatica(cobertura){
+    if(cobertura >= 100) return 'Auditado';
+    if(cobertura > 0)    return 'En Revisión';
+    return 'No auditado';
+  }
+
+  // Helper para color del badge de clasificación
+  function clasifBadge(clasif){
+    if(clasif === 'Auditado')    return '<span class="badge" style="background:#d4edda;color:#155724">Auditado</span>';
+    if(clasif === 'En Revisión') return '<span class="badge" style="background:#fef9e7;color:#7d6608">En Revisión</span>';
+    if(clasif === 'No auditado') return '<span class="badge" style="background:#fdecea;color:#922b21">No auditado</span>';
+    return '<span class="badge" style="background:#f0f0ee;color:#888">—</span>';
+  }
+
+  // Helper para construir celda de clasificación: dropdown si es supervisor,
+  // badge si no. La clasificación efectiva es teorico[c].clasificacion o el cálculo.
+  function clasifCellHtml(c, clasifEfectiva){
+    var esSup = (typeof isSup === 'function') && isSup();
+    var override = teorico[c] && teorico[c].clasificacion;
+    var isOverride = !!override;
+    if(esSup) {
+      // Dropdown editable
+      var opciones = ['Auditado', 'En Revisión', 'No auditado'];
+      var html = '<select class="clasif-select" data-cont="'+escH(c)+'" style="font-size:.78rem;padding:4px 6px;border:1px solid '+(isOverride?'#1a73e8':'#ccc')+';border-radius:6px;background:#fff;min-height:30px;cursor:pointer" title="'+(isOverride?'Override manual del supervisor (no coincide con cálculo automático)':'Calculado automáticamente por % cobertura. Si lo cambiás, queda como override manual.')+'">';
+      opciones.forEach(function(opt){
+        html += '<option value="'+escH(opt)+'"'+(opt===clasifEfectiva?' selected':'')+'>'+escH(opt)+'</option>';
+      });
+      html += '</select>';
+      // FIX (rev ChatGPT C, vie 22-may-2026): mostrar "★ Manual" como texto
+      // junto al dropdown si hay override, para que se entienda qué significa
+      // la estrella. La sola ★ es críptica.
+      if(isOverride) {
+        html += '<div style="font-size:.65rem;color:#1a73e8;font-weight:600;margin-top:2px" title="Esta clasificación la asignó manualmente un supervisor (no es la calculada por cobertura)">★ Manual</div>';
+      }
+      return '<td>' + html + '</td>';
+    } else {
+      // Solo badge read-only.
+      // FIX (rev ChatGPT E, vie 22-may-2026): tooltip explicativo para no-sup
+      // de por qué no pueden editar. Mejora UX sin agregar permisos.
+      var tooltipNoSup = 'Solo los supervisores pueden cambiar esta clasificación. Estado calculado automáticamente por % cobertura' + (isOverride ? ' o ajustado manualmente por un supervisor (★ Manual)' : '') + '.';
+      return '<td title="'+escH(tooltipNoSup)+'">' + clasifBadge(clasifEfectiva) + (isOverride ? ' <span style="font-size:.65rem;color:#1a73e8;font-weight:600" title="Manual - asignado por supervisor">★ Manual</span>' : '') + '</td>';
+    }
+  }
+
   contsFiltrados.forEach(function(c){
     var items=teorico[c].items,fis=fisico[c],type=teorico[c].type;
     var fechaCargaCont = (teorico[c] && teorico[c].fechaCarga) || '';
@@ -1856,8 +1937,32 @@ function buildReporte(){
       contCosto += cu * (Number(item.qty)||0);
     });
     totalCosto += contCosto;
+
+    // FIX (vie 22-may-2026): cálculo de % cobertura y clasificación.
+    // Cobertura = (líneas con físico no vacío) / total líneas * 100.
+    // Clasificación efectiva: si supervisor la editó (teorico[c].clasificacion
+    // existe) se usa esa; si no, se calcula automáticamente por cobertura.
+    var lineasContadas = 0;
+    if(fis) {
+      for(var k=0; k<fis.length; k++) {
+        var fObj = fis[k];
+        if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== '') {
+          lineasContadas++;
+        } else if(typeof fObj === 'number' && !isNaN(fObj)) {
+          lineasContadas++;
+        }
+      }
+    }
+    var cobertura = items.length > 0 ? Math.round((lineasContadas / items.length) * 100) : 0;
+    // FIX (rev ChatGPT B, vie 22-may-2026): mostrar también "18/126 líneas"
+    // debajo del % para que el operario vea cuántas son en absoluto, no solo
+    // el ratio. Más útil operativamente.
+    var coberturaCellHtml = '<td class="tc" style="font-family:monospace;font-size:.85rem;color:'+(cobertura>=100?'#155724':cobertura>0?'#7d6608':'#888')+';font-weight:'+(cobertura>=100?'700':'500')+';line-height:1.2">'+cobertura+'%<div style="font-size:.68rem;font-weight:400;color:#888;font-family:inherit">'+lineasContadas+'/'+items.length+' líneas</div></td>';
+    var clasifEfectiva = (teorico[c] && teorico[c].clasificacion) || clasificacionAutomatica(cobertura);
+    var clasifHtml = clasifCellHtml(c, clasifEfectiva);
+
     if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td><td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td><span class="badge b-pend">Pendiente</span></td></tr>';
+      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td>'+coberturaCellHtml+'<td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td><span class="badge b-pend">Pendiente</span></td>'+clasifHtml+'</tr>';
       return;
     }
     done++;var ok=0,over=0,under=0;
@@ -1871,7 +1976,7 @@ function buildReporte(){
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td><td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td></tr>';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td>'+coberturaCellHtml+'<td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td>'+clasifHtml+'</tr>';
   });
   document.getElementById('m-total').textContent=contsFiltrados.length;
   document.getElementById('m-done').textContent=done;
@@ -1879,7 +1984,8 @@ function buildReporte(){
   document.getElementById('m-items').textContent=totalItems;
   var mCosto = document.getElementById('m-costo');
   if(mCosto) mCosto.textContent = 'Q' + Math.round(totalCosto).toLocaleString('es-GT');
-  document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="10" class="empty">Sin contenedores en esta fecha.</td></tr>';
+  // FIX (vie 22-may-2026): colspan ahora 12 (antes 10) por las 2 columnas nuevas
+  document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="12" class="empty">Sin contenedores en esta fecha.</td></tr>';
   document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
 
   // FIX (rev ChatGPT): mostrar contador de contenedores ocultos por filtro
@@ -1956,6 +2062,84 @@ function buildReporte(){
       });
     });
   });
+
+  // FIX (vie 22-may-2026 noche): wire dropdown Clasificación.
+  // Solo se renderiza para supervisores. Al cambiar:
+  //  1. Optimistic update local: teorico[c].clasificacion = nuevo valor
+  //  2. POST a Supabase directo (no hay endpoint server, usamos
+  //     saveDirectToSupabase que ya tenemos)
+  //  3. Si el supervisor elige el mismo valor que el calculado automático,
+  //     igual lo guardamos como override (el badge ★ aparece)
+  //  4. Esto NO mete clasificacion al state si el usuario es no-sup
+  //     (los no-sup solo ven badge, no dropdown)
+  document.querySelectorAll('.clasif-select').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      var cont = this.dataset.cont;
+      var nuevoValor = this.value;
+      if(!cont || !teorico[cont]) return;
+      var anterior = teorico[cont].clasificacion;
+
+      // FIX (rev ChatGPT F, vie 22-may-2026): si el supervisor elige
+      // el mismo valor que el cálculo automático, quitar el override.
+      // Razón: estrella ★ "Manual" debe indicar criterio supervisor que
+      // DIFIERE del automático. Si el supervisor confirma el automático,
+      // mantener override confunde (no hay nada que distinguir).
+      var items = teorico[cont].items || [];
+      var fis = fisico[cont];
+      var lineasContadasLoc = 0;
+      if(fis) {
+        for(var k=0; k<fis.length; k++) {
+          var fObj = fis[k];
+          if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== '') {
+            lineasContadasLoc++;
+          } else if(typeof fObj === 'number' && !isNaN(fObj)) {
+            lineasContadasLoc++;
+          }
+        }
+      }
+      var coberturaLoc = items.length > 0 ? Math.round((lineasContadasLoc / items.length) * 100) : 0;
+      var automaticoLoc = coberturaLoc >= 100 ? 'Auditado' : (coberturaLoc > 0 ? 'En Revisión' : 'No auditado');
+
+      // Optimistic update
+      if(nuevoValor === automaticoLoc) {
+        // Coincide con automático → quitar override (no persistir clasificacion)
+        delete teorico[cont].clasificacion;
+      } else {
+        teorico[cont].clasificacion = nuevoValor;
+      }
+
+      // FIX (rev Claude 2 B.2, vie 22-may-2026): registrar pending para que
+      // el polling no pise el optimistic update. Mismo patrón que
+      // _pendingFechaCarga ya implementado para fechaCarga.
+      window._pendingClasificacion = window._pendingClasificacion || {};
+      // Si quitamos override (matchea automático), marcamos pending con
+      // valor especial null para que el polling también lo respete.
+      window._pendingClasificacion[cont] = (nuevoValor === automaticoLoc) ? null : nuevoValor;
+
+      // Persistir via saveDirectToSupabase (debounce ya integrado).
+      // La limpieza del pending se hace con un timeout (saveDirectToSupabase
+      // es debounced 500ms; con 3000ms el POST debería haber completado).
+      if(typeof saveDirectToSupabase === 'function') {
+        saveDirectToSupabase();
+        setTimeout(function(){
+          if(window._pendingClasificacion) delete window._pendingClasificacion[cont];
+        }, 3000);
+      }
+      // Log audit
+      try {
+        if(typeof historial !== 'undefined' && Array.isArray(historial)) {
+          historial.push({
+            ts: (typeof nowStr === 'function' ? nowStr() : new Date().toISOString()),
+            usuario: (currentUser && currentUser.name) || '—',
+            accion: 'Clasificación de "'+cont+'": '+(anterior||'(auto)')+' → '+nuevoValor + (nuevoValor === automaticoLoc ? ' (=automático, sin override)' : '')
+          });
+        }
+      } catch(_e){}
+      // Re-render para actualizar badge color del dropdown (border azul si override)
+      buildReporte();
+      if(typeof showToast === 'function') showToast('Clasificación actualizada ✓', 'ok');
+    });
+  });
 }
 
 // FIX (rev Claude2/ChatGPT, mar 19-may): toast no-bloqueante para reemplazar
@@ -1978,6 +2162,7 @@ function showToast(msg, kind) {
 }
 
 // Wire date filters (Desde / Hasta) + sort por header de Fecha de trabajo
+//   + FIX (vie 22-may-2026 noche): filtro Tipo (Embarques/Traslados/Ambos)
 (function(){
   var fechaDesde = document.getElementById('filter-fecha-desde');
   var fechaHasta = document.getElementById('filter-fecha-hasta');
@@ -1988,6 +2173,31 @@ function showToast(msg, kind) {
     if(fechaDesde) fechaDesde.value='';
     if(fechaHasta) fechaHasta.value='';
     buildReporte();
+  });
+
+  // FIX (vie 22-may-2026 noche): wire filtro Tipo. 3 botones tipo toggle.
+  // Estado en window._filterTipo ('todos' por defecto, 'Embarques', 'Traslados').
+  // Persiste mientras dure la sesión del navegador (no se guarda en state).
+  window._filterTipo = window._filterTipo || 'todos';
+  function refreshFilterTipoUI(){
+    document.querySelectorAll('.filter-tipo-btn').forEach(function(b){
+      var activo = b.dataset.tipo === window._filterTipo;
+      if(activo) {
+        b.style.background = '#1a1a1a';
+        b.style.color = '#fff';
+      } else {
+        b.style.background = 'transparent';
+        b.style.color = '#666';
+      }
+    });
+  }
+  refreshFilterTipoUI();
+  document.querySelectorAll('.filter-tipo-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      window._filterTipo = this.dataset.tipo || 'todos';
+      refreshFilterTipoUI();
+      buildReporte();
+    });
   });
 
   // Sort por header de Fecha de trabajo (ciclo de 2 estados: asc ↔ desc).
@@ -3304,6 +3514,23 @@ function pollNow() {
       if(window._pendingFechaCarga) {
         Object.keys(window._pendingFechaCarga).forEach(function(c){
           if(teorico[c]) teorico[c].fechaCarga = window._pendingFechaCarga[c];
+        });
+      }
+      // FIX (rev Claude 2 B.2, vie 22-may-2026): MISMO patrón para clasificación.
+      // El supervisor editó clasificación, POST en vuelo, polling dispara →
+      // si no re-aplicamos, el dropdown rebota visualmente al valor viejo.
+      // null en el pending significa "quitar override" (el supervisor eligió
+      // el automático, no debemos persistir clasificacion en teorico[c]).
+      if(window._pendingClasificacion) {
+        Object.keys(window._pendingClasificacion).forEach(function(c){
+          if(teorico[c]) {
+            var v = window._pendingClasificacion[c];
+            if(v === null) {
+              delete teorico[c].clasificacion;
+            } else {
+              teorico[c].clasificacion = v;
+            }
+          }
         });
       }
       // FIX (lun 18-may-2026 noche): MERGE SELECTIVO de fisico — protege
