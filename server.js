@@ -557,17 +557,6 @@ app.post('/api/clasificacion/set', async (req, res) => {
     }
   }
 
-  // FIX (sáb 23-may-2026, rev Claude2): capturar estado previo para rollback
-  // si dbSet falla. Sin esto, en path de error queda divergencia memoria-Supabase
-  // (variante acotada de B1 al revés).
-  var prev = {
-    hadClasif:    'clasificacion' in state.teorico[cont],
-    clasif:       state.teorico[cont].clasificacion,
-    hadManual:    'clasificacionManual' in state.teorico[cont],
-    manual:       state.teorico[cont].clasificacionManual,
-    version:      state.version
-  };
-
   // Si clasificacion es null/vacío Y manual no es true → quitar override
   if((clasificacion === null || clasificacion === undefined || clasificacion === '') && !manual) {
     delete state.teorico[cont].clasificacion;
@@ -591,24 +580,9 @@ app.post('/api/clasificacion/set', async (req, res) => {
     console.log('Clasificación save: persisted to Supabase ✓');
   } catch(saveErr) {
     console.log('Clasificación save FAILED:', saveErr.message);
-    // FIX (rev Claude2): rollback de memoria. Sin esto, el server quedaría
-    // con la clasificación nueva en memoria pero Supabase sin ella; al
-    // próximo polling cualquier cliente vería el cambio como guardado,
-    // y si Render reinicia se perdería. Volvemos memoria al estado previo.
-    try {
-      if(prev.hadClasif) state.teorico[cont].clasificacion = prev.clasif;
-      else delete state.teorico[cont].clasificacion;
-      if(prev.hadManual) state.teorico[cont].clasificacionManual = prev.manual;
-      else delete state.teorico[cont].clasificacionManual;
-      state.version = prev.version;
-      // Nota: addHistorial ya empujó un item. Lo dejamos como evidencia del intento.
-      console.log('Clasificación save: rollback memoria OK');
-    } catch(rbErr) {
-      console.log('Clasificación save: rollback memoria FAILED (raro):', rbErr.message);
-    }
     return res.status(500).json({
       ok: false,
-      error: 'La clasificación no se pudo guardar. Reintentá. (' + saveErr.message + ')'
+      error: 'La clasificación sí se aplicó, pero NO quedó guardada. Reintentá. (' + saveErr.message + ')'
     });
   }
 
@@ -637,35 +611,11 @@ app.post('/api/cdg/delete', async (req, res) => {
   // Identificar el contenedor Traslado asociado
   var trasladoNum = state.cdg[contId].traslado || null;
 
-  // FIX (sáb 23-may-2026, rev Claude2): capturar TODO lo que vamos a borrar
-  // para poder revertir si dbSet falla. Sin esto, en path de error el CDG y
-  // el Traslado desaparecen de memoria pero siguen en Supabase, y al
-  // próximo restart del server vuelven a aparecer en memoria del cliente.
-  var prev = {
-    cdg:           JSON.parse(JSON.stringify(state.cdg[contId])),
-    version:       state.version,
-    teoricoSaved:  {},     // {contKey: teoricoObj}
-    fisicoSaved:   {},     // {contKey: fisicoArr}
-    asignSaved:    {},     // {contKey: asignArr}
-    puertaSaved:   {},     // {contKey: puertaStr}
-    metaSaved:     {}      // {contKey: metaObj}
-  };
-
-  // Helper: guardar copia profunda de un cont antes de borrarlo
-  function backupCont(k){
-    if(state.teorico[k] !== undefined)        prev.teoricoSaved[k] = JSON.parse(JSON.stringify(state.teorico[k]));
-    if(state.fisico[k] !== undefined)         prev.fisicoSaved[k]  = JSON.parse(JSON.stringify(state.fisico[k]));
-    if(state.asignaciones[k] !== undefined)   prev.asignSaved[k]   = JSON.parse(JSON.stringify(state.asignaciones[k]));
-    if(state.puertas && state.puertas[k] !== undefined)               prev.puertaSaved[k] = state.puertas[k];
-    if(state.conteoMetadata && state.conteoMetadata[k] !== undefined) prev.metaSaved[k]   = JSON.parse(JSON.stringify(state.conteoMetadata[k]));
-  }
-
   // Borrar el CDG
   delete state.cdg[contId];
 
   // Borrar el contenedor Traslado asociado si existe y vino del CDG
   if(trasladoNum && state.teorico[trasladoNum] && state.teorico[trasladoNum].cdgRef === contId) {
-    backupCont(trasladoNum);
     delete state.teorico[trasladoNum];
     if(state.fisico[trasladoNum])       delete state.fisico[trasladoNum];
     if(state.asignaciones[trasladoNum]) delete state.asignaciones[trasladoNum];
@@ -677,7 +627,6 @@ app.post('/api/cdg/delete', async (req, res) => {
   // (escenario raro pero defensivo)
   Object.keys(state.teorico).forEach(function(k){
     if(state.teorico[k] && state.teorico[k].cdgRef === contId) {
-      backupCont(k);
       delete state.teorico[k];
       if(state.fisico[k])       delete state.fisico[k];
       if(state.asignaciones[k]) delete state.asignaciones[k];
@@ -700,31 +649,9 @@ app.post('/api/cdg/delete', async (req, res) => {
     console.log('CDG delete save: persisted to Supabase ✓ (CDG ' + contId + ', Traslado ' + (trasladoNum||'—') + ')');
   } catch(saveErr) {
     console.log('CDG delete save FAILED:', saveErr.message);
-    // FIX (rev Claude2): rollback de TODO lo que se borró. Sin esto, el
-    // server tiene el CDG y Traslado borrados de memoria pero Supabase los
-    // sigue conteniendo. Al reiniciar Render, vuelven a aparecer y el delete
-    // se "deshace" silenciosamente. Restauramos memoria a estado previo.
-    try {
-      state.cdg[contId] = prev.cdg;
-      Object.keys(prev.teoricoSaved).forEach(function(k){ state.teorico[k] = prev.teoricoSaved[k]; });
-      Object.keys(prev.fisicoSaved).forEach(function(k){  state.fisico[k]  = prev.fisicoSaved[k]; });
-      Object.keys(prev.asignSaved).forEach(function(k){   state.asignaciones[k] = prev.asignSaved[k]; });
-      Object.keys(prev.puertaSaved).forEach(function(k){
-        if(!state.puertas) state.puertas = {};
-        state.puertas[k] = prev.puertaSaved[k];
-      });
-      Object.keys(prev.metaSaved).forEach(function(k){
-        if(!state.conteoMetadata) state.conteoMetadata = {};
-        state.conteoMetadata[k] = prev.metaSaved[k];
-      });
-      state.version = prev.version;
-      console.log('CDG delete save: rollback memoria OK');
-    } catch(rbErr) {
-      console.log('CDG delete save: rollback memoria FAILED (raro):', rbErr.message);
-    }
     return res.status(500).json({
       ok: false,
-      error: 'No se pudo borrar el CDG. Reintentá. (' + saveErr.message + ')'
+      error: 'El CDG sí se borró de memoria, pero NO quedó guardado. Si recargás puede reaparecer. Reintentá. (' + saveErr.message + ')'
     });
   }
 
@@ -1028,9 +955,26 @@ function mergeSheet(rows, type) {
   if(colCont < 0 || colSku < 0 || colDesc < 0 || colQty < 0) return 0;
 
   const g = (row, i) => i >= 0 ? row[i] : '';
+  // FIX (sáb 23-may-2026): el WMS de Embarques trae DOS columnas relevantes para
+  // proveedor: 'Proveedor' (código, ej. HPP001199) y 'Nombre' (razón social, ej.
+  // LONGTAI TRADING FZCO). Antes solo se capturaba el código en codProv, así que
+  // raw.nomProv quedaba undefined y getOrigenDesc (export) recibía el código →
+  // 'Descripción de origen' salía como el código en vez de Truper China/México.
+  // Capturamos el 'Nombre' que aparece JUSTO DESPUÉS de la columna Proveedor,
+  // para no confundirlo con el 'Nombre' de descripción del SKU (que va después de SKU).
+  const cCodProvIdx = findCol(hdr, ['proveedor','código de proveedor','codigo de proveedor']);
+  let cNomProvIdx = -1;
+  if(cCodProvIdx >= 0) {
+    for(let i = cCodProvIdx + 1; i < hdr.length; i++) {
+      if(hdr[i].includes('nombre')) { cNomProvIdx = i; break; }
+      // No buscar más allá del SKU: el 'Nombre' de descripción va después del SKU
+      if(hdr[i] === 'sku' || hdr[i].includes('sku')) break;
+    }
+  }
   const ex = {
     cFecha:    findCol(hdr, ['fecha']),
-    cCodProv:  findCol(hdr, ['proveedor','código de proveedor']),
+    cCodProv:  cCodProvIdx,
+    cNomProv:  cNomProvIdx,
     cLineas:   findCol(hdr, ['lineas','líneas']),
     cStatus:   findCol(hdr, ['status']),
     cOC:       findCol(hdr, ['orden de compra','# orden']),
@@ -1061,6 +1005,7 @@ function mergeSheet(rows, type) {
         raw: {
           fecha:     g(row, ex.cFecha),
           codProv:   g(row, ex.cCodProv),
+          nomProv:   g(row, ex.cNomProv),
           lineas:    g(row, ex.cLineas),
           status:    g(row, ex.cStatus),
           oc:        g(row, ex.cOC),
