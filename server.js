@@ -332,22 +332,32 @@ app.post('/api/cdg/finalizar', async (req, res) => {
   };
   const num = traslado || contId;
   if(!state.teorico[num]) {
+    // FIX (sáb 23-may-2026): raw.origen y raw.status ahora reflejan el tipo real
+    // (KTM, CDG, Otros). Antes era hardcoded 'CDG' lo que hacía que el export
+    // de Traslados mostrara "CDG" para TODOS los contenedores finalizados desde
+    // esta sección, incluyendo los KTM. Erick + Ever confirmaron 23-may que KTM
+    // debe verse como categoría distinta en el export.
+    var tipoEfectivo = tipo || 'CDG';
     state.teorico[num] = {
       type:         'Traslados',
       fromCDG:      true,
       cdgRef:       contId,
       cdgValidado:  true,
       cdgBloqueado: true,
+      cdgTipo:      tipoEfectivo,
       items: items.map(i => ({
         sku:  i.sku,
         desc: i.desc,
         qty:  i.qty,
-        raw:  { origen:'CDG', status:'CDG Validado', fecha:new Date().toLocaleDateString('es') }
+        raw:  { origen:tipoEfectivo, status:tipoEfectivo+' Validado', fecha:new Date().toLocaleDateString('es') }
       }))
     };
     state.fisico[num] = null;
   } else {
     state.teorico[num].cdgValidado = true;
+    // Asegurar que el tipo quede registrado también si el contenedor ya existía
+    // (defensivo, no rompe nada si ya estaba)
+    if(tipo && !state.teorico[num].cdgTipo) state.teorico[num].cdgTipo = tipo;
   }
   addHistorial(usuario, 'CDG finalizado → Traslado', contId+' → '+num);
   state.version++;
