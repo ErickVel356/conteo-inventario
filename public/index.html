@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.11 · 23-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.18 · 23-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.11 · 23-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.18 · 23-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -1661,19 +1661,223 @@ function saveDirectToSupabase() {
         try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
       }
       // STEP 2: Merge — overwrite the fields the client owns, KEEP the rest
+      // FIX (sáb 23-may-2026 PM, rev Claude2+ChatGPT): merge SELECTIVO de teorico
+      // por contenedor. Antes hacíamos `teorico: teorico`, lo que reemplazaba el
+      // teorico entero de Supabase con el local de esta tablet. Si la tablet
+      // tenía estado desactualizado (polling no había traído clasificaciones
+      // recientes), las pisaba silenciosamente. Es la contraparte cliente del
+      // bug que arreglamos en server v14 (mergeSheet).
+      //
+      // Estrategia: para cada contenedor, partir del remoto (tiene clasificacion,
+      // clasificacionManual, cdgTipo, fromCDG, etc.) y sobreescribir SOLO los 3
+      // campos que el cliente realmente owns: items, type, fechaCarga.
+      //
+      // IMPORTANTE (rev Claude2 sobre v5.2.14): usar lista EXPLÍCITA, no localT
+      // completo. Razón: el polling (línea 3857: teorico = s.teorico) trae al
+      // teorico local también las propiedades clasificacion/cdgTipo. Si usáramos
+      // Object.assign({}, remoteT, localT), una tablet con clasificación vieja
+      // en su polling podría pisar el cambio reciente del supervisor en una
+      // ventana de 5s (entre cambio del supervisor y próximo polling de la
+      // tablet). El cliente NO owns clasificacion — esa la owns
+      // /api/clasificacion/set. La lista explícita la deja siempre del remoto.
+      //
+      // Simétrico con server v14 (mergeSheet también usa lista explícita
+      // {items, type, fechaCarga}).
+      var mergedTeorico = {};
+      Object.keys(teorico||{}).forEach(function(cont){
+        var localT = teorico[cont] || {};
+        var remoteT = (current.teorico && current.teorico[cont]) || {};
+        mergedTeorico[cont] = Object.assign({}, remoteT, {
+          items:      localT.items,
+          type:       localT.type,
+          fechaCarga: localT.fechaCarga
+        });
+      });
+      // Preservar contenedores remotos que el cliente local no tenga (defensa)
+      Object.keys(current.teorico||{}).forEach(function(cont){
+        if(!mergedTeorico[cont]) mergedTeorico[cont] = current.teorico[cont];
+      });
+      // FIX (sáb 23-may-2026 PM, BLINDADO COMPLETO rev Erick+Claude2+ChatGPT):
+      // El mismo patrón de pisado total existía en fisico/asignaciones/puertas/
+      // conteoMetadata. Aunque la ventana de pérdida es más estrecha que la de
+      // teorico (mitigada por polling 5s y el server.js como fuente principal),
+      // el físico es el dato MEDULAR del sistema y no podemos arriesgarlo.
+      //
+      // Estrategia por campo:
+      //
+      // FISICO: merge por celda usando timestamp más reciente. Si solo una
+      //   tablet tiene dato en [cont][idx], esa gana. Si ambas tienen, la del
+      //   ts más reciente gana. Es lo correcto: nunca se pierde un conteo.
+      //
+      // ASIGNACIONES: unión sin duplicados por contenedor. Nunca se pierde una
+      //   asignación de nadie. Es seguro mezclar.
+      //
+      // PUERTAS y CONTEOMETADATA: el cliente solo "owns" lo que tocó
+      //   explícitamente vía saveMetadata. Mantenemos un set window._dirtyMeta
+      //   con los contenedores tocados localmente. En el merge, solo esos
+      //   ganan vs el remoto. Lo demás siempre del remoto. Esto cierra el bug
+      //   reportado por ChatGPT donde saveMetadata podría pisar puertas/meta
+      //   de otra tablet.
+      //
+      // HISTORIAL: ya estaba con .slice(-50) pero seguía siendo reemplazo total.
+      //   Cambio: merge por timestamp, manteniendo los últimos 100 de la unión
+      //   (más seguro contra pérdida de auditoría).
+      //
+      // HALLAZGOS: ya se maneja vía saveHallazgoDirectToSupabase con merge
+      //   por id. Acá solo preservamos lo que ya hay.
+
+      // ─── FISICO merge por celda (ts wins) ──────────────────────────────
+      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG#7): recortar fisico a la
+      // longitud del teorico para evitar resurrección de items eliminados.
+      // Escenario: HP26-0627 estaba duplicado con 126 items. La dedup SQL lo
+      // reduce a 63 items. Si una tablet con fisico viejo de 126 entradas
+      // hace saveDirectToSupabase, el merge usaba maxLen=max(126,63)=126,
+      // resucitando los conteos de los índices 64-126 que la dedup eliminó.
+      // Mismo patrón aplica si se elimina un contenedor: items huérfanos
+      // pueden quedar en fisico inflando el state.
+      //
+      // El recorte usa la longitud del teorico YA MERGEADO (mergedTeorico),
+      // que es la fuente de verdad post-merge. Se hace en TODOS los paths
+      // (solo local, solo remoto, ambos) porque cualquiera puede tener
+      // entradas huérfanas.
+      function trimFisicoToTeorico(arr, contKey){
+        if(!Array.isArray(arr)) return arr;
+        var teoLen = (mergedTeorico[contKey] && Array.isArray(mergedTeorico[contKey].items))
+          ? mergedTeorico[contKey].items.length : 0;
+        if(teoLen > 0 && arr.length > teoLen) {
+          // Log diagnóstico (rev Claude3): útil para verificar post-dedup que el
+          // recorte está funcionando. Si vemos esto en consola, significa que
+          // una tablet tenía state viejo y el recorte salvó la integridad.
+          console.warn('[BUG#7] trimFisicoToTeorico: recortando', contKey, 'de', arr.length, 'a', teoLen);
+          return arr.slice(0, teoLen);
+        }
+        return arr;
+      }
+      var mergedFisico = {};
+      var allContsFisico = {};
+      Object.keys(fisico||{}).forEach(function(c){ allContsFisico[c]=1; });
+      Object.keys(current.fisico||{}).forEach(function(c){ allContsFisico[c]=1; });
+      Object.keys(allContsFisico).forEach(function(cont){
+        var localArr  = (fisico && fisico[cont]) || null;
+        var remoteArr = (current.fisico && current.fisico[cont]) || null;
+        if(!localArr && !remoteArr) { mergedFisico[cont] = null; return; }
+        if(!localArr)  { mergedFisico[cont] = trimFisicoToTeorico(remoteArr, cont); return; }
+        if(!remoteArr) { mergedFisico[cont] = trimFisicoToTeorico(localArr, cont);  return; }
+        // Ambos tienen array: merge por índice
+        var maxLen = Math.max(localArr.length, remoteArr.length);
+        var out = new Array(maxLen);
+        for(var i=0; i<maxLen; i++){
+          var L = localArr[i]  || null;
+          var R = remoteArr[i] || null;
+          if(!L && !R) { out[i] = null; continue; }
+          if(!L) { out[i] = R; continue; }
+          if(!R) { out[i] = L; continue; }
+          // Ambos tienen datos: el de ts más reciente gana
+          var lAt = L.lastAt || 0;
+          var rAt = R.lastAt || 0;
+          // Si ninguno tiene lastAt, intentar con ts (string, peor comparación pero algo)
+          if(!lAt && !rAt) {
+            out[i] = (L.ts && R.ts) ? (L.ts >= R.ts ? L : R) : (L.fisico !== undefined && L.fisico !== '' ? L : R);
+          } else {
+            out[i] = lAt >= rAt ? L : R;
+          }
+        }
+        mergedFisico[cont] = trimFisicoToTeorico(out, cont);
+      });
+
+      // ─── ASIGNACIONES unión sin duplicados ──────────────────────────────
+      var mergedAsign = {};
+      var allContsA = {};
+      Object.keys(asignaciones||{}).forEach(function(c){ allContsA[c]=1; });
+      Object.keys(current.asignaciones||{}).forEach(function(c){ allContsA[c]=1; });
+      Object.keys(allContsA).forEach(function(cont){
+        var L = (asignaciones && asignaciones[cont]) || [];
+        var R = (current.asignaciones && current.asignaciones[cont]) || [];
+        if(!Array.isArray(L)) L = [];
+        if(!Array.isArray(R)) R = [];
+        var seen = {};
+        var out = [];
+        R.forEach(function(u){ if(u && !seen[u]) { seen[u]=1; out.push(u); } });
+        L.forEach(function(u){ if(u && !seen[u]) { seen[u]=1; out.push(u); } });
+        mergedAsign[cont] = out;
+      });
+
+      // ─── PUERTAS solo lo dirty del local gana ──────────────────────────
+      var dirtyMeta = window._dirtyMetadata || {};
+      var mergedPuertas = Object.assign({}, current.puertas || {});
+      Object.keys(puertas||{}).forEach(function(cont){
+        if(dirtyMeta[cont]) mergedPuertas[cont] = puertas[cont];
+      });
+
+      // ─── CONTEOMETADATA solo lo dirty del local gana ───────────────────
+      var mergedConteoMeta = Object.assign({}, current.conteoMetadata || {});
+      Object.keys(conteoMetadata||{}).forEach(function(cont){
+        if(dirtyMeta[cont]) mergedConteoMeta[cont] = conteoMetadata[cont];
+      });
+
+      // ─── HISTORIAL merge por ts, top 100 ───────────────────────────────
+      var localHist  = Array.isArray(historial) ? historial : [];
+      var remoteHist = Array.isArray(current.historial) ? current.historial : [];
+      // Concat, ordenar por ts/at descendente, top 100
+      var allHist = remoteHist.concat(localHist);
+      // Deduplicar por (ts + usuario + accion) para evitar entradas idénticas
+      var seenHist = {};
+      var dedupHist = [];
+      allHist.forEach(function(h){
+        if(!h) return;
+        var k = (h.ts||'') + '|' + (h.usuario||'') + '|' + (h.accion||'');
+        if(!seenHist[k]) { seenHist[k]=1; dedupHist.push(h); }
+      });
+      // Ordenar por at numérico si existe, sino por ts string
+      dedupHist.sort(function(a,b){
+        var aV = a.at || 0;
+        var bV = b.at || 0;
+        if(aV && bV) return bV - aV;
+        return (b.ts||'').localeCompare(a.ts||'');
+      });
+      var mergedHist = dedupHist.slice(0, 100);
+
+      // ─── HALLAZGOS merge por id (preservar remoto, agregar solo locales nuevos) ──
+      // FIX (sáb 23-may-2026 PM, rev Claude2): saveDirectToSupabase NO debería
+      // hacer cambios de hallazgos (eso lo maneja saveHallazgoDirectToSupabase
+      // con merge por id). Acá protegemos contra el pisado del array entero.
+      //
+      // Estrategia: el remoto es fuente de verdad para hallazgos. Solo agregamos
+      // hallazgos locales que el remoto NO tiene (caso raro: el cliente creó un
+      // hallazgo y todavía no se sincronizó). Si el remoto eliminó un hallazgo
+      // (tombstone implícito), NO lo reintroducimos.
+      var remoteHallazgos = Array.isArray(current.hallazgos) ? current.hallazgos : [];
+      var localHallazgos  = Array.isArray(hallazgos) ? hallazgos : [];
+      var remoteIds = {};
+      remoteHallazgos.forEach(function(h){ if(h && h.id) remoteIds[h.id] = 1; });
+      var mergedHallazgos = remoteHallazgos.slice();  // copia del remoto
+      // Agregar SOLO los locales que el remoto no tenga (id ausente en remoto)
+      localHallazgos.forEach(function(h){
+        if(h && h.id && !remoteIds[h.id]) {
+          mergedHallazgos.push(h);
+        }
+      });
+
       var today = new Date();
       var merged = Object.assign({}, current, {
-        teorico:        teorico,
-        fisico:         fisico,
-        asignaciones:   asignaciones,
-        historial:      (historial||[]).slice(-50),
-        hallazgos:      hallazgos || (current.hallazgos || []),
-        conteoMetadata: conteoMetadata || (current.conteoMetadata || {}),
-        puertas:        puertas || (current.puertas || {}),
+        teorico:        mergedTeorico,
+        fisico:         mergedFisico,
+        asignaciones:   mergedAsign,
+        historial:      mergedHist,
+        hallazgos:      mergedHallazgos,
+        conteoMetadata: mergedConteoMeta,
+        puertas:        mergedPuertas,
         date:           today.toDateString(),
         version:        (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
         // NOTE: cdg, costos, chat — preserved from `current` via Object.assign
       });
+      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG-A): la limpieza de
+      // window._dirtyMetadata se mueve al .then de éxito del POST (más abajo).
+      // Si la dejamos acá y el POST falla por red, perdemos el tracking de
+      // qué contenedores tenían metadata local pendiente, y un save posterior
+      // no re-aplicará los cambios de puerta/metadata del usuario.
+      // Es el mismo principio del rollback en error path: no descartar estado
+      // optimista hasta confirmar persistencia.
       // STEP 3: Write the merged payload back
       return fetch(SUPABASE_URL + '/rest/v1/app_state', {
         method: 'POST',
@@ -1693,6 +1897,10 @@ function saveDirectToSupabase() {
     }).then(function(){
       console.log('Direct Supabase save OK');
       // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar banner.
+      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG-A): limpiar _dirtyMetadata
+      // SOLO tras éxito confirmado del POST. Si el POST falló (red), el dirty
+      // sobrevive y se re-aplica en el próximo save.
+      if(window._dirtyMetadata) window._dirtyMetadata = {};
     }).catch(function(e){
       console.warn('Direct Supabase save failed:', e);
       if(typeof window.showNetworkBanner === 'function') {
@@ -4546,6 +4754,11 @@ function saveMetadata() {
   if(pl) conteoMetadata[current].placas        = pl.value;
   if(pv) puertas[current] = pv.value;
   updateSummaryCard();
+  // FIX (sáb 23-may-2026 PM BLINDADO): marcar current como dirty para que
+  // saveDirectToSupabase aplique local solo en este contenedor (no pise
+  // puertas/conteoMetadata de OTROS contenedores tocados por otra tablet).
+  if(!window._dirtyMetadata) window._dirtyMetadata = {};
+  window._dirtyMetadata[current] = true;
   // ALWAYS save direct to Supabase (insurance against Render sleeping)
   saveDirectToSupabase();
   // Also fire the server endpoint (broadcasts to other clients via polling)
@@ -4921,7 +5134,10 @@ function showCDGHist(tipo) {
 
       var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
         +'<span style="font-size:.85rem;color:#666"><strong>'+keys.length+'</strong> conteo'+(keys.length!==1?'s':'')+' '+escH(tipo)+'</span>'
-        +'<button class="btn btn-sm btn-green" id="btn-cdg-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Excel</button>'
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+        +'<button class="btn btn-sm btn-green" id="btn-cdg-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Resumen</button>'
+        +'<button class="btn btn-sm" id="btn-cdg-hist-xlsx-analitica" data-tipo="'+escH(tipo)+'" style="background:#0066cc;color:#fff;font-weight:600" title="Exportar análitica con 42 columnas (formato Ever García)">📊 Exportar Analítica</button>'
+        +'</div>'
         +'</div>';
 
       h += '<div class="tbl-wrap" style="margin-bottom:0"><table>'
@@ -4962,10 +5178,19 @@ function showCDGHist(tipo) {
       h += '</tbody></table></div>';
       content.innerHTML = h;
 
-      // Wire Excel export
+      // Wire Excel export (resumen — formato actual)
       var btnXlsx = document.getElementById('btn-cdg-hist-xlsx');
       if(btnXlsx) btnXlsx.addEventListener('click', function(){
         exportCDGHistExcel(rows, tipo);
+      });
+
+      // FIX (sáb 23-may-2026, Capa 1 CDG): wire del botón nuevo "Exportar Analítica".
+      // Genera un xlsx con formato 42 columnas (Bloque D del comparativo Ever García).
+      // A diferencia del export "Resumen", este incluye también borradores (open) y
+      // tiene todas las columnas analíticas como los exports Hamilton.
+      var btnXlsxAna = document.getElementById('btn-cdg-hist-xlsx-analitica');
+      if(btnXlsxAna) btnXlsxAna.addEventListener('click', function(){
+        exportCDGAnalitica(rows, tipo);
       });
 
       // Wire individual report
@@ -5221,6 +5446,131 @@ function viewCDGReadOnly(id, c){
     });
   }
 })();
+
+// FIX (sáb 23-may-2026, Capa 1 CDG): export analítica formato Bloque D Ever García.
+// Genera un xlsx con 42 columnas (B a AT) por cada CDG/KTM del historial.
+// Incluye TODOS (closed + open). Para borradores muchos campos quedan vacíos
+// porque solo aplican post-finalización (físico, diferencia, costos calculados).
+//
+// Reusa los helpers de Hamilton: getOrigenDesc, getClasifContenedor, getFechaTrabajo,
+// fmtFechaDMA, getCobertura, getCosto.
+function exportCDGAnalitica(rows, tipo){
+  var wb = XLSX.utils.book_new();
+  var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:45}};
+  function sc(r,c,v){
+    if(v===null||v===undefined||v==='') return;
+    var ref = XLSX.utils.encode_cell({r:r,c:c});
+    ws[ref] = { v:v, t:typeof v==='number'?'n':'s' };
+    if(r>rng.e.r) rng.e.r=r;
+    if(c>rng.e.c) rng.e.c=c;
+  }
+
+  // Header rows (igual que Hamilton Traslados pero el título dice "Traslados CDG")
+  var ds = new Date().toLocaleDateString('es').replace(/\//g,'-');
+  sc(1,1,'Compañía'); sc(1,3,'PT-Analítica Traslados CDG');
+  sc(4,1,'Fecha');    sc(4,3,ds);
+
+  // Headers (cols B a AT — mismo orden que Hamilton Traslados)
+  var H = ['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Lineas','Status',
+    'SKU','Descripción','Cantidad','Unidad','Unidades','Origen','Destino',
+    'Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón',
+    'Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría',
+    'Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría',
+    'Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia',
+    'Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
+    'Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos',
+    'Auditado por','Fecha de la revisión por el auditor','Clasificación de Contenedor'];
+  H.forEach(function(h,c){ sc(6,c,h); });
+
+  var dr = 7;
+  rows.forEach(function(r){
+    var contId = r.id;
+    var c = r.c;  // state.cdg[contId]
+    // FIX (sáb 23-may-2026, rev ChatGPT): endurecer guarda. La versión anterior
+    // protegía null pero NO cubría c.items={} ni c.items="texto" (truthy pero
+    // sin .forEach). Array.isArray + length cierra esos casos.
+    if(!c || !Array.isArray(c.items) || !c.items.length) return;
+
+    // Status según si está closed o open
+    var statusSistema = (c.bloqueado === true || c.status === 'closed') ? 'Cerrado' : 'Borrador';
+    var tipoCDG = c.tipo || tipo || 'CDG';
+
+    // Si está closed, tiene contraparte en state.teorico — buscamos datos extras ahí
+    var tNum = c.traslado || contId;
+    var inTeorico = (typeof teorico !== 'undefined' && teorico[tNum]) ? true : false;
+    var fis = inTeorico && typeof fisico !== 'undefined' && fisico[tNum] ? fisico[tNum] : null;
+    var meta = (typeof conteoMetadata !== 'undefined' && conteoMetadata[tNum]) ? conteoMetadata[tNum] : {};
+    var puerta = (typeof puertas !== 'undefined' && puertas[tNum]) || '';
+
+    // FIX (sáb 23-may-2026, rev ChatGPT): cambiar "Pendiente" por "Sin cierre"
+    // para el caso open. "Pendiente" en auditoría se interpreta como "falta
+    // analizar"; "Sin cierre" comunica mejor que el conteo todavía no se
+    // finalizó (el supervisor no ha cerrado el CDG). Más semántico.
+    var clasifCont = inTeorico ? getClasifContenedor(tNum) : (statusSistema === 'Cerrado' ? '' : 'Sin cierre');
+    var fechaTrabCont = inTeorico ? getFechaTrabajo(tNum) : fmtFechaDMA(c.fecha);
+
+    c.items.forEach(function(item, i){
+      var fiObj = fis ? fis[i] : null;
+      var fv = fiObj ? (fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null) : null;
+      var dv = fiObj && fiObj.daniado!==undefined ? Number(fiObj.daniado)||0 : 0;
+      var tot = fv!==null ? fv+dv : null;
+      var diff = tot!==null ? tot-item.qty : null;
+      var eva = diff===null ? '' : (diff===0?'Exacto':diff>0?'Sobrante':'Faltante');
+      var cUnit = getCosto(item.sku);
+      var faltU = diff!==null && diff<0 ? Math.abs(diff) : 0;
+      var sobrU = diff!==null && diff>0 ? diff : 0;
+      // FIX bug 3b: quien por línea si existe; sino c.autor (autor del CDG)
+      var quien = (fiObj && fiObj.quien) ? fiObj.quien : (c.autor || '');
+
+      sc(dr,1,contId);                                              // B Número
+      // C # Ingreso, D Doc. SAP — no disponibles en CDG manual, vacío
+      sc(dr,4,fechaTrabCont);                                       // E Fecha
+      sc(dr,5,tipoCDG);                                             // F Tipo (CDG/KTM)
+      sc(dr,6,c.items.length);                                      // G Lineas
+      sc(dr,7,statusSistema);                                       // H Status (Cerrado/Borrador)
+      sc(dr,8,item.sku);                                            // I SKU
+      sc(dr,9,item.desc||item.sku);                                 // J Descripción
+      sc(dr,10,item.qty);                                           // K Cantidad
+      // L Unidad, M Unidades — no aplican en CDG, vacío
+      // N Origen, O Destino — no aplican en CDG manual, vacío
+      sc(dr,15,getOrigenDesc('', tipoCDG));                         // P Descripción de origen (CDG/KTM)
+      sc(dr,16,statusSistema);                                      // Q Status sistema (Cerrado o Borrador)
+      sc(dr,17,fmtFechaDMA(meta.fechaIngreso));                     // R Fecha de ingreso a Hamilton
+      sc(dr,18,fmtFechaDMA(meta.fechaFurgon));                      // S Fecha apertura de furgón
+      sc(dr,19,getCobertura(fiObj));                                // T Cobertura
+      sc(dr,20,puerta);                                             // U Número de puerta
+      sc(dr,21,meta.placas||'');                                    // V Placas de Furgón
+      sc(dr,22,tot!==null?tot:'');                                  // W Físico S/Auditoría
+      sc(dr,23,diff!==null?diff:'');                                // X Diferencia auditoría
+      sc(dr,24,diff!==null?Math.abs(diff):'');                      // Y Diferencia auditoría [ABS]
+      sc(dr,25,faltU||'');                                          // Z Unidades faltantes
+      sc(dr,26,sobrU||'');                                          // AA Unidades sobrantes
+      sc(dr,27,dv||'');                                             // AB Unidades dañada
+      // AC Unidades incompletos — sin dato
+      sc(dr,29,eva);                                                // AD Evaluación
+      sc(dr,30,cUnit||'');                                          // AE Costo unitario
+      sc(dr,31,cUnit?cUnit*item.qty:'');                            // AF Costo total
+      sc(dr,32,tot!==null&&cUnit?cUnit*tot:'');                     // AG Costo físico
+      sc(dr,33,diff!==null&&cUnit?cUnit*diff:'');                   // AH Costo diferencia
+      sc(dr,34,diff!==null&&cUnit?Math.abs(cUnit*diff):'');         // AI Costo físico [ABS]
+      sc(dr,35,cUnit?cUnit*faltU:'');                               // AJ Costo faltante
+      sc(dr,36,cUnit?cUnit*sobrU:'');                               // AK Costo sobrante
+      sc(dr,37,cUnit?cUnit*dv:'');                                  // AL Costo dañado
+      // AM Costo incompleto — sin dato
+      // AN/AO Comentarios, AP/AQ Ref. — sin dato
+      sc(dr,43,quien);                                              // AR Auditado por
+      sc(dr,44,fechaTrabCont);                                      // AS Fecha de revisión
+      sc(dr,45,clasifCont);                                         // AT Clasificación de Contenedor
+      dr++;
+    });
+  });
+
+  ws['!ref'] = XLSX.utils.encode_range(rng);
+  XLSX.utils.book_append_sheet(wb, ws, 'PT-Analítica Traslados CDG');
+
+  var fname = 'PT-Traslados_CDG_'+escH(tipo).replace(/\W+/g,'_')+'_'+ds+'.xlsx';
+  XLSX.writeFile(wb, fname);
+}
 
 // Export Excel del historial completo de un tipo
 function exportCDGHistExcel(rows, tipo){
