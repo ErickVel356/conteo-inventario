@@ -1049,13 +1049,26 @@ function mergeSheet(rows, type) {
     // FIX (rev Claude2): usar timezone Guatemala (America/Guatemala) en vez
     // de UTC. Sin esto, uploads del Excel a las 18:00+ hora local quedaban
     // con fecha del día siguiente.
-    var fechaCargaPrev = (state.teorico[cont] && state.teorico[cont].fechaCarga) || null;
+    //
+    // FIX (sáb 23-may-2026 PM): preservar TODAS las propiedades de auditoría
+    // del contenedor previo cuando se re-sube el Excel maestro. Antes solo
+    // preservábamos fechaCarga, lo que provocaba la pérdida silenciosa de:
+    //   - clasificacion         (override manual del supervisor)
+    //   - clasificacionManual   (marca ★ Manual)
+    //   - cdgTipo, fromCDG, cdgRef, cdgValidado, cdgBloqueado (estado CDG)
+    //   - y cualquier campo futuro que se agregue a teorico[cont]
+    // Estrategia: NO reemplazar el objeto entero. Solo reemplazar items+type+
+    // fechaCarga (si es contenedor nuevo) y dejar TODO lo demás intacto.
+    // Esto preserva el principio del fix de fechaCarga pero generalizado.
+    var prev = state.teorico[cont] || {};
+    var fechaCargaPrev = prev.fechaCarga || null;
     var hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
-    state.teorico[cont] = {
+    // Construir el objeto nuevo partiendo del previo (preserva todo lo de auditoría)
+    state.teorico[cont] = Object.assign({}, prev, {
       items: newConts[cont],
       type,
       fechaCarga: fechaCargaPrev || hoy
-    };
+    });
     // Preserve existing fisico data — never overwrite conteo work
     if(!state.fisico[cont]) state.fisico[cont] = null;
   });
