@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.18 · 23-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.21 · 24-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.18 · 23-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.21 · 24-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -803,6 +803,16 @@ textarea.field-inp{resize:vertical;min-height:72px}
               <button class="filter-tipo-btn" data-tipo="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Ambos</button>
               <button class="filter-tipo-btn" data-tipo="Embarques" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Embarques</button>
               <button class="filter-tipo-btn" data-tipo="Traslados" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Traslados</button>
+            </div>
+            <!-- FIX (dom 24-may-2026): filtro Clasificación. Permite ver solo
+                 Auditado / En Revisión / No auditado / Todos. Estado en
+                 window._filterClasif. Mismo patrón que el filtro Tipo. -->
+            <label style="font-size:.78rem;color:#666;margin-left:8px">Clasif:</label>
+            <div id="filter-clasif-group" role="group" style="display:inline-flex;gap:2px;background:#f0f0ee;padding:3px;border-radius:8px">
+              <button class="filter-clasif-btn" data-clasif="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Todas</button>
+              <button class="filter-clasif-btn" data-clasif="Auditado" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Auditado</button>
+              <button class="filter-clasif-btn" data-clasif="En Revisión" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">En Revisión</button>
+              <button class="filter-clasif-btn" data-clasif="No auditado" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">No auditado</button>
             </div>
             <span style="display:inline-block;width:1px;height:24px;background:#ddd;margin:0 4px"></span>
             <label style="font-size:.78rem;color:#666">Filtrar Fecha de trabajo:</label>
@@ -1392,7 +1402,13 @@ function renderConteo(){
     // Treat null/undefined as empty (not 0). Only show actual numbers entered by the user.
     var fval = (sv!=null && sv.fisico!==undefined && sv.fisico!==null) ? sv.fisico : '';
     var dval = (sv!=null && sv.daniado!==undefined && sv.daniado!==null) ? sv.daniado : '';
-    var total=(fval!==''&&dval!=='')?(Number(fval)+Number(dval)):fval!==''?Number(fval):'';
+    // FIX (dom 24-may-2026): Total físico = solo físico, Dañado es informativo.
+    // Antes era (fval + dval) lo que confundía al equipo: si físico=100 y
+    // dañado=2, el total mostraba 102 y la diferencia daba +2 (sobrante falso).
+    // La regla de negocio (confirmada por Erick): Dañado NO suma ni resta al
+    // físico. Total Físico = Físico. Diferencia = Físico - Teórico. Dañado
+    // solo aparece como columna informativa y en el export para auditoría.
+    var total=fval!==''?Number(fval):'';
     var diff=total!==''?total-it.qty:null;
     var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
     var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
@@ -1687,10 +1703,21 @@ function saveDirectToSupabase() {
       Object.keys(teorico||{}).forEach(function(cont){
         var localT = teorico[cont] || {};
         var remoteT = (current.teorico && current.teorico[cont]) || {};
+        // FIX (dom 24-may-2026): NO pisar fechaCarga del remoto si el local
+        // está vacío. Caso reportado por Erick: tras re-subir Excel maestro,
+        // algunas fechaCarga se "cambiaron". Causa: una tablet con state
+        // cacheado (sin fechaCarga local) hizo saveDirectToSupabase, y el
+        // Object.assign con fechaCarga:undefined sobrescribió el remoto.
+        // Solo el supervisor tocando explícitamente la fecha debería poder
+        // cambiarla. Si el local no tiene, preservamos el remoto.
+        var fcLocal = localT.fechaCarga;
+        var fcEfectiva = (fcLocal !== undefined && fcLocal !== null && fcLocal !== '')
+          ? fcLocal
+          : remoteT.fechaCarga;
         mergedTeorico[cont] = Object.assign({}, remoteT, {
           items:      localT.items,
           type:       localT.type,
-          fechaCarga: localT.fechaCarga
+          fechaCarga: fcEfectiva
         });
       });
       // Preservar contenedores remotos que el cliente local no tenga (defensa)
@@ -2033,13 +2060,32 @@ function buildReporte(){
   // Estado guardado en window._filterTipo ('todos' | 'Embarques' | 'Traslados').
   // Default 'todos' (sin filtrar). Se persiste en memoria mientras dura la sesión.
   var filterTipo = window._filterTipo || 'todos';
+  // FIX (dom 24-may-2026): filtro Clasificación. Mismo patrón que filterTipo.
+  // Valores: 'todos' | 'Auditado' | 'En Revisión' | 'No auditado'.
+  var filterClasif = window._filterClasif || 'todos';
   var contsFiltrados = conts.slice();
 
   // Aplicar filtro Tipo (antes que filtros de fecha para mejor performance)
+  // FIX (dom 24-may-2026): contar cuántos contenedores quedan ocultos por cada
+  // filtro, para mostrarlos al usuario en el banner informativo.
+  var ocultosTipo = 0;
   if(filterTipo && filterTipo !== 'todos') {
+    var antesT = contsFiltrados.length;
     contsFiltrados = contsFiltrados.filter(function(c){
       return teorico[c] && teorico[c].type === filterTipo;
     });
+    ocultosTipo = antesT - contsFiltrados.length;
+  }
+
+  // Aplicar filtro Clasificación. Usa getClasifContenedor (helper global) que
+  // ya replica la lógica del Resumen (manual si existe, automática si no).
+  var ocultosClasif = 0;
+  if(filterClasif && filterClasif !== 'todos') {
+    var antesC = contsFiltrados.length;
+    contsFiltrados = contsFiltrados.filter(function(c){
+      return getClasifContenedor(c) === filterClasif;
+    });
+    ocultosClasif = antesC - contsFiltrados.length;
   }
 
   // FIX (mar 19-may-2026): el filtro ahora opera sobre fechaCarga del teorico
@@ -2197,16 +2243,16 @@ function buildReporte(){
   document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
 
   // FIX (rev ChatGPT): mostrar contador de contenedores ocultos por filtro
+  // FIX (dom 24-may-2026): incluir también ocultos por Tipo y Clasificación
+  // (antes solo se contaban los ocultos por filtros de fecha).
   var infoEl = document.getElementById('filter-ocultos-info');
   if(infoEl) {
-    if(fechaDesde || fechaHasta) {
-      var partes = [];
-      if(ocultosSinFecha > 0)    partes.push(ocultosSinFecha + ' sin fecha');
-      if(ocultosFueraRango > 0)  partes.push(ocultosFueraRango + ' fuera de rango');
-      infoEl.textContent = partes.length ? '(' + partes.join(', ') + ' ocultos)' : '';
-    } else {
-      infoEl.textContent = '';
-    }
+    var partes = [];
+    if(ocultosTipo > 0)        partes.push(ocultosTipo + ' por tipo');
+    if(ocultosClasif > 0)      partes.push(ocultosClasif + ' por clasificación');
+    if(ocultosSinFecha > 0)    partes.push(ocultosSinFecha + ' sin fecha');
+    if(ocultosFueraRango > 0)  partes.push(ocultosFueraRango + ' fuera de rango');
+    infoEl.textContent = partes.length ? '(' + partes.join(', ') + ' ocultos)' : '';
   }
 
   // Wire click-to-edit en cada celda de fecha trabajo (después de pintar tbody)
@@ -2274,8 +2320,10 @@ function buildReporte(){
   // FIX (vie 22-may-2026 noche): wire dropdown Clasificación.
   // Solo se renderiza para supervisores. Al cambiar:
   //  1. Optimistic update local: teorico[c].clasificacion = nuevo valor
-  //  2. POST a Supabase directo (no hay endpoint server, usamos
-  //     saveDirectToSupabase que ya tenemos)
+  //  2. POST a /api/clasificacion/set (server v11+) — actualiza memoria del
+  //     server Y persiste a Supabase atómicamente. ANTES (pre-v5.2.7) se
+  //     usaba saveDirectToSupabase directo, pero eso dejaba el state del
+  //     server desactualizado y causaba el bug B1 (pisado de clasificaciones).
   //  3. Si el supervisor elige el mismo valor que el calculado automático,
   //     igual lo guardamos como override (el badge ★ aparece)
   //  4. Esto NO mete clasificacion al state si el usuario es no-sup
@@ -2471,6 +2519,29 @@ function showToastPersistent(msg) {
     btn.addEventListener('click', function(){
       window._filterTipo = this.dataset.tipo || 'todos';
       refreshFilterTipoUI();
+      buildReporte();
+    });
+  });
+
+  // FIX (dom 24-may-2026): wire filtro Clasificación. Mismo patrón que Tipo.
+  window._filterClasif = window._filterClasif || 'todos';
+  function refreshFilterClasifUI(){
+    document.querySelectorAll('.filter-clasif-btn').forEach(function(b){
+      var activo = b.dataset.clasif === window._filterClasif;
+      if(activo) {
+        b.style.background = '#1a1a1a';
+        b.style.color = '#fff';
+      } else {
+        b.style.background = 'transparent';
+        b.style.color = '#666';
+      }
+    });
+  }
+  refreshFilterClasifUI();
+  document.querySelectorAll('.filter-clasif-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      window._filterClasif = this.dataset.clasif || 'todos';
+      refreshFilterClasifUI();
       buildReporte();
     });
   });
@@ -3366,6 +3437,142 @@ function loadCostFile(fileObj){
 /* ══════════════════════════════════════════════════════════════════
    EXPORT PT-ANALÍTICA
 ══════════════════════════════════════════════════════════════════ */
+
+// FIX (dom 24-may-2026): los 6 helpers de export estaban anidados dentro
+// de exportExcel() (closure local). Eso impedía que exportCDGAnalitica
+// (función global) los usara — tiraba "getClasifContenedor is not defined".
+// Solución: extraerlos a scope global. Las declaraciones function se
+// hoistean en su scope, así que exportExcel() los sigue usando por
+// closure léxico igual que antes.
+
+// Helper: origen description (works for both embarques and traslados)
+function getOrigenDesc(nomProv, origenCod){
+  // Traslado: check origen code first (lógica del comparativo Ever García 22-may)
+  // Primera letra del Origen: 7→Carga Global Z21, 4→CATM2, 5→Tical Unisur 4, T→Tical Unisur 3
+  // Lo que no esté en eso es CDG.
+  var cod = String(origenCod||'').trim();
+  if(cod){
+    // FIX (sáb 23-may-2026, rev Claude2): respetar KTM como categoría propia.
+    // El server v13 marca raw.origen='KTM' al finalizar conteos CDG con tipo='KTM'.
+    // Antes todos caían al fallback "CDG", mezclando KTM con CDG en el export.
+    // Ever García confirmó 23-may que KTM debe verse como categoría distinta.
+    // NOTA: la opción "Otro..." del select CDG no se usa en producción hoy;
+    // si en el futuro se usa, hay que cerrar el flujo cliente→server→export
+    // (Claude2 detectó que el texto libre del usuario se exporta como "CDG").
+    // Documentado en backlog.
+    var codUpper = cod.toUpperCase();
+    if(codUpper === 'KTM') return 'KTM';
+    var first = cod.charAt(0).toUpperCase();
+    if(first === '7') return 'Carga Global Z21';
+    if(first === '4') return 'CATM2';
+    if(first === '5') return 'Tical Unisur 4';
+    if(first === 'T') return 'Tical Unisur 3';
+    return 'CDG';
+  }
+  // Embarque: check provider name (lógica del comparativo Ever García 22-may)
+  // LONGTAI TRADING FZCO → Truper China; TRUPER HERRAMIENTAS → Truper México
+  var p = String(nomProv||'').toUpperCase();
+  if(p.indexOf('LONGTAI')>=0||p.indexOf('CHINA')>=0) return 'Truper China';
+  if(p.indexOf('TRUPER')>=0) return 'Truper México';
+  return nomProv||cod||'';
+}
+
+// Helper: cobertura
+function getCobertura(fiObj){
+  if(!fiObj) return 'En revisión';
+  if(fiObj.cobertura) return fiObj.cobertura;
+  if(fiObj.fisico!==undefined && fiObj.fisico!==null && fiObj.fisico!=='') return 'Auditado';
+  return 'En revisión';
+}
+
+// FIX (sáb 23-may-2026): helpers nuevos para los exportables Embarques+Traslados
+// según el comparativo validado por Ever García.
+
+// Helper: mapping de Status del WMS → Status sistema (lógica de cadena)
+// Por Recibir → Recibiendose | Recibiendose → Ubicandose | Ubicandose → Cerrados | Cerrados → Cerrados
+function mapStatusSistema(status){
+  var s = String(status||'').trim().toLowerCase();
+  if(!s) return '';
+  if(s.indexOf('por recibir')>=0) return 'Recibiendose';
+  if(s.indexOf('recibiend')>=0) return 'Ubicandose';
+  if(s.indexOf('ubicand')>=0) return 'Cerrados';
+  if(s.indexOf('cerrad')>=0) return 'Cerrados';
+  return status || '';
+}
+
+// Helper: formatear cualquier fecha a DD/MM/AAAA.
+// Acepta: 'YYYY-MM-DD', 'DD/MM/YYYY', 'DD-MM-YYYY', Date, número Excel, ISO.
+// Devuelve '' si no se puede parsear.
+function fmtFechaDMA(val){
+  if(val === null || val === undefined || val === '') return '';
+  var s = String(val).trim();
+  if(!s) return '';
+  // Si ya está en formato DD/MM/YYYY, devolvemos tal cual
+  var m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){
+    var d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3];
+    if(y.length===2) y = '20'+y;
+    // Detectar si viene como YYYY-MM-DD (año primero)
+    if(parseInt(m[1],10) > 31){
+      return m[3].padStart(2,'0')+'/'+mo+'/'+m[1];
+    }
+    return d+'/'+mo+'/'+y;
+  }
+  // YYYY-MM-DD ISO (con T opcional)
+  var m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m2){
+    return m2[3]+'/'+m2[2]+'/'+m2[1];
+  }
+  // Intentar parsear como Date
+  try {
+    var d2 = new Date(s);
+    if(!isNaN(d2.getTime())){
+      var dd = String(d2.getDate()).padStart(2,'0');
+      var mm = String(d2.getMonth()+1).padStart(2,'0');
+      var yy = d2.getFullYear();
+      return dd+'/'+mm+'/'+yy;
+    }
+  } catch(_e){}
+  return s;
+}
+
+// Helper: clasificación efectiva del contenedor (manual si existe, automática si no)
+// Replica la lógica de buildReporte para que el export refleje exactamente lo que
+// el supervisor ve en el Resumen.
+function getClasifContenedor(contId){
+  var t = teorico[contId];
+  if(!t) return '';
+  // 1) Override manual del supervisor (v5.2.7+)
+  if(t.clasificacion) return t.clasificacion;
+  // 2) Automática: por % cobertura
+  var items = t.items || [];
+  var fis = fisico[contId];
+  var lineasContadas = 0;
+  if(fis){
+    for(var k=0;k<fis.length;k++){
+      var fObj = fis[k];
+      if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== ''){
+        lineasContadas++;
+      } else if(typeof fObj === 'number' && !isNaN(fObj)){
+        lineasContadas++;
+      }
+    }
+  }
+  var cobertura = items.length > 0 ? Math.round((lineasContadas / items.length) * 100) : 0;
+  if(cobertura >= 100) return 'Auditado';
+  if(cobertura > 0)    return 'En Revisión';
+  return 'No auditado';
+}
+
+// Helper: fecha de trabajo del contenedor (la que aparece en el Resumen).
+// FIX bug 3a (vie 22-may-2026 PM): el export usaba la fecha de descarga del Excel,
+// pero el equipo necesita la fecha asignada al contenedor (fechaCarga del teorico).
+function getFechaTrabajo(contId){
+  var t = teorico[contId];
+  if(!t || !t.fechaCarga) return '';
+  return fmtFechaDMA(t.fechaCarga);
+}
+
 function exportExcel(){
   // Build container selection
   var scope = (document.getElementById('export-scope')||{}).value||'all-one';
@@ -3397,133 +3604,10 @@ function exportExcel(){
   var filtEmb   = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
   var filtTrasl = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
 
-  // Helper: origen description (works for both embarques and traslados)
-  function getOrigenDesc(nomProv, origenCod){
-    // Traslado: check origen code first (lógica del comparativo Ever García 22-may)
-    // Primera letra del Origen: 7→Carga Global Z21, 4→CATM2, 5→Tical Unisur 4, T→Tical Unisur 3
-    // Lo que no esté en eso es CDG.
-    var cod = String(origenCod||'').trim();
-    if(cod){
-      // FIX (sáb 23-may-2026, rev Claude2): respetar KTM como categoría propia.
-      // El server v13 marca raw.origen='KTM' al finalizar conteos CDG con tipo='KTM'.
-      // Antes todos caían al fallback "CDG", mezclando KTM con CDG en el export.
-      // Ever García confirmó 23-may que KTM debe verse como categoría distinta.
-      // NOTA: la opción "Otro..." del select CDG no se usa en producción hoy;
-      // si en el futuro se usa, hay que cerrar el flujo cliente→server→export
-      // (Claude2 detectó que el texto libre del usuario se exporta como "CDG").
-      // Documentado en backlog.
-      var codUpper = cod.toUpperCase();
-      if(codUpper === 'KTM') return 'KTM';
-      var first = cod.charAt(0).toUpperCase();
-      if(first === '7') return 'Carga Global Z21';
-      if(first === '4') return 'CATM2';
-      if(first === '5') return 'Tical Unisur 4';
-      if(first === 'T') return 'Tical Unisur 3';
-      return 'CDG';
-    }
-    // Embarque: check provider name (lógica del comparativo Ever García 22-may)
-    // LONGTAI TRADING FZCO → Truper China; TRUPER HERRAMIENTAS → Truper México
-    var p = String(nomProv||'').toUpperCase();
-    if(p.indexOf('LONGTAI')>=0||p.indexOf('CHINA')>=0) return 'Truper China';
-    if(p.indexOf('TRUPER')>=0) return 'Truper México';
-    return nomProv||cod||'';
-  }
-
-  // Helper: cobertura
-  function getCobertura(fiObj){
-    if(!fiObj) return 'En revisión';
-    if(fiObj.cobertura) return fiObj.cobertura;
-    if(fiObj.fisico!==undefined && fiObj.fisico!==null && fiObj.fisico!=='') return 'Auditado';
-    return 'En revisión';
-  }
-
-  // FIX (sáb 23-may-2026): helpers nuevos para los exportables Embarques+Traslados
-  // según el comparativo validado por Ever García.
-
-  // Helper: mapping de Status del WMS → Status sistema (lógica de cadena)
-  // Por Recibir → Recibiendose | Recibiendose → Ubicandose | Ubicandose → Cerrados | Cerrados → Cerrados
-  function mapStatusSistema(status){
-    var s = String(status||'').trim().toLowerCase();
-    if(!s) return '';
-    if(s.indexOf('por recibir')>=0) return 'Recibiendose';
-    if(s.indexOf('recibiend')>=0) return 'Ubicandose';
-    if(s.indexOf('ubicand')>=0) return 'Cerrados';
-    if(s.indexOf('cerrad')>=0) return 'Cerrados';
-    return status || '';
-  }
-
-  // Helper: formatear cualquier fecha a DD/MM/AAAA.
-  // Acepta: 'YYYY-MM-DD', 'DD/MM/YYYY', 'DD-MM-YYYY', Date, número Excel, ISO.
-  // Devuelve '' si no se puede parsear.
-  function fmtFechaDMA(val){
-    if(val === null || val === undefined || val === '') return '';
-    var s = String(val).trim();
-    if(!s) return '';
-    // Si ya está en formato DD/MM/YYYY, devolvemos tal cual
-    var m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-    if(m){
-      var d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3];
-      if(y.length===2) y = '20'+y;
-      // Detectar si viene como YYYY-MM-DD (año primero)
-      if(parseInt(m[1],10) > 31){
-        return m[3].padStart(2,'0')+'/'+mo+'/'+m[1];
-      }
-      return d+'/'+mo+'/'+y;
-    }
-    // YYYY-MM-DD ISO (con T opcional)
-    var m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if(m2){
-      return m2[3]+'/'+m2[2]+'/'+m2[1];
-    }
-    // Intentar parsear como Date
-    try {
-      var d2 = new Date(s);
-      if(!isNaN(d2.getTime())){
-        var dd = String(d2.getDate()).padStart(2,'0');
-        var mm = String(d2.getMonth()+1).padStart(2,'0');
-        var yy = d2.getFullYear();
-        return dd+'/'+mm+'/'+yy;
-      }
-    } catch(_e){}
-    return s;
-  }
-
-  // Helper: clasificación efectiva del contenedor (manual si existe, automática si no)
-  // Replica la lógica de buildReporte para que el export refleje exactamente lo que
-  // el supervisor ve en el Resumen.
-  function getClasifContenedor(contId){
-    var t = teorico[contId];
-    if(!t) return '';
-    // 1) Override manual del supervisor (v5.2.7+)
-    if(t.clasificacion) return t.clasificacion;
-    // 2) Automática: por % cobertura
-    var items = t.items || [];
-    var fis = fisico[contId];
-    var lineasContadas = 0;
-    if(fis){
-      for(var k=0;k<fis.length;k++){
-        var fObj = fis[k];
-        if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== ''){
-          lineasContadas++;
-        } else if(typeof fObj === 'number' && !isNaN(fObj)){
-          lineasContadas++;
-        }
-      }
-    }
-    var cobertura = items.length > 0 ? Math.round((lineasContadas / items.length) * 100) : 0;
-    if(cobertura >= 100) return 'Auditado';
-    if(cobertura > 0)    return 'En Revisión';
-    return 'No auditado';
-  }
-
-  // Helper: fecha de trabajo del contenedor (la que aparece en el Resumen).
-  // FIX bug 3a (vie 22-may-2026 PM): el export usaba la fecha de descarga del Excel,
-  // pero el equipo necesita la fecha asignada al contenedor (fechaCarga del teorico).
-  function getFechaTrabajo(contId){
-    var t = teorico[contId];
-    if(!t || !t.fechaCarga) return '';
-    return fmtFechaDMA(t.fechaCarga);
-  }
+  // NOTE: los helpers getOrigenDesc, getCobertura, mapStatusSistema, fmtFechaDMA,
+  // getClasifContenedor y getFechaTrabajo se extrajeron a scope global (arriba
+  // de exportExcel) para que también exportCDGAnalitica los pueda usar.
+  // Acá los seguimos accediendo por scope global (sin cambio funcional).
 
   // ONE FILE mode: all containers in one workbook
   if(oneFile) {
@@ -3549,7 +3633,7 @@ function exportExcel(){
         items2.forEach(function(item,i){
           var fo=fis2[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
-          var tot=fv!==null?fv+dv:null,diff=tot!==null?tot-item.qty:null;
+          var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
           var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
           var raw=item.raw||{},cU=getCosto(item.sku);
           var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
@@ -3622,7 +3706,7 @@ function exportExcel(){
         items3.forEach(function(item,i){
           var fo=fis3[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
-          var tot=fv!==null?fv+dv:null,diff=tot!==null?tot-item.qty:null;
+          var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
           var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
           var raw=item.raw||{},cU=getCosto(item.sku);
           var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
@@ -3748,7 +3832,7 @@ function exportExcel(){
         var fiObj=fis[i];
         var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
         var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-        var tot=fv!==null?fv+dv:null;
+        var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
         var diff=tot!==null?tot-item.qty:null;
         var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
         var raw=item.raw||{};
@@ -3872,7 +3956,7 @@ function exportExcel(){
         var fiObj=fis[i];
         var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
         var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-        var tot=fv!==null?fv+dv:null;
+        var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
         var diff=tot!==null?tot-item.qty:null;
         var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
         var raw=item.raw||{};
@@ -5513,7 +5597,7 @@ function exportCDGAnalitica(rows, tipo){
       var fiObj = fis ? fis[i] : null;
       var fv = fiObj ? (fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null) : null;
       var dv = fiObj && fiObj.daniado!==undefined ? Number(fiObj.daniado)||0 : 0;
-      var tot = fv!==null ? fv+dv : null;
+      var tot = fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
       var diff = tot!==null ? tot-item.qty : null;
       var eva = diff===null ? '' : (diff===0?'Exacto':diff>0?'Sobrante':'Faltante');
       var cUnit = getCosto(item.sku);
