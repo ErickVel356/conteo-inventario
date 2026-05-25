@@ -116,6 +116,7 @@ let state = {
   puertas:        {},
   hallazgos:      [],
   conteoMetadata: {},
+  alertasWMS:     {},  // FIX (server v15): tracking de cambios del WMS por contenedor congelado
   date:           new Date().toDateString(),
   version:        0
 };
@@ -158,6 +159,7 @@ function buildDailyStatePayload() {
     puertas:        state.puertas        || {},
     hallazgos:      state.hallazgos      || [],
     conteoMetadata: state.conteoMetadata || {},
+    alertasWMS:     state.alertasWMS     || {},  // FIX (server v15)
     date:           state.date,
     version:        state.version
   };
@@ -181,6 +183,7 @@ async function loadState() {
     if(saved && saved.puertas)        state.puertas        = saved.puertas;
     if(saved && saved.hallazgos)      state.hallazgos      = saved.hallazgos;
     if(saved && saved.conteoMetadata) state.conteoMetadata = saved.conteoMetadata;
+    if(saved && saved.alertasWMS)     state.alertasWMS     = saved.alertasWMS;  // FIX (server v15)
 
     const savedCostos = await dbGet('costos_state');
     if(savedCostos && savedCostos.costos) {
@@ -226,6 +229,7 @@ function publicState() {
     puertas:        state.puertas        || {},
     hallazgos:      state.hallazgos      || [],
     conteoMetadata: state.conteoMetadata || {},
+    alertasWMS:     state.alertasWMS     || {},  // FIX (rev ChatGPT BLOQUEANTE v5.2.22): sin esto el cliente nunca recibía las alertas y el badge no aparecía
     date:           state.date,
     version:        state.version,
     activeUsers:    getActiveUsers(),
@@ -631,6 +635,8 @@ app.post('/api/cdg/delete', async (req, res) => {
     if(state.asignaciones[trasladoNum]) delete state.asignaciones[trasladoNum];
     if(state.puertas && state.puertas[trasladoNum]) delete state.puertas[trasladoNum];
     if(state.conteoMetadata && state.conteoMetadata[trasladoNum]) delete state.conteoMetadata[trasladoNum];
+    // FIX (rev ChatGPT v5.2.22): limpiar alerta WMS huérfana del Traslado borrado
+    if(state.alertasWMS && state.alertasWMS[trasladoNum]) delete state.alertasWMS[trasladoNum];
   }
 
   // Fallback: por si el traslado no estaba en .traslado pero sí en teorico con cdgRef
@@ -642,6 +648,8 @@ app.post('/api/cdg/delete', async (req, res) => {
       if(state.asignaciones[k]) delete state.asignaciones[k];
       if(state.puertas && state.puertas[k]) delete state.puertas[k];
       if(state.conteoMetadata && state.conteoMetadata[k]) delete state.conteoMetadata[k];
+      // FIX (rev ChatGPT v5.2.22): limpiar alerta WMS huérfana
+      if(state.alertasWMS && state.alertasWMS[k]) delete state.alertasWMS[k];
     }
   });
 
@@ -666,6 +674,125 @@ app.post('/api/cdg/delete', async (req, res) => {
   }
 
   res.json({ ok:true, version:state.version, deletedCDG:contId, deletedTraslado:trasladoNum });
+});
+
+// FIX (dom 24-may-2026 PM, server v15): endpoint para "Sincronizar con WMS".
+// Cuando un contenedor está congelado (tiene físico contado) y el WMS tiene
+// cambios pendientes en state.alertasWMS, el supervisor puede aplicar esos
+// cambios manualmente con este endpoint.
+//
+// Comportamiento:
+//   1. Validar que la alerta existe para el contenedor
+//   2. Aplicar los items del WMS al teorico (sobreescribe items)
+//   3. Preservar fechaCarga, clasificacion, etc. (Object.assign)
+//   4. Eliminar la alerta del state.alertasWMS
+//   5. Registrar en historial
+//
+// Permisos: solo supervisores (validado en el cliente; el server confía
+// pero loggea quién hizo la sincronización).
+app.post('/api/wms/sincronizar', async (req, res) => {
+  const { cont, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.alertasWMS || !state.alertasWMS[cont]) {
+    return res.status(404).json({ ok:false, error:'no hay alerta WMS pendiente para este contenedor' });
+  }
+  if(!state.teorico[cont]) {
+    return res.status(404).json({ ok:false, error:'contenedor no existe en teorico' });
+  }
+
+  var alerta = state.alertasWMS[cont];
+  if(!Array.isArray(alerta.itemsWMS) || alerta.itemsWMS.length === 0) {
+    return res.status(400).json({ ok:false, error:'la alerta no tiene snapshot de items del WMS' });
+  }
+
+  // FIX (rev Claude2+ChatGPT BLOQUEANTE v5.2.22): re-mapear el fisico por SKU
+  // antes de aplicar los items nuevos. Esto evita el riesgo de desalineamiento
+  // que detectaron ambos validadores: el fisico se alinea por índice posicional
+  // con teorico.items[idx]. Si el WMS elimina/reordena líneas, los conteos
+  // físicos quedan apuntando a SKUs equivocados.
+  //
+  // Estrategia: indexar el fisico viejo por el SKU que tenía, y reconstruir
+  // un fisico nuevo donde cada conteo se asigna al índice del MISMO SKU en
+  // la lista nueva. Los SKUs eliminados del WMS pierden su conteo (decisión
+  // operativa: el WMS dice "esa línea ya no existe"). Los SKUs agregados
+  // quedan con físico null (sin contar todavía, correcto).
+  var prev = state.teorico[cont];
+  var prevItems = Array.isArray(prev.items) ? prev.items : [];
+  var prevFisico = Array.isArray(state.fisico[cont]) ? state.fisico[cont] : null;
+  var newFisico = null;
+  if(prevFisico) {
+    // Indexar fisico viejo por SKU
+    var fisicoBySku = {};
+    prevItems.forEach(function(it, i){
+      if(it && it.sku && prevFisico[i]) {
+        fisicoBySku[it.sku] = prevFisico[i];
+      }
+    });
+    // Construir nuevo fisico alineado con los items del WMS
+    newFisico = alerta.itemsWMS.map(function(it){
+      return (it && it.sku && fisicoBySku[it.sku]) ? fisicoBySku[it.sku] : null;
+    });
+  }
+
+  // Aplicar items del WMS, preservar resto de propiedades (auditoría)
+  state.teorico[cont] = Object.assign({}, prev, {
+    items: alerta.itemsWMS
+  });
+  // Aplicar fisico re-mapeado (solo si había fisico antes)
+  if(newFisico) state.fisico[cont] = newFisico;
+
+  // Contar cuántos conteos se mantuvieron / perdieron por SKUs eliminados
+  var conteosMantenidos = 0, conteosPerdidos = 0;
+  if(prevFisico && newFisico) {
+    prevFisico.forEach(function(f){
+      if(f && f.fisico !== undefined && f.fisico !== null && f.fisico !== '') {
+        // Estaba contado antes. Ver si quedó en el nuevo.
+        var sigueEnNuevo = newFisico.some(function(nf){
+          return nf === f;
+        });
+        if(sigueEnNuevo) conteosMantenidos++;
+        else conteosPerdidos++;
+      }
+    });
+  }
+
+  // Eliminar la alerta
+  delete state.alertasWMS[cont];
+
+  addHistorial(usuario||'—', 'Sincronizó con WMS: ' + alerta.totalDiffs + ' cambios aplicados (conteos: ' + conteosMantenidos + ' mantenidos, ' + conteosPerdidos + ' perdidos)', cont);
+  state.version++;
+
+  // Persistir await (mismo patrón que clasificacion/set)
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Sincronizar WMS save'
+    );
+    console.log('Sincronizar WMS save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Sincronizar WMS save FAILED:', saveErr.message);
+    // Rollback: restaurar items previos + fisico + alerta
+    state.teorico[cont] = prev;
+    if(prevFisico) state.fisico[cont] = prevFisico;
+    state.alertasWMS[cont] = alerta;
+    state.version--;
+    return res.status(500).json({
+      ok: false,
+      error: 'La sincronización NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({
+    ok: true,
+    version: state.version,
+    cont: cont,
+    itemsAplicados: alerta.itemsWMS.length,
+    cambiosAplicados: alerta.totalDiffs,
+    conteosMantenidos: conteosMantenidos,
+    conteosPerdidos:   conteosPerdidos
+  });
 });
 
 // ── Chat ──────────────────────────────────────────────────────────────────
@@ -1035,43 +1162,121 @@ function mergeSheet(rows, type) {
       });
     });
 
+  // FIX (dom 24-may-2026 PM, server v15): FREEZE de contenedores ya contados.
+  // Contexto: el equipo va a subir el Excel del Power BI varias veces al día.
+  // El WMS puede cambiar cantidades o eliminar líneas de un contenedor que
+  // YA empezamos a contar. Si dejáramos que el upload sobreescriba, el equipo
+  // perdería referencia (físico contado vs teórico modificado).
+  //
+  // Regla: si state.fisico[cont] tiene AL MENOS 1 línea con valor (contada),
+  // el contenedor se considera "frozen" y NO se actualiza su teorico desde el
+  // upload. EN CAMBIO, se registra una alerta en state.alertasWMS para que el
+  // supervisor decida si "descongelar" y sincronizar manualmente.
+  //
+  // Helper: detectar si un contenedor ya tiene físico contado
+  function hasPhysicalCounted(contKey) {
+    var f = state.fisico && state.fisico[contKey];
+    if(!Array.isArray(f)) return false;
+    for(var i = 0; i < f.length; i++) {
+      var x = f[i];
+      if(x && x.fisico !== undefined && x.fisico !== null && x.fisico !== '') return true;
+    }
+    return false;
+  }
+
+  // Helper: comparar items prev vs new para detectar diferencias específicas
+  function compareItems(prevItems, newItems) {
+    var prev = Array.isArray(prevItems) ? prevItems : [];
+    var nw = Array.isArray(newItems) ? newItems : [];
+    var diffs = [];
+    // Index por SKU para comparación
+    var prevBySku = {}, newBySku = {};
+    prev.forEach(function(it){ if(it && it.sku) prevBySku[it.sku] = it; });
+    nw.forEach(function(it){ if(it && it.sku) newBySku[it.sku] = it; });
+    // SKUs eliminados (en prev pero no en new)
+    Object.keys(prevBySku).forEach(function(sku){
+      if(!newBySku[sku]) diffs.push({ tipo:'eliminado', sku:sku, qty:prevBySku[sku].qty });
+    });
+    // SKUs nuevos (en new pero no en prev)
+    Object.keys(newBySku).forEach(function(sku){
+      if(!prevBySku[sku]) diffs.push({ tipo:'agregado', sku:sku, qty:newBySku[sku].qty });
+    });
+    // SKUs con cantidad cambiada
+    Object.keys(prevBySku).forEach(function(sku){
+      if(newBySku[sku] && Number(prevBySku[sku].qty) !== Number(newBySku[sku].qty)) {
+        diffs.push({ tipo:'qty_cambio', sku:sku, qtyAntes:prevBySku[sku].qty, qtyNueva:newBySku[sku].qty });
+      }
+    });
+    return diffs;
+  }
+
+  // Inicializar el contenedor de alertas si no existe
+  if(!state.alertasWMS) state.alertasWMS = {};
+
+  var congeladosCount = 0;
+  var congeladosConCambio = 0;
+
   Object.keys(newConts).forEach(cont => {
     // Don't overwrite CDG-validated containers from teorico upload
     if(state.teorico[cont] && state.teorico[cont].fromCDG) {
       state.teorico[cont].cdgValidado = true;
       return;
     }
-    // FIX (mar 19-may-2026): preservar fechaCarga si el contenedor ya
-    // existía. Solo asignar fecha de hoy a contenedores NUEVOS.
-    // Esto evita que al re-subir el Excel maestro (que incluye contenedores
-    // previamente cargados), las fechas de los viejos se actualicen.
-    //
-    // FIX (rev Claude2): usar timezone Guatemala (America/Guatemala) en vez
-    // de UTC. Sin esto, uploads del Excel a las 18:00+ hora local quedaban
-    // con fecha del día siguiente.
-    //
-    // FIX (sáb 23-may-2026 PM): preservar TODAS las propiedades de auditoría
-    // del contenedor previo cuando se re-sube el Excel maestro. Antes solo
-    // preservábamos fechaCarga, lo que provocaba la pérdida silenciosa de:
-    //   - clasificacion         (override manual del supervisor)
-    //   - clasificacionManual   (marca ★ Manual)
-    //   - cdgTipo, fromCDG, cdgRef, cdgValidado, cdgBloqueado (estado CDG)
-    //   - y cualquier campo futuro que se agregue a teorico[cont]
-    // Estrategia: NO reemplazar el objeto entero. Solo reemplazar items+type+
-    // fechaCarga (si es contenedor nuevo) y dejar TODO lo demás intacto.
-    // Esto preserva el principio del fix de fechaCarga pero generalizado.
+
     var prev = state.teorico[cont] || {};
     var fechaCargaPrev = prev.fechaCarga || null;
     var hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
-    // Construir el objeto nuevo partiendo del previo (preserva todo lo de auditoría)
+
+    // ── FREEZE check (server v15) ───────────────────────────────
+    // Si el contenedor ya tiene físico contado, NO actualizar items.
+    // Pero SÍ comparar y registrar alerta si hay cambios.
+    var isFrozen = prev.items && hasPhysicalCounted(cont);
+
+    if(isFrozen) {
+      congeladosCount++;
+      var diffs = compareItems(prev.items, newConts[cont]);
+      if(diffs.length > 0) {
+        congeladosConCambio++;
+        // Guardar alerta CON los items nuevos del WMS. Esto permite al
+        // supervisor "Sincronizar con WMS" después, aplicando estos items.
+        // NO acumular alertas viejas: cada upload reemplaza la alerta con
+        // el snapshot más reciente del WMS, para no inflar el state.
+        state.alertasWMS[cont] = {
+          detectadoEn: hoy,
+          itemsAntes:  prev.items.length,
+          itemsNuevos: newConts[cont].length,
+          diffs:       diffs.slice(0, 30),  // límite defensivo: top 30 diffs
+          totalDiffs:  diffs.length,
+          // Snapshot completo de items del WMS para "Sincronizar" después
+          // (necesario porque sin esto el supervisor no podría aplicar el WMS
+          // ya que el upload solo se guarda si NO está congelado)
+          itemsWMS:    newConts[cont]
+        };
+      } else {
+        // Sin diferencias: limpiar cualquier alerta vieja para este contenedor
+        if(state.alertasWMS[cont]) delete state.alertasWMS[cont];
+      }
+      // Solo actualizar metadatos no-críticos del raw del primer item
+      // (status del WMS, etc.) — pero NO items
+      // Por simplicidad y seguridad: NO tocamos nada cuando está frozen.
+      // El supervisor puede sincronizar manualmente vía /api/wms/sincronizar.
+      return;
+    }
+
+    // Contenedor SIN físico contado: comportamiento normal (preservar auditoría)
     state.teorico[cont] = Object.assign({}, prev, {
       items: newConts[cont],
       type,
       fechaCarga: fechaCargaPrev || hoy
     });
+    // Si había una alerta vieja, limpiarla (el upload nuevo se aplicó OK)
+    if(state.alertasWMS && state.alertasWMS[cont]) delete state.alertasWMS[cont];
     // Preserve existing fisico data — never overwrite conteo work
     if(!state.fisico[cont]) state.fisico[cont] = null;
   });
+
+  console.log('mergeSheet:', Object.keys(newConts).length, 'contenedores procesados,',
+              congeladosCount, 'congelados (' + congeladosConCambio + ' con cambios del WMS)');
   return Object.keys(newConts).length;
 }
 
