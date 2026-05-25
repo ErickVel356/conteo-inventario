@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.21 · 24-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.23 · 24-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.21 · 24-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.23 · 24-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -2230,7 +2230,12 @@ function buildReporte(){
     });
     if(over+under>0)totalDiffs++;
     var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td>'+coberturaCellHtml+'<td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td>'+clasifHtml+'</tr>';
+    // FIX (dom 24-may-2026, v5.2.22): badge WMS si hay alerta pendiente para este contenedor
+    var alertaWMS = alertasWMS && alertasWMS[c];
+    var wmsBadge = alertaWMS
+      ? ' <span class="badge-wms-alert" data-cont="'+escH(c)+'" title="El WMS tiene cambios pendientes (click para ver detalle)" style="background:#fff3cd;color:#856404;border:1px solid #ffeaa7;font-size:.65rem;padding:2px 6px;border-radius:10px;font-weight:600;cursor:pointer">⚠ WMS difiere</span>'
+      : '';
+    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+wmsBadge+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td>'+coberturaCellHtml+'<td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td>'+clasifHtml+'</tr>';
   });
   document.getElementById('m-total').textContent=contsFiltrados.length;
   document.getElementById('m-done').textContent=done;
@@ -2314,6 +2319,18 @@ function buildReporte(){
         if(e.key === 'Enter') saveAndExit();
         else if(e.key === 'Escape') { saved = true; buildReporte(); }
       });
+    });
+  });
+
+  // FIX (dom 24-may-2026, v5.2.22): wire del badge ⚠ WMS difiere.
+  // Click abre modal con detalle de cambios pendientes + botón Sincronizar
+  // (solo supervisores).
+  document.querySelectorAll('.badge-wms-alert').forEach(function(b){
+    b.addEventListener('click', function(e){
+      e.stopPropagation();
+      var cont = this.dataset.cont;
+      if(!cont) return;
+      showWMSAlertModal(cont);
     });
   });
 
@@ -3573,6 +3590,139 @@ function getFechaTrabajo(contId){
   return fmtFechaDMA(t.fechaCarga);
 }
 
+// FIX (dom 24-may-2026, v5.2.22): Modal de alerta WMS.
+// Muestra los cambios pendientes que el WMS reportó para un contenedor
+// "congelado" (que ya tiene físico contado). Permite al supervisor:
+//   - Ver detalle de cambios (líneas eliminadas, agregadas, cantidades modificadas)
+//   - Decidir si sincronizar (sobreescribe items con los del WMS) o ignorar
+// Solo supervisores pueden sincronizar. El resto solo ve el detalle.
+function showWMSAlertModal(cont){
+  var alerta = alertasWMS && alertasWMS[cont];
+  if(!alerta) {
+    if(typeof showToast === 'function') showToast('No hay alerta WMS para este contenedor', 'warn');
+    return;
+  }
+
+  var diffs = Array.isArray(alerta.diffs) ? alerta.diffs : [];
+  var esSup = typeof isSup === 'function' && isSup();
+
+  // Construir HTML del detalle
+  var detalleHtml = '';
+  if(diffs.length === 0) {
+    detalleHtml = '<p style="color:#888">Sin diferencias específicas reportadas.</p>';
+  } else {
+    detalleHtml += '<div style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px">';
+    detalleHtml += '<table style="width:100%;font-size:.82rem;border-collapse:collapse">';
+    detalleHtml += '<thead style="background:#f5f5f5"><tr>'
+      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">Cambio</th>'
+      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">SKU</th>'
+      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">Detalle</th>'
+      +'</tr></thead><tbody>';
+    diffs.forEach(function(d){
+      var tipoLabel = '', tipoColor = '#666', detalle = '';
+      if(d.tipo === 'eliminado') {
+        tipoLabel = '🗑️ Eliminado';
+        tipoColor = '#c0392b';
+        detalle = 'Cantidad antes: ' + (d.qty || '—');
+      } else if(d.tipo === 'agregado') {
+        tipoLabel = '➕ Agregado';
+        tipoColor = '#27ae60';
+        detalle = 'Cantidad nueva: ' + (d.qty || '—');
+      } else if(d.tipo === 'qty_cambio') {
+        tipoLabel = '✏️ Cantidad';
+        tipoColor = '#d68910';
+        detalle = (d.qtyAntes || '—') + ' → ' + (d.qtyNueva || '—');
+      }
+      detalleHtml += '<tr>'
+        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;color:'+tipoColor+';font-weight:600">'+tipoLabel+'</td>'
+        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace">'+escH(d.sku||'')+'</td>'
+        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">'+escH(detalle)+'</td>'
+        +'</tr>';
+    });
+    detalleHtml += '</tbody></table></div>';
+    if(alerta.totalDiffs > diffs.length) {
+      detalleHtml += '<p style="font-size:.78rem;color:#888;margin-top:8px">Mostrando '+diffs.length+' de '+alerta.totalDiffs+' cambios (resto omitido).</p>';
+    }
+  }
+
+  // Construir modal HTML
+  var modalId = 'modal-wms-alert';
+  var existing = document.getElementById(modalId);
+  if(existing) existing.remove();
+
+  var modal = document.createElement('div');
+  modal.id = modalId;
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.innerHTML = ''
+    +'<div style="background:#fff;border-radius:10px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:1.5rem;box-shadow:0 10px 40px rgba(0,0,0,.2)">'
+    +  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">'
+    +    '<h3 style="margin:0;font-size:1.1rem;color:#856404">⚠ Cambios pendientes del WMS</h3>'
+    +    '<button id="wms-modal-close" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#888;padding:0 8px">×</button>'
+    +  '</div>'
+    +  '<div style="background:#fff3cd;border:1px solid #ffeaa7;border-radius:6px;padding:.75rem;margin-bottom:1rem;font-size:.85rem;color:#856404">'
+    +    '<strong>Contenedor: '+escH(cont)+'</strong><br>'
+    +    'Este contenedor ya tiene físico contado, por eso el WMS no lo actualizó automáticamente. '
+    +    'Detectado el '+escH(alerta.detectadoEn||'—')+'. Líneas antes: '+(alerta.itemsAntes||0)+', líneas nuevas: '+(alerta.itemsNuevos||0)+'.'
+    +  '</div>'
+    +  '<h4 style="font-size:.9rem;margin:1rem 0 .5rem">Detalle de cambios ('+alerta.totalDiffs+'):</h4>'
+    +  detalleHtml
+    +  '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;flex-wrap:wrap">'
+    +    '<button id="wms-modal-cancel" class="btn" style="background:#f0f0f0;color:#333">Cerrar sin sincronizar</button>'
+    +    (esSup
+      ? '<button id="wms-modal-sync" class="btn" style="background:#d68910;color:#fff;font-weight:600">🔄 Sincronizar con WMS</button>'
+      : '<span style="font-size:.78rem;color:#888;align-self:center">Solo supervisores pueden sincronizar</span>')
+    +  '</div>'
+    +'</div>';
+  document.body.appendChild(modal);
+
+  function closeModal(){ if(modal && modal.parentNode) modal.parentNode.removeChild(modal); }
+  document.getElementById('wms-modal-close').addEventListener('click', closeModal);
+  document.getElementById('wms-modal-cancel').addEventListener('click', closeModal);
+  modal.addEventListener('click', function(e){ if(e.target === modal) closeModal(); });
+
+  var btnSync = document.getElementById('wms-modal-sync');
+  if(btnSync) {
+    btnSync.addEventListener('click', function(){
+      if(!confirm('¿Aplicar los cambios del WMS al contenedor '+cont+'?\n\n'
+        + 'El sistema preserva los conteos físicos por SKU (cada conteo se queda con su SKU).\n'
+        + 'Pero si el WMS ELIMINÓ líneas, los conteos de esas líneas SE PIERDEN definitivamente.\n'
+        + 'Y si AGREGÓ líneas, esas quedarán sin físico (hay que volver a contar).\n\n'
+        + 'Recomendación: revisar el contenedor después de sincronizar para confirmar que todo está bien.')) {
+        return;
+      }
+      btnSync.disabled = true;
+      btnSync.textContent = 'Sincronizando...';
+      fetch('/api/wms/sincronizar', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          cont: cont,
+          usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
+        })
+      }).then(function(r){ return r.json(); })
+        .then(function(resp){
+          if(!resp || !resp.ok) {
+            if(typeof showToast === 'function') showToast('Error al sincronizar: ' + ((resp && resp.error) || 'reintenta'), 'error');
+            btnSync.disabled = false;
+            btnSync.textContent = '🔄 Sincronizar con WMS';
+            return;
+          }
+          if(typeof showToast === 'function') showToast('Sincronizado ✓ ('+resp.cambiosAplicados+' cambios)', 'ok');
+          // Actualizar local: eliminar alerta + recargar polling
+          delete alertasWMS[cont];
+          closeModal();
+          if(typeof buildReporte === 'function') buildReporte();
+        })
+        .catch(function(err){
+          console.warn('Error sincronizar WMS:', err);
+          if(typeof showToast === 'function') showToast('Error de red. Intentá de nuevo.', 'error');
+          btnSync.disabled = false;
+          btnSync.textContent = '🔄 Sincronizar con WMS';
+        });
+    });
+  }
+}
+
 function exportExcel(){
   // Build container selection
   var scope = (document.getElementById('export-scope')||{}).value||'all-one';
@@ -4252,6 +4402,10 @@ function pollNow() {
       if(s.puertas && Object.keys(s.puertas).length > 0) {
         Object.assign(puertas, s.puertas);
       }
+      // FIX (dom 24-may-2026, v5.2.22): hidratar alertasWMS desde el server.
+      // alertasWMS es propiedad SOLO del server (lo escribe mergeSheet al upload).
+      // El cliente solo lee y muestra. Polling reemplaza directo, no merge.
+      alertasWMS = s.alertasWMS || {};
 
       rebuildContsList();
       updateSubmenúCounts();
@@ -4731,6 +4885,7 @@ document.getElementById('sel-cont').addEventListener('change', function() {
 // Global vars for metadata (must be global so all scripts can access)
 var puertas         = {};   // { contId: 'L001.001' }
 var conteoMetadata  = {};   // { contId: {fechaIngreso, fechaFurgon, placas} }
+var alertasWMS      = {};   // FIX (dom 24-may-2026, v5.2.22): { contId: {detectadoEn, diffs, itemsWMS, ...} }
 
 // ── Summary Card ──────────────────────────────────────────────────────────
 function updateSummaryCard() {
