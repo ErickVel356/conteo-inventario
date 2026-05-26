@@ -736,7 +736,8 @@ app.post('/api/wms/sincronizar', async (req, res) => {
 
   // Aplicar items del WMS, preservar resto de propiedades (auditoría)
   state.teorico[cont] = Object.assign({}, prev, {
-    items: alerta.itemsWMS
+    items: alerta.itemsWMS,
+    meta:  alerta.metaWMS || prev.meta || {}   // FIX (server v16): aplicar meta del WMS al sincronizar
   });
   // Aplicar fisico re-mapeado (solo si había fisico antes)
   if(newFisico) state.fisico[cont] = newFisico;
@@ -1129,35 +1130,53 @@ function mergeSheet(rows, type) {
     cDestino:  findCol(hdr, ['destino'])
   };
   const newConts = {};
+  // FIX (dom 25-may-2026, server v16): OPTIMIZACIÓN DE TAMAÑO DEL STATE.
+  // Antes, cada item guardaba 18 campos en raw. Medido contra el WMS real,
+  // 10 de esos campos (fecha, codProv, nomProv, lineas, status, origen,
+  // ingreso, docSap, tipo, destino) son CONSTANTES dentro de un mismo
+  // contenedor — se repetían idénticos en cada una de sus ~150 líneas.
+  // Ahora esos campos van UNA sola vez a newMeta[cont] (nivel contenedor),
+  // y raw queda solo con los que VARÍAN por línea (oc, ingresado, colocado,
+  // faltantes, sobrantes, daniado, unidad, unidades). Reducción ~70% del teorico.
+  // Compatibilidad: el cliente lee raw heredando de meta (Object.assign), así
+  // que los exports siguen funcionando y los contenedores VIEJOS (con raw
+  // completo y sin meta) también, porque su raw viejo gana sobre el meta ausente.
+  const newMeta = {};
   dataRows
     .filter(r => r && r.some(c => String(c).trim() !== ''))
     .forEach(row => {
       const cont = String(row[colCont]||'').trim();
       if(!cont) return;
       if(!newConts[cont]) newConts[cont] = [];
+      // Meta a nivel contenedor: se captura de la primera fila (campos constantes).
+      if(!newMeta[cont]) {
+        newMeta[cont] = {
+          fecha:    g(row, ex.cFecha),
+          codProv:  g(row, ex.cCodProv),
+          nomProv:  g(row, ex.cNomProv),
+          lineas:   g(row, ex.cLineas),
+          status:   g(row, ex.cStatus),
+          origen:   g(row, ex.cOrigen),
+          ingreso:  g(row, ex.cIngreso),
+          docSap:   g(row, ex.cDocSap),
+          tipo:     g(row, ex.cTipo),
+          destino:  g(row, ex.cDestino)
+        };
+      }
       newConts[cont].push({
         sku:  String(row[colSku] ||'').trim(),
         desc: String(row[colDesc]||'').trim(),
         qty:  parseFloat(String(row[colQty]).replace(',','.')) || 0,
         raw: {
-          fecha:     g(row, ex.cFecha),
-          codProv:   g(row, ex.cCodProv),
-          nomProv:   g(row, ex.cNomProv),
-          lineas:    g(row, ex.cLineas),
-          status:    g(row, ex.cStatus),
+          // Solo campos que VARÍAN por línea:
           oc:        g(row, ex.cOC),
           ingresado: g(row, ex.cIngr),
           colocado:  g(row, ex.cColoc),
           faltantes: g(row, ex.cFalt),
           sobrantes: g(row, ex.cSobr),
           daniado:   g(row, ex.cDan),
-          origen:    g(row, ex.cOrigen),
-          ingreso:   g(row, ex.cIngreso),
-          docSap:    g(row, ex.cDocSap),
-          tipo:      g(row, ex.cTipo),
           unidad:    g(row, ex.cUnidad),
-          unidades:  g(row, ex.cUnidades),
-          destino:   g(row, ex.cDestino)
+          unidades:  g(row, ex.cUnidades)
         }
       });
     });
@@ -1250,7 +1269,8 @@ function mergeSheet(rows, type) {
           // Snapshot completo de items del WMS para "Sincronizar" después
           // (necesario porque sin esto el supervisor no podría aplicar el WMS
           // ya que el upload solo se guarda si NO está congelado)
-          itemsWMS:    newConts[cont]
+          itemsWMS:    newConts[cont],
+          metaWMS:     newMeta[cont] || {}   // FIX (server v16): meta para aplicar al sincronizar
         };
       } else {
         // Sin diferencias: limpiar cualquier alerta vieja para este contenedor
@@ -1266,6 +1286,7 @@ function mergeSheet(rows, type) {
     // Contenedor SIN físico contado: comportamiento normal (preservar auditoría)
     state.teorico[cont] = Object.assign({}, prev, {
       items: newConts[cont],
+      meta:  newMeta[cont] || prev.meta || {},   // FIX (server v16): meta a nivel contenedor
       type,
       fechaCarga: fechaCargaPrev || hoy
     });
