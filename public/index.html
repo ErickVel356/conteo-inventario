@@ -384,7 +384,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.23 · 24-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.24 · 25-may</div>
   </div>
 </div>
 
@@ -399,7 +399,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.23 · 24-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.24 · 25-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -1717,7 +1717,13 @@ function saveDirectToSupabase() {
         mergedTeorico[cont] = Object.assign({}, remoteT, {
           items:      localT.items,
           type:       localT.type,
-          fechaCarga: fcEfectiva
+          fechaCarga: fcEfectiva,
+          // FIX (v5.2.24): mantener meta ALINEADO con los items que se suben.
+          // Si el local tiene meta (formato v16), usarlo; si no (state viejo
+          // pre-v16, items con raw completo), dejar meta vacío para que el raw
+          // viejo del item gane sin conflicto. Evita que items viejos queden
+          // pegados a un meta nuevo del remoto (dato stale pisando al fresco).
+          meta:       (localT.meta !== undefined ? localT.meta : (localT.items && localT.items.length ? {} : remoteT.meta))
         });
       });
       // Preservar contenedores remotos que el cliente local no tenga (defensa)
@@ -3785,7 +3791,7 @@ function exportExcel(){
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
           var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
           var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-          var raw=item.raw||{},cU=getCosto(item.sku);
+          var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{}),cU=getCosto(item.sku);
           var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
           // FIX bug 3b: usar fo.quien por línea (no userName del que descarga)
           var quien=fo&&fo.quien?fo.quien:'';
@@ -3858,7 +3864,7 @@ function exportExcel(){
           var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
           var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
           var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-          var raw=item.raw||{},cU=getCosto(item.sku);
+          var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{}),cU=getCosto(item.sku);
           var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
           // FIX bug 3b: usar fo.quien por línea (no userName del que descarga)
           var quien=fo&&fo.quien?fo.quien:'';
@@ -3985,7 +3991,7 @@ function exportExcel(){
         var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
         var diff=tot!==null?tot-item.qty:null;
         var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-        var raw=item.raw||{};
+        var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{});
         var cUnit=getCosto(item.sku);
         var faltU=diff!==null&&diff<0?Math.abs(diff):0;
         var sobrU=diff!==null&&diff>0?diff:0;
@@ -4109,7 +4115,7 @@ function exportExcel(){
         var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
         var diff=tot!==null?tot-item.qty:null;
         var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-        var raw=item.raw||{};
+        var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{});
         var cUnit=getCosto(item.sku);
         var faltU=diff!==null&&diff<0?Math.abs(diff):0;
         var sobrU=diff!==null&&diff>0?diff:0;
