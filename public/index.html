@@ -354,7 +354,33 @@ textarea.field-inp{resize:vertical;min-height:72px}
 <!-- ══════════════════════════════════════════════════════════════
      LOGIN
 ══════════════════════════════════════════════════════════════ -->
-<div id="pg-login" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+<!-- ══════════════════════════════════════════════════════════════
+     GATE — clave de acceso (FIX 27-may-2026, login v1). Se muestra ANTES
+     del dropdown de nombres. La clave vive en Supabase (key='app_config'),
+     se cambia solo desde ahí. Interruptor de emergencia: si la clave en
+     Supabase está vacía o es 'OFF', el gate se salta (login desactivado).
+     Modo equilibrado: una vez pasada, se recuerda por el día (sessionStorage
+     + fecha); recargar el mismo día NO la vuelve a pedir.
+══════════════════════════════════════════════════════════════ -->
+<div id="pg-gate" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+    <div style="text-align:center;margin-bottom:1.5rem">
+      <div style="font-size:2.5rem;margin-bottom:8px">🔒</div>
+      <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:4px">Acceso restringido</h2>
+      <p style="font-size:.85rem;color:#888">Ingresa la clave de acceso</p>
+    </div>
+    <div style="margin-bottom:1rem">
+      <input id="gate-pass" type="password" autocomplete="off" placeholder="Clave de acceso"
+        style="display:block;width:100%;padding:12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:#fff;min-height:48px;font-family:inherit;box-sizing:border-box">
+    </div>
+    <div id="gate-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
+    <button id="btn-gate-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Continuar</button>
+    <div id="gate-loading" style="display:none;text-align:center;margin-top:1rem;font-size:.8rem;color:#888">Verificando…</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.25 · 27-may</div>
+  </div>
+</div>
+
+<div id="pg-login" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
   <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
     <div style="text-align:center;margin-bottom:1.5rem">
       <div style="font-size:2.5rem;margin-bottom:8px">📦</div>
@@ -384,7 +410,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.24 · 25-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.25 · 27-may</div>
   </div>
 </div>
 
@@ -399,7 +425,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.24 · 25-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.25 · 27-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -1156,6 +1182,94 @@ function navBack(){
 }
 
 document.getElementById('btn-topbar-back').addEventListener('click',navBack);
+
+/* ══════════════════════════════════════════════════════════════════
+   GATE — clave de acceso (login v1, 27-may-2026)
+   - La clave vive en Supabase: key='app_config', value JSON { "accessKey": "..." }
+   - Interruptor de emergencia: si accessKey es '' o 'OFF' (o no existe el
+     registro), el gate se SALTA y la app entra directo al dropdown de nombres.
+   - Modo equilibrado: al pasar la clave se guarda una marca con la fecha de
+     hoy en sessionStorage; recargar el MISMO día no vuelve a pedir la clave.
+   - El gate NO se mete en el conteo: valida UNA vez al entrar y nada más.
+     Si la clave de Supabase cambia mientras alguien cuenta, el que ya está
+     adentro sigue sin interrupción (sus guardados no dependen del gate).
+══════════════════════════════════════════════════════════════════ */
+var GATE_MARK_KEY = 'gate_ok_date';
+
+// ¿Ya pasó el gate hoy? (modo equilibrado)
+function gatePassedToday(){
+  try {
+    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    return sessionStorage.getItem(GATE_MARK_KEY) === today;
+  } catch(e){ return false; }
+}
+function markGatePassed(){
+  try {
+    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    sessionStorage.setItem(GATE_MARK_KEY, today);
+  } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
+}
+
+// Mostrar el dropdown de nombres (pasar del gate al login normal)
+function showNameLogin(){
+  var g = document.getElementById('pg-gate');
+  if(g) g.style.display='none';
+  document.getElementById('pg-login').style.display='flex';
+}
+
+// Leer la clave configurada en Supabase. Devuelve string (puede ser '' u 'OFF').
+function fetchAccessKey(){
+  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.app_config&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  })
+  .then(function(r){ if(!r.ok) throw new Error('config HTTP '+r.status); return r.json(); })
+  .then(function(rows){
+    if(!rows || !rows.length) return '';        // no existe registro → login OFF
+    var v = rows[0].value;
+    try { var cfg = (typeof v === 'string') ? JSON.parse(v) : v; return (cfg && cfg.accessKey) ? String(cfg.accessKey) : ''; }
+    catch(e){ return ''; }                        // value corrupto → login OFF (no trabar)
+  });
+}
+
+// Inicializar el gate al cargar la página
+function initGate(){
+  // Si ya pasó hoy, saltar directo al dropdown
+  if(gatePassedToday()){ showNameLogin(); return; }
+  // Leer la clave de Supabase para decidir si el gate aplica
+  fetchAccessKey()
+    .then(function(key){
+      // INTERRUPTOR DE EMERGENCIA: clave vacía u 'OFF' → login desactivado
+      if(!key || key.toUpperCase() === 'OFF'){ markGatePassed(); showNameLogin(); return; }
+      window._accessKey = key;   // guardar para validar contra lo que escriba el usuario
+      // (el gate queda visible, esperando que el usuario escriba la clave)
+    })
+    .catch(function(){
+      // Si Supabase no responde, NO trabar el acceso: dejar pasar al dropdown.
+      // (mismo criterio de "no bloquear la operación por un fallo de red")
+      showNameLogin();
+    });
+}
+
+// Validar la clave que escribe el usuario
+function tryGate(){
+  var inp = document.getElementById('gate-pass');
+  var err = document.getElementById('gate-err');
+  var val = (inp.value || '').trim();
+  if(!val){ err.textContent='Ingresa la clave.'; err.style.display='block'; return; }
+  // Si por algún motivo no se cargó la clave todavía, intentar leerla ahora
+  var check = function(key){
+    if(!key || key.toUpperCase()==='OFF'){ markGatePassed(); showNameLogin(); return; } // OFF: dejar pasar
+    if(val === key){ markGatePassed(); showNameLogin(); }
+    else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
+  };
+  if(window._accessKey !== undefined){ check(window._accessKey); }
+  else { fetchAccessKey().then(check).catch(function(){ showNameLogin(); }); }
+}
+document.getElementById('btn-gate-enter').addEventListener('click', tryGate);
+document.getElementById('gate-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') tryGate(); });
+
+// Arrancar el gate
+initGate();
 
 /* ══════════════════════════════════════════════════════════════════
    LOGIN
