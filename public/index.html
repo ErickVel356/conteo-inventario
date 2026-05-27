@@ -1268,8 +1268,9 @@ function tryGate(){
 document.getElementById('btn-gate-enter').addEventListener('click', tryGate);
 document.getElementById('gate-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') tryGate(); });
 
-// Arrancar el gate
-initGate();
+// NOTA: initGate() se llama MÁS ABAJO, después de definir SUPABASE_URL/KEY
+// (si se llama acá, SUPABASE_URL aún es undefined → la lectura de la clave
+//  falla con 404 y el gate se salta por error. Bug detectado 27-may.)
 
 /* ══════════════════════════════════════════════════════════════════
    LOGIN
@@ -1561,6 +1562,11 @@ function renderConteo(){
 var SUPABASE_URL = 'https://uzwhcoztwlxkhrmyeybe.supabase.co';
 var SUPABASE_KEY = 'sb_publishable_NTQKwnemAsOitW0JAIHauQ_xci8VT75';
 var _supaTimer = null;
+
+// FIX (27-may-2026): arrancar el gate ACÁ, ya con SUPABASE_URL/KEY definidas.
+// (antes initGate() corría más arriba, cuando SUPABASE_URL aún era undefined,
+//  y la lectura de la clave fallaba con 404 → el gate se saltaba por error.)
+initGate();
 
 // FIX (vie 22-may-2026 noche): banner persistente de errores de red.
 // Cuenta los errores consecutivos y muestra detalle. NO se auto-oculta:
