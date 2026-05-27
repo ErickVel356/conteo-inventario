@@ -1147,6 +1147,19 @@ function mergeSheet(rows, type) {
     .forEach(row => {
       const cont = String(row[colCont]||'').trim();
       if(!cont) return;
+      // FIX (mar 26-may-2026, server v17): LISTA BLANCA de nombre de contenedor.
+      // El export de Power BI trae texto al pie ("Filtros aplicados: ... Embarque
+      // es HP26-XXXX Aplica es 1", "Total general", etc.) que el parser leía como
+      // contenedores basura. Ahora SOLO se acepta una fila si su nombre tiene el
+      // formato real: empieza con H o U, dígitos, guion, dígitos, con sufijo
+      // opcional (ej. /CS). HP26-0540, H274-0123, U25-161410, U147-0089.
+      // Cualquier otra cosa (texto largo, notas, totales) se ignora automáticamente.
+      if(!/^[HU][A-Z0-9]*-[0-9]+(\/[A-Z0-9]+)?$/i.test(cont)) return;
+      // FIX (mar 26-may-2026, server v17): los contenedores terminados en /CS
+      // existen en la base del WMS pero el equipo NO los usa. Antes había que
+      // borrarlos a mano tras cada carga del maestro porque se volvían a meter.
+      // Ahora se ignoran automáticamente al cargar.
+      if(/\/CS$/i.test(cont)) return;
       if(!newConts[cont]) newConts[cont] = [];
       // Meta a nivel contenedor: se captura de la primera fila (campos constantes).
       if(!newMeta[cont]) {
