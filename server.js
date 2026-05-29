@@ -520,6 +520,21 @@ app.post('/api/teorico/fecha-carga', async (req, res) => {
       return res.status(400).json({ ok:false, error:'fecha calendárica inválida' });
     }
   }
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // Antes: si Supabase fallaba, el cambio quedaba aplicado en memoria pero NO
+  // en Supabase. El cliente veía "error" pero la fecha cambiada en pantalla
+  // hasta el próximo polling. Confusión + divergencia.
+  // Ahora: snapshot del valor previo + version + historial. En catch, restaura.
+  //
+  // FIX (rev cruzada Claude3 + ChatGPT, post-v18 borrador): addHistorial()
+  // muta state.version e state.historial internamente. Snapshot debe capturar
+  // AMBOS antes de cualquier mutación para revertir correctamente. Antes del
+  // fix, el rollback hacía state.version-- (revertía solo 1 de 2 incrementos)
+  // y dejaba el historial con la entrada del intento fallido.
+  var prevFechaCarga    = state.teorico[cont].fechaCarga;
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
   state.teorico[cont].fechaCarga = fechaCarga || null;
   addHistorial(usuario||'—', 'Cambió fecha de trabajo a ' + (fechaCarga || '(vacío)'), cont);
   state.version++;
@@ -535,9 +550,14 @@ app.post('/api/teorico/fecha-carga', async (req, res) => {
     console.log('Fecha-carga save: persisted to Supabase ✓');
   } catch(saveErr) {
     console.log('Fecha-carga save FAILED:', saveErr.message);
+    // Rollback completo: restaurar valor + historial + version (revierte
+    // tanto el version++ del endpoint como el version++ interno de addHistorial)
+    state.teorico[cont].fechaCarga = prevFechaCarga;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
     return res.status(500).json({
       ok: false,
-      error: 'La fecha sí se actualizó, pero NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+      error: 'La fecha NO quedó guardada. Reintentá. (' + saveErr.message + ')'
     });
   }
 
@@ -571,6 +591,18 @@ app.post('/api/clasificacion/set', async (req, res) => {
     }
   }
 
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // Snapshot ANTES de mutar (los 2 campos que vamos a tocar).
+  // FIX (rev cruzada post-v18 borrador): también capturamos version + historial
+  // porque addHistorial() los muta internamente. Sin esto, el rollback dejaba
+  // version en N+1 y el historial con la entrada del intento fallido.
+  var prevClasificacion       = state.teorico[cont].clasificacion;
+  var prevClasificacionManual = state.teorico[cont].clasificacionManual;
+  var prevTeniaClasif         = 'clasificacion'       in state.teorico[cont];
+  var prevTeniaManual         = 'clasificacionManual' in state.teorico[cont];
+  var snapshotVersion         = state.version;
+  var snapshotHistorial       = state.historial.slice();
+
   // Si clasificacion es null/vacío Y manual no es true → quitar override
   if((clasificacion === null || clasificacion === undefined || clasificacion === '') && !manual) {
     delete state.teorico[cont].clasificacion;
@@ -594,9 +626,18 @@ app.post('/api/clasificacion/set', async (req, res) => {
     console.log('Clasificación save: persisted to Supabase ✓');
   } catch(saveErr) {
     console.log('Clasificación save FAILED:', saveErr.message);
+    // Rollback completo: restaurar campos previos (respetando si existían),
+    // historial y version (revierte tanto el version++ del endpoint como el
+    // version++ interno de addHistorial).
+    if(prevTeniaClasif) state.teorico[cont].clasificacion = prevClasificacion;
+    else delete state.teorico[cont].clasificacion;
+    if(prevTeniaManual) state.teorico[cont].clasificacionManual = prevClasificacionManual;
+    else delete state.teorico[cont].clasificacionManual;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
     return res.status(500).json({
       ok: false,
-      error: 'La clasificación sí se aplicó, pero NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+      error: 'La clasificación NO quedó guardada. Reintentá. (' + saveErr.message + ')'
     });
   }
 
@@ -625,32 +666,77 @@ app.post('/api/cdg/delete', async (req, res) => {
   // Identificar el contenedor Traslado asociado
   var trasladoNum = state.cdg[contId].traslado || null;
 
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // ANTES de borrar nada, snapshot completo de TODO lo que vamos a borrar.
+  // Esto incluye: el CDG, el Traslado (en sus 6 ubicaciones), y los traslados
+  // detectados por fallback (cdgRef). El rollback restaura cada referencia.
+  //
+  // FIX (rev cruzada post-v18 borrador): también capturamos version + historial
+  // porque addHistorial() los muta internamente. Sin esto, el rollback dejaba
+  // version en N+1 y el historial con la entrada del intento fallido.
+  var rollbackData = {
+    cdg:           state.cdg[contId],
+    trasladoPrimary: null,    // el del .traslado
+    trasladosFallback: []     // los detectados por cdgRef
+  };
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
+  // Helper para capturar TODO el sub-state asociado a un traslado.
+  // Usa 'in' para distinguir "propiedad existe con valor null" vs "propiedad ausente".
+  // Esto es importante para que el rollback restaure exactamente el estado previo.
+  function captureTraslado(num) {
+    return {
+      num:           num,
+      teorico:       state.teorico[num],
+      teniaFisico:        ('fisico' in state && num in state.fisico),
+      fisico:        (state.fisico && num in state.fisico) ? state.fisico[num] : null,
+      teniaAsign:         ('asignaciones' in state && num in state.asignaciones),
+      asignaciones:  (state.asignaciones && num in state.asignaciones) ? state.asignaciones[num] : null,
+      teniaPuerta:        (state.puertas && num in state.puertas),
+      puerta:        (state.puertas && num in state.puertas) ? state.puertas[num] : null,
+      teniaMetadata:      (state.conteoMetadata && num in state.conteoMetadata),
+      metadata:      (state.conteoMetadata && num in state.conteoMetadata) ? state.conteoMetadata[num] : null,
+      teniaAlerta:        (state.alertasWMS && num in state.alertasWMS),
+      alertaWMS:     (state.alertasWMS && num in state.alertasWMS) ? state.alertasWMS[num] : null
+    };
+  }
+
+  if(trasladoNum && state.teorico[trasladoNum] && state.teorico[trasladoNum].cdgRef === contId) {
+    rollbackData.trasladoPrimary = captureTraslado(trasladoNum);
+  }
+  Object.keys(state.teorico).forEach(function(k){
+    if(state.teorico[k] && state.teorico[k].cdgRef === contId
+       && k !== trasladoNum) {  // ya capturado arriba si match
+      rollbackData.trasladosFallback.push(captureTraslado(k));
+    }
+  });
+
+  // Helper de borrado seguro: usa 'in' en vez de truthy check. Antes:
+  //   if(state.fisico[trasladoNum]) delete state.fisico[trasladoNum]
+  // no borraba si el valor era null (común en contenedores no contados).
+  // Ahora: si la propiedad existe (aunque sea null), se borra.
+  function deleteTrasladoRefs(num) {
+    delete state.teorico[num];
+    if(state.fisico         && num in state.fisico)         delete state.fisico[num];
+    if(state.asignaciones   && num in state.asignaciones)   delete state.asignaciones[num];
+    if(state.puertas        && num in state.puertas)        delete state.puertas[num];
+    if(state.conteoMetadata && num in state.conteoMetadata) delete state.conteoMetadata[num];
+    if(state.alertasWMS     && num in state.alertasWMS)     delete state.alertasWMS[num];
+  }
+
   // Borrar el CDG
   delete state.cdg[contId];
 
   // Borrar el contenedor Traslado asociado si existe y vino del CDG
-  if(trasladoNum && state.teorico[trasladoNum] && state.teorico[trasladoNum].cdgRef === contId) {
-    delete state.teorico[trasladoNum];
-    if(state.fisico[trasladoNum])       delete state.fisico[trasladoNum];
-    if(state.asignaciones[trasladoNum]) delete state.asignaciones[trasladoNum];
-    if(state.puertas && state.puertas[trasladoNum]) delete state.puertas[trasladoNum];
-    if(state.conteoMetadata && state.conteoMetadata[trasladoNum]) delete state.conteoMetadata[trasladoNum];
-    // FIX (rev ChatGPT v5.2.22): limpiar alerta WMS huérfana del Traslado borrado
-    if(state.alertasWMS && state.alertasWMS[trasladoNum]) delete state.alertasWMS[trasladoNum];
+  if(trasladoNum && rollbackData.trasladoPrimary) {
+    deleteTrasladoRefs(trasladoNum);
   }
 
   // Fallback: por si el traslado no estaba en .traslado pero sí en teorico con cdgRef
   // (escenario raro pero defensivo)
-  Object.keys(state.teorico).forEach(function(k){
-    if(state.teorico[k] && state.teorico[k].cdgRef === contId) {
-      delete state.teorico[k];
-      if(state.fisico[k])       delete state.fisico[k];
-      if(state.asignaciones[k]) delete state.asignaciones[k];
-      if(state.puertas && state.puertas[k]) delete state.puertas[k];
-      if(state.conteoMetadata && state.conteoMetadata[k]) delete state.conteoMetadata[k];
-      // FIX (rev ChatGPT v5.2.22): limpiar alerta WMS huérfana
-      if(state.alertasWMS && state.alertasWMS[k]) delete state.alertasWMS[k];
-    }
+  rollbackData.trasladosFallback.forEach(function(t){
+    deleteTrasladoRefs(t.num);
   });
 
   addHistorial(usuario||'—', 'CDG eliminado (+ Traslado asociado)', contId + (trasladoNum ? ' → ' + trasladoNum : ''));
@@ -667,9 +753,25 @@ app.post('/api/cdg/delete', async (req, res) => {
     console.log('CDG delete save: persisted to Supabase ✓ (CDG ' + contId + ', Traslado ' + (trasladoNum||'—') + ')');
   } catch(saveErr) {
     console.log('CDG delete save FAILED:', saveErr.message);
+    // Rollback completo: CDG, traslado primario, traslados fallback, historial, version.
+    // Usa los flags tenia* para distinguir "propiedad existía con valor null/falsy"
+    // vs "propiedad no existía" y restaurar el estado EXACTO previo.
+    state.cdg[contId] = rollbackData.cdg;
+    function restoreTraslado(t) {
+      state.teorico[t.num] = t.teorico;
+      if(t.teniaFisico   && state.fisico)         state.fisico[t.num]         = t.fisico;
+      if(t.teniaAsign    && state.asignaciones)   state.asignaciones[t.num]   = t.asignaciones;
+      if(t.teniaPuerta   && state.puertas)        state.puertas[t.num]        = t.puerta;
+      if(t.teniaMetadata && state.conteoMetadata) state.conteoMetadata[t.num] = t.metadata;
+      if(t.teniaAlerta   && state.alertasWMS)     state.alertasWMS[t.num]     = t.alertaWMS;
+    }
+    if(rollbackData.trasladoPrimary) restoreTraslado(rollbackData.trasladoPrimary);
+    rollbackData.trasladosFallback.forEach(restoreTraslado);
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
     return res.status(500).json({
       ok: false,
-      error: 'El CDG sí se borró de memoria, pero NO quedó guardado. Si recargás puede reaparecer. Reintentá. (' + saveErr.message + ')'
+      error: 'El CDG NO se borró (memoria restaurada). Reintentá. (' + saveErr.message + ')'
     });
   }
 
@@ -690,6 +792,14 @@ app.post('/api/cdg/delete', async (req, res) => {
 //
 // Permisos: solo supervisores (validado en el cliente; el server confía
 // pero loggea quién hizo la sincronización).
+//
+// NOTA sobre el patrón de rollback (server v18, 28-may-2026):
+// Originalmente este endpoint fue el "modelo" de rollback. En v18 ese patrón
+// se generalizó y refinó: los 5 endpoints con await (`fecha-carga`,
+// `clasificacion/set`, `cdg/delete`, `upload`, `wms/sincronizar`) ahora
+// comparten el mismo patrón uniforme — snapshot de version + historial
+// ANTES de mutar, restauración completa en catch. Ver comentarios in-line
+// "FIX (mié 28-may-2026, server v18)" en cada endpoint para el detalle.
 app.post('/api/wms/sincronizar', async (req, res) => {
   const { cont, usuario } = req.body;
   if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
@@ -757,13 +867,20 @@ app.post('/api/wms/sincronizar', async (req, res) => {
     });
   }
 
+  // Snapshot version + historial ANTES de mutar (addHistorial los mutará).
+  // FIX (rev cruzada post-v18 borrador): el patrón original solo hacía version--
+  // que revertía solo 1 de 2 incrementos y dejaba historial con la entrada
+  // del intento fallido. Mismo fix que aplicamos a los otros 4 endpoints v18.
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
   // Eliminar la alerta
   delete state.alertasWMS[cont];
 
   addHistorial(usuario||'—', 'Sincronizó con WMS: ' + alerta.totalDiffs + ' cambios aplicados (conteos: ' + conteosMantenidos + ' mantenidos, ' + conteosPerdidos + ' perdidos)', cont);
   state.version++;
 
-  // Persistir await (mismo patrón que clasificacion/set)
+  // Persistir await (patrón v18: snapshot + try/await/catch + rollback completo)
   if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   try {
     await withTimeout(
@@ -774,11 +891,12 @@ app.post('/api/wms/sincronizar', async (req, res) => {
     console.log('Sincronizar WMS save: persisted to Supabase ✓');
   } catch(saveErr) {
     console.log('Sincronizar WMS save FAILED:', saveErr.message);
-    // Rollback: restaurar items previos + fisico + alerta
+    // Rollback completo: items + fisico + alerta + historial + version.
     state.teorico[cont] = prev;
     if(prevFisico) state.fisico[cont] = prevFisico;
     state.alertasWMS[cont] = alerta;
-    state.version--;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
     return res.status(500).json({
       ok: false,
       error: 'La sincronización NO quedó guardada. Reintentá. (' + saveErr.message + ')'
@@ -866,6 +984,35 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   try {
     const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
     const usuario = req.body.usuario || '—';
+
+    // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+    // mergeSheet muta state.teorico, state.fisico y state.alertasWMS reemplazando
+    // entradas por contenedor. Snapshot somero de esos 3 objetos preserva las
+    // referencias previas; al revertir, los contenedores modificados vuelven a
+    // apuntar a sus objetos originales (los no tocados nunca cambiaron).
+    // Costo: tres spreads superficiales (~ms), no deep clone.
+    //
+    // LIMITACIÓN CONOCIDA del snapshot somero (deuda en backlog):
+    // mergeSheet también muta PROPIEDADES de objetos existentes — concretamente
+    // hace `state.teorico[cont].cdgValidado = true` para contenedores que ya
+    // tienen `fromCDG=true` (línea ~1352). Como el snapshot guarda referencias,
+    // esa mutación NO se revierte al hacer rollback: el contenedor preserva su
+    // objeto original, pero ese objeto ahora tiene `cdgValidado=true` adentro.
+    // Severidad baja:
+    //   - el flag no destruye datos (solo marca como validado un contenedor
+    //     que ya tenía fromCDG=true; semánticamente coherente)
+    //   - el próximo upload exitoso lo normaliza igual
+    //   - el operario no percibe nada distinto en la UI
+    // Fix completo en backlog: deep clone selectivo de los fromCDG, o refactor
+    // de mergeSheet para que no mute propiedades (que devuelva los cambios a
+    // aplicar y el caller los aplique). Hoy NO se hace por costo/riesgo vs
+    // beneficio marginal.
+    var snapshotTeorico    = Object.assign({}, state.teorico);
+    var snapshotFisico     = Object.assign({}, state.fisico);
+    var snapshotAlertasWMS = Object.assign({}, state.alertasWMS || {});
+    var snapshotHistorial  = state.historial.slice();
+    var snapshotVersion    = state.version;
+
     let loaded = [];
     wb.SheetNames.forEach(sn => {
       const nl = sn.toLowerCase();
@@ -904,9 +1051,17 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       console.log('Upload save: persisted to Supabase ✓');
     } catch(saveErr) {
       console.log('Upload save FAILED:', saveErr.message);
+      // Rollback: restaurar los 3 objetos shallow + historial + version.
+      // Esto deshace el mergeSheet completo (todos los contenedores tocados
+      // vuelven a apuntar a sus objetos previos).
+      state.teorico    = snapshotTeorico;
+      state.fisico     = snapshotFisico;
+      state.alertasWMS = snapshotAlertasWMS;
+      state.historial  = snapshotHistorial;
+      state.version    = snapshotVersion;
       return res.status(500).json({
         ok: false,
-        error: 'El archivo sí se leyó, pero NO quedó guardado. No cierres la app. Volvé a subirlo. (' + saveErr.message + ')'
+        error: 'El archivo NO se guardó (memoria restaurada). Volvé a subirlo. (' + saveErr.message + ')'
       });
     }
 
