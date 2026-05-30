@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Supabase config (set via environment variables in Render) ─────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;  // https://xxx.supabase.co
-const SUPABASE_KEY = process.env.SUPABASE_KEY;  // service_role key
+const SUPABASE_KEY = process.env.SUPABASE_KEY;  // anon/publishable key (RLS allow_all)
 
 // ── Simple Supabase REST client ───────────────────────────────────────────
 function supabase(method, table, body, query) {
@@ -792,14 +792,6 @@ app.post('/api/cdg/delete', async (req, res) => {
 //
 // Permisos: solo supervisores (validado en el cliente; el server confía
 // pero loggea quién hizo la sincronización).
-//
-// NOTA sobre el patrón de rollback (server v18, 28-may-2026):
-// Originalmente este endpoint fue el "modelo" de rollback. En v18 ese patrón
-// se generalizó y refinó: los 5 endpoints con await (`fecha-carga`,
-// `clasificacion/set`, `cdg/delete`, `upload`, `wms/sincronizar`) ahora
-// comparten el mismo patrón uniforme — snapshot de version + historial
-// ANTES de mutar, restauración completa en catch. Ver comentarios in-line
-// "FIX (mié 28-may-2026, server v18)" en cada endpoint para el detalle.
 app.post('/api/wms/sincronizar', async (req, res) => {
   const { cont, usuario } = req.body;
   if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
@@ -880,7 +872,7 @@ app.post('/api/wms/sincronizar', async (req, res) => {
   addHistorial(usuario||'—', 'Sincronizó con WMS: ' + alerta.totalDiffs + ' cambios aplicados (conteos: ' + conteosMantenidos + ' mantenidos, ' + conteosPerdidos + ' perdidos)', cont);
   state.version++;
 
-  // Persistir await (patrón v18: snapshot + try/await/catch + rollback completo)
+  // Persistir await (mismo patrón que clasificacion/set)
   if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   try {
     await withTimeout(
@@ -1468,6 +1460,769 @@ function mergeSheet(rows, type) {
               congeladosCount, 'congelados (' + congeladosConCambio + ' con cambios del WMS)');
   return Object.keys(newConts).length;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CDG v2 — Módulo colaborativo (server v19, 29-may-2026)
+// Adaptado sáb 30-may-2026: corregido comentario service_role→anon,
+// rutas sku-catalog/* movidas antes de /:id (bug de routing Express).
+//
+// Arquitectura:
+//   cdg_meta_{id}  → registro en app_state con metadata, usuarios, bitácora
+//   cdg_lineas     → tabla Supabase independiente, una fila por línea
+//
+// Esto evita reescribir el array completo de líneas en cada operación.
+// Dos usuarios agregando líneas simultáneamente hacen INSERTs independientes,
+// sin conflicto de versión.
+//
+// IMPORTANTE: estos endpoints NO tocan state (el monolito Hamilton).
+// NO aparecen en buildDailyStatePayload() ni en publicState().
+// La red de seguridad saveDirectToSupabase del cliente sigue operando
+// sobre daily_state como antes — no se ve afectada.
+//
+// Backup del módulo CDG v1 (legacy): los endpoints /api/cdg/* originales
+// se conservan sin cambios más abajo para rollback en caso necesario.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers CDG v2 ─────────────────────────────────────────────────────────
+
+// Genera un UUID v4 simple (sin dependencias externas)
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// Lee la metadata de una licencia CDG desde app_state
+async function cdgGetMeta(licenciaId) {
+  return await dbGet('cdg_meta_' + licenciaId);
+}
+
+// Guarda la metadata de una licencia CDG en app_state
+async function cdgSaveMeta(licenciaId, meta) {
+  await dbSet('cdg_meta_' + licenciaId, meta);
+}
+
+// Lee las líneas de una licencia desde cdg_lineas (tabla Supabase).
+// Carga inicial (sin desde): solo líneas NO eliminadas.
+// Delta (con desde): todas las líneas modificadas después de ese momento,
+// INCLUYENDO las eliminadas — necesario para que el polling propague deletes
+// a otras tablets. El cliente descarta las que tengan eliminada=true.
+async function cdgGetLineas(licenciaId, desde) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return [];
+  var query = '?licencia_id=eq.' + encodeURIComponent(licenciaId)
+            + '&order=ts_creacion.asc';
+  if(desde) {
+    // Delta: incluir eliminadas para que las tablets las descarten localmente
+    query += '&ts_modif=gt.' + encodeURIComponent(desde);
+  } else {
+    // Carga completa: solo activas
+    query += '&eliminada=eq.false';
+  }
+  var rows = await supabase('GET', 'cdg_lineas', null, query);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Inserta una línea nueva en cdg_lineas
+async function cdgInsertLinea(linea) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var rows = await supabase('POST', 'cdg_lineas', linea, '');
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Actualiza una línea existente (solo campos permitidos)
+async function cdgUpdateLinea(lineaId, patch, autorEsperado) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  patch.ts_modif = new Date().toISOString();
+  var query = '?id=eq.' + encodeURIComponent(lineaId)
+            + '&autor=eq.' + encodeURIComponent(autorEsperado)
+            + '&eliminada=eq.false';
+  var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Soft-delete de una línea (solo el autor puede borrar la suya)
+async function cdgSoftDeleteLinea(lineaId, autorEsperado) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var patch = { eliminada: true, ts_modif: new Date().toISOString() };
+  var query = '?id=eq.' + encodeURIComponent(lineaId)
+            + '&autor=eq.' + encodeURIComponent(autorEsperado)
+            + '&eliminada=eq.false';
+  var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Actualiza tsUltimaModifLineas en la metadata cuando cambian las líneas
+// FIX (sáb 30-may-2026, server v19): re-leer meta fresco desde DB antes de bump.
+// SIN este fix: si usuario A leyó meta con estado='activo' y luego usuario B
+// cerró la licencia (estado='cerrado'), el write de A sobreescribe con su meta
+// stale y reabre la licencia — riesgo operativo real.
+// CON el fix: siempre escribimos sobre la base más reciente de Supabase,
+// preservando estado/finalizador/bitacora actuales. Solo propagamos lastActivity
+// del usuario local (campo seguro de pisar — a lo sumo queda unos segundos atrás).
+// deltaTotalLineas: +1 al insertar, -1 al eliminar, 0 o undefined al editar.
+// Sin deltaTotalLineas el contador no se actualiza (no lo podemos inferir).
+// Costo: 1 GET extra por operación de línea. Aceptable para equipos de 4-6.
+async function cdgBumpLineasTs(licenciaId, metaLocal, deltaTotalLineas) {
+  var metaFresh = await cdgGetMeta(licenciaId);
+  var base = metaFresh || metaLocal; // fallback si la licencia fue borrada
+  base.tsUltimaModifLineas = new Date().toISOString();
+  base.version = (base.version || 0) + 1;
+  // Aplicar delta de totalLineas sobre el valor FRESCO (no el stale de metaLocal)
+  if(deltaTotalLineas !== undefined && deltaTotalLineas !== 0) {
+    base.totalLineas = Math.max(0, (base.totalLineas || 0) + deltaTotalLineas);
+  }
+  // Propagar solo lastActivity del usuario que operó (nunca estado de licencia)
+  var usuarios = metaLocal.usuarios || {};
+  Object.keys(usuarios).forEach(function(u) {
+    if(!base.usuarios) base.usuarios = {};
+    if(!base.usuarios[u]) base.usuarios[u] = { estado: 'activo', lastActivity: null };
+    var localTs = (usuarios[u] || {}).lastActivity;
+    if(localTs && localTs > (base.usuarios[u].lastActivity || '')) {
+      base.usuarios[u].lastActivity = localTs;
+    }
+  });
+  await cdgSaveMeta(licenciaId, base);
+  // Retornar estadoActual para que el caller detecte si la licencia fue cerrada
+  // mientras la operación estaba en vuelo y pueda responder 409 al cliente.
+  return { estadoActual: base.estado };
+}
+
+// Agrega una entrada a la bitácora de la licencia
+function cdgBitacora(meta, usuario, accion, detalle) {
+  if(!meta.bitacora) meta.bitacora = [];
+  meta.bitacora.push({
+    ts:      new Date().toISOString(),
+    usuario: usuario || '—',
+    accion:  accion,
+    detalle: detalle || ''
+  });
+  // Límite defensivo: máx 200 entradas en bitácora
+  if(meta.bitacora.length > 200) meta.bitacora = meta.bitacora.slice(-200);
+}
+
+// Verifica si una licencia acepta nuevas líneas
+function cdgAceptaLineas(meta) {
+  return meta && meta.estado === 'activo';
+}
+
+// ── GET /api/cdg/v2/listar ─────────────────────────────────────────────────
+// Lista todas las licencias CDG activas o recientes (últimas 7 días).
+// Para que el usuario pueda unirse a una existente.
+app.get('/api/cdg/v2/listar', async (req, res) => {
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, licencias: [] });
+    }
+    // Busca claves que empiecen con "cdg_meta_" en app_state
+    var query = '?key=like.cdg_meta_*&order=key.asc&select=key,value';
+    var rows = await supabase('GET', 'app_state', null, query);
+    if(!Array.isArray(rows)) return res.json({ ok: true, licencias: [] });
+    var licencias = [];
+    rows.forEach(function(row) {
+      try {
+        var meta = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        // Solo incluir activas o cerradas recientemente (últimas 48h)
+        if(meta && (meta.estado === 'activo' || meta.estado === 'pausado')) {
+          licencias.push({
+            id:          meta.id,
+            tipo:        meta.tipo,
+            estado:      meta.estado,
+            creadoPor:   meta.creadoPor,
+            finalizador: meta.finalizador,
+            fechaCreacion: meta.fechaCreacion,
+            totalLineas: meta.totalLineas || 0,
+            usuarios:    Object.keys(meta.usuarios || {})
+          });
+        }
+      } catch(e) { /* skip malformed */ }
+    });
+    res.json({ ok: true, licencias: licencias });
+  } catch(e) {
+    console.log('CDG v2 listar error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/crear ─────────────────────────────────────────────────
+// Crea una nueva licencia CDG.
+// Body: { id, tipo, usuario }
+// id: correlativo U25-XXXX. Si no se pasa, se genera automáticamente.
+app.post('/api/cdg/v2/crear', async (req, res) => {
+  var { id, tipo, usuario } = req.body;
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+
+  // Generar ID si no se pasó
+  if(!id) {
+    var fecha = new Date();
+    var mm = String(fecha.getMonth() + 1).padStart(2, '0');
+    var dd = String(fecha.getDate()).padStart(2, '0');
+    var rand = Math.floor(Math.random() * 9000) + 1000;
+    id = 'U25-' + mm + dd + rand;
+  }
+
+  // Verificar que no exista ya
+  try {
+    var existing = await cdgGetMeta(id);
+    if(existing) {
+      return res.status(409).json({ ok: false, error: 'Ya existe una licencia con ese ID. Usá /api/cdg/v2/' + id + ' para unirte.' });
+    }
+  } catch(e) { /* no existe, continuar */ }
+
+  var now = new Date().toISOString();
+  var meta = {
+    id:                   id,
+    tipo:                 tipo || 'CDG',
+    estado:               'activo',
+    creadoPor:            usuario,
+    finalizador:          usuario,
+    fechaCreacion:        now,
+    fechaCierre:          null,
+    fotosEncabezado:      [],
+    usuarios: {},
+    totalLineas:          0,
+    tsUltimaModifLineas:  now,
+    bitacora:             [],
+    version:              1
+  };
+  meta.usuarios[usuario] = {
+    estado:       'activo',
+    lastActivity: now
+  };
+  cdgBitacora(meta, usuario, 'licencia_creada', tipo || 'CDG');
+
+  try {
+    await withTimeout(cdgSaveMeta(id, meta), 15000, 'CDG crear save');
+    console.log('CDG v2 crear: licencia', id, 'por', usuario);
+    res.json({ ok: true, licencia: meta });
+  } catch(e) {
+    console.log('CDG v2 crear FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo crear la licencia. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// FIX (sáb 30-may-2026, server v19): rutas /sku-catalog/* ANTES de /:id.
+// Express hace match en orden de definición. Si /:id va primero, captura
+// "sku-catalog" como parámetro :id y las rutas de catálogo nunca se alcanzan.
+// ── GET /api/cdg/v2/sku-catalog/buscar ────────────────────────────────────
+// Busca la descripción de un SKU en el catálogo.
+// Query: ?sku=XXXX
+app.get('/api/cdg/v2/sku-catalog/buscar', async (req, res) => {
+  var sku = req.query.sku;
+  if(!sku) return res.status(400).json({ ok: false, error: 'falta sku' });
+
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, encontrado: false });
+    }
+    var query = '?sku=eq.' + encodeURIComponent(String(sku).trim()) + '&select=sku,descripcion';
+    var rows  = await supabase('GET', 'sku_catalog', null, query);
+    if(Array.isArray(rows) && rows.length > 0) {
+      res.json({ ok: true, encontrado: true, sku: rows[0].sku, descripcion: rows[0].descripcion });
+    } else {
+      res.json({ ok: true, encontrado: false });
+    }
+  } catch(e) {
+    console.log('CDG v2 sku-catalog buscar error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/sku-catalog/upload ───────────────────────────────────
+// Carga o actualiza el catálogo de SKUs desde un archivo Excel/CSV.
+// Hace UPSERT por SKU (actualiza si existe, inserta si no).
+// Multer field: 'file'. Columnas esperadas: SKU + Descripción (flexible).
+app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, res) => {
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
+
+  try {
+    var wb   = XLSX.read(req.file.buffer, { type: 'buffer', raw: false });
+    var sn   = wb.SheetNames[0];
+    var rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '', raw: false });
+
+    if(rows.length < 2) {
+      return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+    }
+
+    var hdr  = rows[0].map(function(h) { return norm(String(h)); });
+    var cSku  = findCol(hdr, ['sku', 'articulo', 'artículo', 'codigo', 'código']);
+    var cDesc = findCol(hdr, ['descripcion', 'descripción', 'desc', 'nombre', 'producto']);
+
+    if(cSku < 0 || cDesc < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No se encontraron columnas SKU y Descripción. Encabezados detectados: ' + rows[0].join(', ')
+      });
+    }
+
+    // Construir lote de upserts
+    var ahora   = new Date().toISOString();
+    var lote    = [];
+    var saltados = 0;
+    rows.slice(1).forEach(function(row) {
+      var sku  = String(row[cSku]  || '').trim();
+      var desc = String(row[cDesc] || '').trim();
+      if(!sku || !desc) { saltados++; return; }
+      lote.push({ sku: sku, descripcion: desc, ts_actualizacion: ahora });
+    });
+
+    if(lote.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No se encontraron filas válidas (SKU + Descripción requeridos).' });
+    }
+
+    // Upsert en lotes de 500 para no superar límites de Supabase
+    var insertados = 0;
+    var tamLote    = 500;
+    for(var i = 0; i < lote.length; i += tamLote) {
+      var chunk = lote.slice(i, i + tamLote);
+      await supabase('POST', 'sku_catalog', chunk, '?on_conflict=sku');
+      insertados += chunk.length;
+    }
+
+    console.log('CDG v2 sku-catalog upload:', insertados, 'SKUs, saltados:', saltados);
+    res.json({ ok: true, insertados: insertados, saltados: saltados });
+  } catch(e) {
+    console.log('CDG v2 sku-catalog upload error:', e.message);
+    res.status(500).json({ ok: false, error: 'Error procesando el archivo: ' + e.message });
+  }
+});
+
+// ── GET /api/cdg/v2/:id ────────────────────────────────────────────────────
+// Polling del estado de la licencia. El cliente pasa su último timestamp
+// conocido de líneas para recibir solo el delta.
+// Query params: lineasDesde (ISO timestamp, opcional)
+app.get('/api/cdg/v2/:id', async (req, res) => {
+  var licenciaId = req.params.id;
+  var lineasDesde = req.query.lineasDesde || null;
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+
+    // FIX (sáb 30-may-2026, server v19): siempre consultar cdg_lineas cuando
+    // el cliente manda lineasDesde. La optimización anterior (skip si
+    // tsUltimaModifLineas no cambió) ocultaba líneas cuando el bump de metadata
+    // fallaba — la línea existía en cdg_lineas pero ninguna tablet la veía
+    // hasta hacer un refresh completo.
+    // Sin la optimización: 1 query extra a Supabase por poll (aceptable).
+    var lineas = await cdgGetLineas(licenciaId, lineasDesde);
+    var respuesta = { ok: true, meta: meta, lineas: lineas };
+
+    res.json(respuesta);
+  } catch(e) {
+    console.log('CDG v2 GET', licenciaId, 'error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/linea ─────────────────────────────────────────────
+// Agrega una línea nueva a la licencia.
+// Body: { usuario, sku, descripcion, cantidad, costoUnit, fotos[] }
+// fotos[]: array de paths en Storage (ya subidos antes de llamar este endpoint)
+app.post('/api/cdg/v2/:id/linea', async (req, res) => {
+  var licenciaId = req.params.id;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!sku)     return res.status(400).json({ ok: false, error: 'falta sku' });
+  if(cantidad === undefined || cantidad === null) {
+    return res.status(400).json({ ok: false, error: 'falta cantidad' });
+  }
+
+  // Validar fotos
+  var fotosArr = Array.isArray(fotos) ? fotos : [];
+  if(fotosArr.length > 3) {
+    return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(!cdgAceptaLineas(meta)) {
+      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado + '. No se pueden agregar líneas.' });
+    }
+
+    var now = new Date().toISOString();
+    var linea = {
+      licencia_id:  licenciaId,
+      sku:          String(sku).trim(),
+      descripcion:  descripcion || '',
+      cantidad:     Number(cantidad),
+      costo_unit:   costoUnit !== undefined ? Number(costoUnit) : null,
+      autor:        usuario,
+      fotos:        fotosArr,
+      ts_creacion:  now,
+      ts_modif:     now,
+      eliminada:    false
+    };
+
+    var lineaCreada = await withTimeout(
+      cdgInsertLinea(linea),
+      15000,
+      'CDG insertar linea'
+    );
+
+    // Actualizar metadata: totalLineas y tsUltimaModifLineas
+    // Registrar al usuario como activo si es la primera vez
+    // FIX (sáb 30-may-2026, server v19): bump de metadata en try separado.
+    // Si cdgInsertLinea ya persistió la línea y cdgBumpLineasTs falla,
+    // el catch externo respondería 500 → el cliente reintentaría → línea duplicada.
+    // Separando el try: si el bump falla, la línea está guardada, loggeamos y
+    // respondemos 200 igual. El contador totalLineas se puede recalcular desde
+    // cdg_lineas; tsUltimaModifLineas se corrige en el próximo bump exitoso.
+    var licenciaCerradaMidFlight = false;
+    try {
+      if(!meta.usuarios[usuario]) {
+        meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+        cdgBitacora(meta, usuario, 'usuario_unido', '');
+      } else {
+        meta.usuarios[usuario].lastActivity = now;
+      }
+      meta.totalLineas = (meta.totalLineas || 0) + 1;
+      var bumpResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, +1), 15000, 'CDG bump ts');
+      // Detectar si la licencia se cerró mientras esta operación estaba en vuelo
+      if(bumpResult && bumpResult.estadoActual === 'cerrado') {
+        licenciaCerradaMidFlight = true;
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata FAILED (línea ya insertada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea agregada:', licenciaId, 'sku:', sku, 'por:', usuario);
+    if(licenciaCerradaMidFlight) {
+      // La línea quedó guardada en cdg_lineas, pero la licencia se cerró
+      // mientras operabas. ok:true porque el dato está seguro.
+      return res.status(409).json({
+        ok: true,
+        linea: lineaCreada,
+        aviso: 'La licencia fue cerrada mientras agregabas la línea. Tu línea quedó guardada en el sistema.'
+      });
+    }
+    res.json({ ok: true, linea: lineaCreada });
+  } catch(e) {
+    console.log('CDG v2 agregar linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la línea. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// ── PATCH /api/cdg/v2/:id/linea/:lineaId ──────────────────────────────────
+// Edita una línea propia (datos o fotos). Solo el autor puede editar su línea.
+// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos? }
+app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
+  var licenciaId = req.params.id;
+  var lineaId    = req.params.lineaId;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(meta.estado === 'cerrado') {
+      return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede editar.' });
+    }
+
+    // Construir patch solo con campos enviados
+    var patch = {};
+    if(sku       !== undefined) patch.sku          = String(sku).trim();
+    if(descripcion !== undefined) patch.descripcion = descripcion;
+    if(cantidad  !== undefined) patch.cantidad      = Number(cantidad);
+    if(costoUnit !== undefined) patch.costo_unit    = Number(costoUnit);
+    if(fotos     !== undefined) {
+      var fotosArr = Array.isArray(fotos) ? fotos : [];
+      if(fotosArr.length > 3) {
+        return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
+      }
+      patch.fotos = fotosArr;
+    }
+
+    if(Object.keys(patch).length === 0) {
+      return res.status(400).json({ ok: false, error: 'nada que actualizar' });
+    }
+
+    var lineaActualizada = await withTimeout(
+      cdgUpdateLinea(lineaId, patch, usuario),
+      15000,
+      'CDG editar linea'
+    );
+
+    if(!lineaActualizada) {
+      return res.status(403).json({ ok: false, error: 'No se encontró la línea o no sos el autor.' });
+    }
+
+    // Actualizar tsUltimaModifLineas para que el próximo poll la incluya.
+    // FIX (sáb 30-may-2026, server v19): try separado — si la edición ya
+    // persistió y el bump falla, respondemos 200 igual (la línea está guardada).
+    try {
+      if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+      var bumpEditResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, 0), 15000, 'CDG bump ts edit');
+      if(bumpEditResult && bumpEditResult.estadoActual === 'cerrado') {
+        console.log('CDG v2 linea editada (licencia cerrada mid-flight):', lineaId);
+        return res.status(409).json({ ok: true, linea: lineaActualizada, aviso: 'La licencia fue cerrada mientras editabas. Tu cambio quedó guardado.' });
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata (edit) FAILED (línea ya editada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea editada:', lineaId, 'por:', usuario);
+    res.json({ ok: true, linea: lineaActualizada });
+  } catch(e) {
+    console.log('CDG v2 editar linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo editar la línea. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// ── DELETE /api/cdg/v2/:id/linea/:lineaId ─────────────────────────────────
+// Soft-delete de una línea. Solo el autor puede borrar su propia línea.
+// Body: { usuario }
+app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
+  var licenciaId = req.params.id;
+  var lineaId    = req.params.lineaId;
+  var { usuario } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(meta.estado === 'cerrado') {
+      return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede eliminar.' });
+    }
+
+    var resultado = await withTimeout(
+      cdgSoftDeleteLinea(lineaId, usuario),
+      15000,
+      'CDG delete linea'
+    );
+
+    if(!resultado) {
+      return res.status(403).json({ ok: false, error: 'No se encontró la línea o no sos el autor.' });
+    }
+
+    // Actualizar metadata.
+    // FIX (sáb 30-may-2026, server v19): try separado — si el soft-delete ya
+    // persistió y el bump falla, respondemos 200 igual (la línea ya está eliminada).
+    try {
+      meta.totalLineas = Math.max(0, (meta.totalLineas || 1) - 1);
+      if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+      var bumpDelResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, -1), 15000, 'CDG bump ts delete');
+      if(bumpDelResult && bumpDelResult.estadoActual === 'cerrado') {
+        console.log('CDG v2 linea eliminada (licencia cerrada mid-flight):', lineaId);
+        return res.status(409).json({ ok: true, aviso: 'La licencia fue cerrada mientras eliminabas. Tu cambio quedó guardado.' });
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata (delete) FAILED (línea ya eliminada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea eliminada:', lineaId, 'por:', usuario);
+    res.json({ ok: true });
+  } catch(e) {
+    console.log('CDG v2 delete linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo eliminar la línea. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/fotos-encabezado ─────────────────────────────────
+// Agrega fotos de encabezado a la licencia (máx 5).
+// Body: { usuario, fotos[] } — fotos son paths en Storage ya subidos
+app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
+  var licenciaId = req.params.id;
+  var { usuario, fotos } = req.body;
+
+  if(!usuario)               return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!Array.isArray(fotos) || fotos.length === 0) {
+    return res.status(400).json({ ok: false, error: 'falta fotos' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(!cdgAceptaLineas(meta)) {
+      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado });
+    }
+
+    var actuales = meta.fotosEncabezado || [];
+    var total    = actuales.length + fotos.length;
+    if(total > 5) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Máximo 5 fotos de encabezado. Ya tenés ' + actuales.length + ', intentás agregar ' + fotos.length + '.'
+      });
+    }
+
+    meta.fotosEncabezado = actuales.concat(fotos);
+    meta.version = (meta.version || 0) + 1;
+    if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+
+    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG fotos encabezado save');
+    console.log('CDG v2 fotos encabezado:', licenciaId, '+' + fotos.length + ' fotos');
+    res.json({ ok: true, fotosEncabezado: meta.fotosEncabezado });
+  } catch(e) {
+    console.log('CDG v2 fotos encabezado FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudieron guardar las fotos. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/accion ────────────────────────────────────────────
+// Centraliza todas las operaciones de estado de licencia y usuarios.
+// Body: { usuario, tipo, ...params }
+//
+// Tipos soportados:
+//   unirse          → usuario se une a la licencia
+//   guardar_progreso → registra lastActivity del usuario (sin cerrar)
+//   pausar          → usuario pasa a estado pausado
+//   reanudar        → usuario vuelve a activo
+//   marcar_inactivo → cliente informa que el usuario llegó a 45 min sin actividad
+//   delegar         → finalizador delega el rol a otro usuario activo
+//                     params: { nuevoFinalizador }
+//   cerrar          → finalizador cierra la licencia definitivamente
+//   desbloquear     → supervisor reabre una licencia cerrada
+//                     params: { supervisor: true }
+app.post('/api/cdg/v2/:id/accion', async (req, res) => {
+  var licenciaId = req.params.id;
+  var { usuario, tipo, nuevoFinalizador, supervisor } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!tipo)    return res.status(400).json({ ok: false, error: 'falta tipo de acción' });
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+
+    var now = new Date().toISOString();
+
+    // ── unirse ──────────────────────────────────────────────────────────────
+    if(tipo === 'unirse') {
+      if(meta.estado === 'cerrado') {
+        return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
+      }
+      if(!meta.usuarios[usuario]) {
+        meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+        cdgBitacora(meta, usuario, 'usuario_unido', '');
+      } else {
+        // Ya estaba registrado — reactivar
+        meta.usuarios[usuario].estado       = 'activo';
+        meta.usuarios[usuario].lastActivity = now;
+        cdgBitacora(meta, usuario, 'usuario_reingreso', '');
+      }
+    }
+
+    // ── guardar_progreso ────────────────────────────────────────────────────
+    else if(tipo === 'guardar_progreso') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].lastActivity = now;
+      meta.usuarios[usuario].estado       = 'activo';
+      cdgBitacora(meta, usuario, 'progreso_guardado', '');
+    }
+
+    // ── pausar ──────────────────────────────────────────────────────────────
+    else if(tipo === 'pausar') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado       = 'pausado';
+      meta.usuarios[usuario].lastActivity = now;
+      cdgBitacora(meta, usuario, 'usuario_pausado', '');
+    }
+
+    // ── reanudar ────────────────────────────────────────────────────────────
+    else if(tipo === 'reanudar') {
+      if(meta.estado === 'cerrado') {
+        return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
+      }
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado       = 'activo';
+      meta.usuarios[usuario].lastActivity = now;
+      cdgBitacora(meta, usuario, 'usuario_reanudo', '');
+    }
+
+    // ── marcar_inactivo ─────────────────────────────────────────────────────
+    else if(tipo === 'marcar_inactivo') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado = 'inactivo';
+      cdgBitacora(meta, usuario, 'usuario_inactivo_auto', '45 min sin actividad');
+
+      // Reasignación automática lazy del finalizador si quedó inactivo
+      if(meta.finalizador === usuario) {
+        var candidatos = Object.keys(meta.usuarios).filter(function(u) {
+          return u !== usuario && meta.usuarios[u].estado === 'activo';
+        });
+        if(candidatos.length > 0) {
+          // Criterio: usuario con actividad más reciente
+          candidatos.sort(function(a, b) {
+            return (meta.usuarios[b].lastActivity || '') > (meta.usuarios[a].lastActivity || '') ? 1 : -1;
+          });
+          var nuevo = candidatos[0];
+          meta.finalizador = nuevo;
+          cdgBitacora(meta, 'sistema', 'finalizador_reasignado_auto',
+            'De ' + usuario + ' a ' + nuevo + ' (inactividad)');
+        }
+      }
+    }
+
+    // ── delegar ─────────────────────────────────────────────────────────────
+    else if(tipo === 'delegar') {
+      if(meta.finalizador !== usuario) {
+        return res.status(403).json({ ok: false, error: 'Solo el finalizador actual puede delegar.' });
+      }
+      if(!nuevoFinalizador) {
+        return res.status(400).json({ ok: false, error: 'falta nuevoFinalizador' });
+      }
+      if(!meta.usuarios[nuevoFinalizador]) {
+        return res.status(400).json({ ok: false, error: nuevoFinalizador + ' no está en esta licencia.' });
+      }
+      meta.finalizador = nuevoFinalizador;
+      cdgBitacora(meta, usuario, 'finalizador_delegado',
+        'De ' + usuario + ' a ' + nuevoFinalizador);
+    }
+
+    // ── cerrar ──────────────────────────────────────────────────────────────
+    else if(tipo === 'cerrar') {
+      if(meta.finalizador !== usuario) {
+        return res.status(403).json({ ok: false, error: 'Solo el finalizador puede cerrar la licencia.' });
+      }
+      if(meta.estado === 'cerrado') {
+        return res.status(400).json({ ok: false, error: 'La licencia ya está cerrada.' });
+      }
+      meta.estado      = 'cerrado';
+      meta.fechaCierre = now;
+      cdgBitacora(meta, usuario, 'licencia_cerrada', '');
+      // Marcar todos los usuarios como inactivos al cerrar
+      Object.keys(meta.usuarios).forEach(function(u) {
+        meta.usuarios[u].estado = 'inactivo';
+      });
+    }
+
+    // ── desbloquear ─────────────────────────────────────────────────────────
+    else if(tipo === 'desbloquear') {
+      if(!supervisor) {
+        return res.status(403).json({ ok: false, error: 'Solo un supervisor puede desbloquear.' });
+      }
+      if(meta.estado !== 'cerrado') {
+        return res.status(400).json({ ok: false, error: 'La licencia no está cerrada.' });
+      }
+      meta.estado      = 'activo';
+      meta.fechaCierre = null;
+      cdgBitacora(meta, usuario, 'licencia_desbloqueada', 'supervisor');
+    }
+
+    else {
+      return res.status(400).json({ ok: false, error: 'Tipo de acción desconocido: ' + tipo });
+    }
+
+    meta.version = (meta.version || 0) + 1;
+    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG accion save');
+    console.log('CDG v2 accion:', tipo, licenciaId, 'por:', usuario);
+    res.json({ ok: true, meta: meta });
+
+  } catch(e) {
+    console.log('CDG v2 accion FAILED:', tipo, licenciaId, e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo ejecutar la acción. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FIN CDG v2 — Los endpoints /api/cdg/* originales (v1 legacy) se conservan
+// sin modificación arriba de este bloque para rollback si fuera necesario.
+// ══════════════════════════════════════════════════════════════════════════
 
 // ── Start ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
