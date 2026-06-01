@@ -650,35 +650,44 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
     <!-- ── PÁGINA: CDG SELECTOR (clásico vs v2) ─────────────── -->
     <div id="pg-cdg-menu" class="page">
-      <!-- FIX (lun 1-jun-2026, v5.2.28): Fase 1 rediseño CDG — 3 opciones en el menú principal. -->
+      <!--
+        ESTRUCTURA FINAL DOCUMENTADA (Deploy Version Considerations.docx):
+          1. Captura
+          2. Manifiesto / Validación WMS
+          3. Reportes
+        "Manifiesto / Validación WMS" se implementará en una fase posterior porque
+        requiere carga WMS, comparación con teórico y persistencia de resultados.
+        Por ahora el menú muestra solo las 3 opciones reales y funcionales.
+        sm-cdg-admin y pg-cdg-admin se mantienen en el DOM pero ocultos y sin
+        llamar a cdgMenuMostrarAdmin(), para no mostrar placeholders en producción.
+      -->
       <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Seleccioná el módulo de conteo CDG.</p>
       <div class="submenu-list">
-        <!-- sm-cdg-v2: conteo colaborativo multiusuario — opción principal -->
+        <!-- Captura colaborativa CDG — abre CDG v2 -->
         <div class="submenu-item" id="sm-cdg-v2">
           <div class="si-icon">👥</div>
           <div class="si-text">
-            <div class="si-title">Conteo colaborativo</div>
-            <div class="si-sub">Varios contadores por licencia · recomendado</div>
+            <div class="si-title">Captura colaborativa CDG</div>
+            <div class="si-sub">Crear o unirse a una licencia de conteo</div>
           </div>
-          <span class="submenu-badge badge" style="background:#e8f5e9;color:#2e7d32">NUEVO</span>
         </div>
-        <!-- sm-cdg-historial: consulta read-only -->
+        <!-- Reportes / historial — abre historial read-only -->
         <div class="submenu-item" id="sm-cdg-historial">
           <div class="si-icon">📋</div>
           <div class="si-text">
-            <div class="si-title">Historial y consulta</div>
-            <div class="si-sub">Ver conteos guardados y finalizados</div>
+            <div class="si-title">Reportes / historial</div>
+            <div class="si-sub">Consultar conteos, hallazgos y exportaciones</div>
           </div>
         </div>
-        <!-- sm-cdg-clasico: cdg clásico un usuario -->
+        <!-- Conteo individual clásico — plan B temporal -->
         <div class="submenu-item" id="sm-cdg-clasico">
           <div class="si-icon">🏢</div>
           <div class="si-text">
-            <div class="si-title">Conteo individual (clásico)</div>
-            <div class="si-sub">Un solo contador · en transición</div>
+            <div class="si-title">Conteo individual clásico</div>
+            <div class="si-sub">Flujo anterior temporal</div>
           </div>
         </div>
-        <!-- sm-cdg-admin: solo supervisores, oculto para no-sup -->
+        <!-- sm-cdg-admin: reservado para fase posterior, nunca visible en producción actual -->
         <div class="submenu-item" id="sm-cdg-admin" style="display:none">
           <div class="si-icon">🔧</div>
           <div class="si-text">
@@ -1602,7 +1611,6 @@ document.getElementById('mc-cdg').addEventListener('click',function(){
   // Si no, ir directo al clásico (comportamiento anterior sin cambios).
   if(CDG_V2_HABILITADO) {
     navTo('pg-cdg-menu','🏢 Conteos CDG');
-    cdgMenuMostrarAdmin();
     return;
   }
   navTo('pg-cdg','🏢 Conteos CDG');
@@ -7313,10 +7321,9 @@ document.getElementById('sm-cdg-historial').addEventListener('click', function()
   document.getElementById('cdg-historial-page-panel').style.display = 'none';
 });
 
-// sm-cdg-admin → pg-cdg-admin
-document.getElementById('sm-cdg-admin').addEventListener('click', function(){
-  navTo('pg-cdg-admin','🔧 Administración CDG');
-});
+// sm-cdg-admin: oculto en producción — handler registrado para evitar error JS
+// si el elemento existe en el DOM, pero no hace nada visible.
+document.getElementById('sm-cdg-admin').addEventListener('click', function(){ /* reservado */ });
 
 // Botones de tipo en pg-cdg-historial → showCDGHistEn (panel propio)
 document.getElementById('sm-cdg-hist-cdg').addEventListener('click', function(){
@@ -7336,25 +7343,12 @@ document.getElementById('btn-cdg-historial-page-close').addEventListener('click'
   document.getElementById('cdg-historial-tipos').style.display = '';
 });
 
-// Desde pg-cdg-admin: acceso rápido al clásico (donde está el panel de unlock real)
-document.getElementById('sm-cdg-admin-clasico').addEventListener('click', function(){
-  navTo('pg-cdg','🏢 Conteos CDG');
-  cdgSkus=[];
-  cdgFotos={};
-  cdgFotoGral=null;
-  document.getElementById('cdg-u25').value='';
-  document.getElementById('cdg-sku').value='';
-  document.getElementById('cdg-desc').value='';
-  document.getElementById('cdg-qty').value='';
-  renderCDGSkuList();
-});
+// sm-cdg-admin-clasico: dentro de pg-cdg-admin (oculto). Handler registrado por precaución.
+document.getElementById('sm-cdg-admin-clasico').addEventListener('click', function(){ /* reservado */ });
 
-// Mostrar opción Admin en el menú solo si es supervisor.
-// Se llama desde mc-cdg (el punto de entrada al menú CDG) y no necesita hookear navTo.
-function cdgMenuMostrarAdmin(){
-  var el = document.getElementById('sm-cdg-admin');
-  if(el) el.style.display = (typeof isSup === 'function' && isSup()) ? '' : 'none';
-}
+// cdgMenuMostrarAdmin: no se llama en producción actual.
+// Reservada para cuando Administración sea una sección funcional completa.
+function cdgMenuMostrarAdmin(){ /* no-op — Administración no visible en producción */ }
 
 document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
   navTo('pg-cdg','🏢 Conteos CDG');
