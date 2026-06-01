@@ -1794,6 +1794,41 @@ app.post('/api/cdg/v2/crear', async (req, res) => {
 // FIX (sáb 30-may-2026, server v19): rutas /sku-catalog/* ANTES de /:id.
 // Express hace match en orden de definición. Si /:id va primero, captura
 // "sku-catalog" como parámetro :id y las rutas de catálogo nunca se alcanzan.
+// ── GET /api/cdg/v2/sku-catalog/sugerir ───────────────────────────────────
+// Devuelve hasta 15 SKUs que matcheen el texto ingresado (sku o descripcion).
+// Usado para autocomplete en el form CDG v2. Sin cargar los 41k SKUs al cliente.
+// Query: ?q=texto (mínimo 2 chars para evitar queries demasiado amplias)
+// FIX (lun 1-jun-2026, server v19): endpoint nuevo para autocomplete.
+app.get('/api/cdg/v2/sku-catalog/sugerir', async (req, res) => {
+  var q = String(req.query.q || '').trim();
+  if(q.length < 2) return res.json({ ok: true, resultados: [] });
+
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, resultados: [] });
+    }
+    // Buscar por SKU exacto primero (si es numérico) O por descripción ilike
+    // PostgREST: or=(sku.eq.X,descripcion.ilike.*Y*)
+    var qEnc = encodeURIComponent('%' + q + '%');
+    var skuEnc = encodeURIComponent(q);
+    var query = '?or=(sku.eq.' + skuEnc + ',descripcion.ilike.' + qEnc + ')'
+              + '&select=sku,descripcion,costo&limit=15';
+    var rows = await supabase('GET', 'sku_catalog', null, query);
+    if(!Array.isArray(rows)) return res.json({ ok: true, resultados: [] });
+    var resultados = rows.map(function(r){
+      return {
+        sku:        r.sku,
+        descripcion: r.descripcion || '',
+        costo:      (r.costo != null && Number(r.costo) > 0) ? Math.round(Number(r.costo)) : null
+      };
+    });
+    res.json({ ok: true, resultados: resultados });
+  } catch(e) {
+    console.log('CDG v2 sku-catalog sugerir error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── GET /api/cdg/v2/sku-catalog/buscar ────────────────────────────────────
 // Busca la descripción y costo de un SKU en el catálogo.
 // Query: ?sku=XXXX
