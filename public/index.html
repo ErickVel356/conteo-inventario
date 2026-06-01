@@ -756,6 +756,13 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <button class="btn btn-sm btn-dark" id="btn-cdgv2-add-linea" style="min-width:90px">+ Agregar</button>
           </div>
         </div>
+        <!-- Fotos de la línea (se adjuntan ANTES de guardar, máx 3) -->
+        <div style="margin-top:.6rem">
+          <div style="font-size:.75rem;color:#666;margin-bottom:4px">📷 Fotos de evidencia (máx 3, opcional)</div>
+          <div id="cdgv2-add-fotos-row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>
+          </div>
+        </div>
         <div id="cdgv2-add-msg" style="font-size:.82rem;margin-top:.4rem"></div>
       </div>
 
@@ -767,6 +774,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <!-- Botones de acción -->
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.5rem">
         <button class="btn btn-sm" id="btn-cdgv2-guardar-prog" style="flex:1">💾 Guardar progreso</button>
+        <button class="btn btn-sm btn-warn" id="btn-cdgv2-hallazgo" style="flex:1">⚠ Crear hallazgo</button>
         <button class="btn btn-dark" id="btn-cdgv2-finalizar" style="flex:2;display:none">🔒 Finalizar y bloquear</button>
       </div>
       <div id="cdgv2-lic-msg" style="font-size:.82rem;margin-top:.5rem"></div>
@@ -1087,7 +1095,7 @@ var STORE_KEY = 'conteo_fisico_v4';
 ══════════════════════════════════════════════════════════════════ */
 // FIX (sáb 30-may-2026, v5.2.27): feature flag para CDG v2 multi-usuario.
 // Cambiar a true cuando el módulo esté listo para el equipo.
-var CDG_V2_HABILITADO = false;
+var CDG_V2_HABILITADO = true;
 
 var currentUser  = null;
 var teorico      = {};   // { contId: { items, type, cdgValidado? } }
@@ -1419,6 +1427,10 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   if(!confirm('¿Cerrar sesión?'))return;
   stopPolling();
   releaseAllLocks();
+  // FIX (lun 1-jun-2026, v5.2.27): limpiar estado CDG v2 al cerrar sesión.
+  // Las variables cdgv2* están en el IIFE — se acceden via window.cdgv2Cleanup
+  // para evitar ReferenceError en strict mode por cross-scope.
+  if(typeof window.cdgv2Cleanup === 'function') window.cdgv2Cleanup();
   lastVersion = -1;
   window.serverLocks = {};
   currentUser=null;
@@ -7020,6 +7032,16 @@ var cdgv2Lineas         = [];     // array de líneas cargadas
 var cdgv2LineasDesde    = null;   // ISO timestamp del último poll de líneas
 var cdgv2PollTimer      = null;   // setInterval del polling
 var cdgv2ListaTimer     = null;   // setInterval del polling de lista
+// FIX (lun 1-jun-2026, v5.2.27): exponer cleanup en window para que el
+// handler de logout (en otro script estricto) pueda limpiar sin
+// ReferenceError por cross-scope. Las var del IIFE son locales al closure.
+window.cdgv2Cleanup = function(){
+  clearInterval(cdgv2PollTimer);  clearInterval(cdgv2ListaTimer);
+  cdgv2PollTimer = null;          cdgv2ListaTimer = null;
+  cdgv2LicenciaActual = null;     cdgv2Lineas = [];
+  cdgv2LineasDesde = null;        cdgv2AddFotos = [];
+  if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
+};
 var CDGV2_POLL_MS       = 15000;  // 15s entre polls
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
@@ -7070,7 +7092,17 @@ function renderCdgv2Lista(licencias){
     el.innerHTML = '<div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">No hay licencias activas. Creá una nueva.</div>';
     return;
   }
-  el.innerHTML = licencias.map(function(l){
+  // FIX (lun 1-jun-2026, v5.2.27): deduplicar por id normalizado (toUpperCase)
+  // como segunda red. El server normaliza con trim().toUpperCase(), pero si en
+  // Supabase ya existen claves duplicadas con distinto case, el render no duplica.
+  var vistos = {};
+  var unicas = licencias.filter(function(l){
+    var key = (l.id||'').toUpperCase();
+    if(vistos[key]) return false;
+    vistos[key] = true;
+    return true;
+  });
+  el.innerHTML = unicas.map(function(l){
     var estadoColor = l.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
     var estadoText  = l.estado === 'activo' ? 'Activa' : 'Cerrada';
     var estadoFg    = l.estado === 'activo' ? '#2e7d32' : '#c62828';
@@ -7104,7 +7136,8 @@ document.getElementById('btn-cdgv2-nueva').addEventListener('click', function(){
 
 document.getElementById('btn-cdgv2-crear-ok').addEventListener('click', function(){
   if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-  var u25  = document.getElementById('cdgv2-new-u25').value.trim();
+  // Normalizar igual que el server para que la validación de duplicado sea consistente
+  var u25  = (document.getElementById('cdgv2-new-u25').value||'').trim().toUpperCase();
   var tipo = document.getElementById('cdgv2-new-tipo').value;
   var msg  = document.getElementById('cdgv2-crear-msg');
   if(!u25){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el correlativo U25.</span>'; return; }
@@ -7120,11 +7153,13 @@ document.getElementById('btn-cdgv2-crear-ok').addEventListener('click', function
 
 /* ── LICENCIA INDIVIDUAL ─────────────────────────────────────────── */
 function cdgv2AbrirLicencia(licenciaId){
+  licenciaId = (licenciaId||'').trim().toUpperCase(); // normalizar igual que el server
   clearInterval(cdgv2ListaTimer);
   clearInterval(cdgv2PollTimer);
   cdgv2LicenciaActual = null;
   cdgv2Lineas = [];
   cdgv2LineasDesde = null;
+  cdgv2AddFotos = []; renderCdgv2AddFotosRow(); // limpiar fotos pendientes del form
   navTo('pg-cdg-v2-licencia','📋 Licencia '+licenciaId);
   document.getElementById('cdgv2-lic-titulo').textContent = licenciaId;
   document.getElementById('cdgv2-lic-meta').textContent = 'Cargando…';
@@ -7148,8 +7183,22 @@ function cdgv2PollearLicencia(licenciaId, esPrimerCarga){
   cdgv2Fetch('GET', url).then(function(d){
     if(!d.ok) return;
     cdgv2LicenciaActual = d.meta;
-    // Actualizar timestamp del poll
-    cdgv2LineasDesde = new Date().toISOString();
+    // FIX (lun 1-jun-2026, v5.2.27): avanzar el cursor al máximo ts_modif
+    // recibido, NO al reloj local del navegador.
+    // Con reloj local: si una línea se inserta mientras el request está en
+    // vuelo, o hay skew cliente/servidor, el próximo poll pide
+    // ts_modif > horaLocal y se saltea esa línea (causa del bug "línea no
+    // aparecía hasta salir y volver").
+    // Con ts_modif máximo: el cursor siempre queda en el dato más reciente
+    // que el servidor confirmó, sin importar skew de reloj.
+    var maxTs = cdgv2LineasDesde; // preservar si no hay líneas nuevas
+    if(Array.isArray(d.lineas)) {
+      d.lineas.forEach(function(l){
+        var ts = l.ts_modif || l.ts_creacion;
+        if(ts && (!maxTs || ts > maxTs)) maxTs = ts;
+      });
+    }
+    cdgv2LineasDesde = maxTs;
     // Aplicar líneas del delta
     if(d.lineas && d.lineas.length){
       d.lineas.forEach(function(l){
@@ -7201,28 +7250,51 @@ function renderCdgv2Lineas(){
   }
   var cerrada = cdgv2LicenciaActual && cdgv2LicenciaActual.estado === 'cerrado';
   el.innerHTML = '<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Líneas ('+cdgv2Lineas.length+')</div>'
-    + cdgv2Lineas.map(function(l, idx){
-      var esMia = currentUser && l.autor === currentUser.name;
+    + cdgv2Lineas.map(function(l){
+      var esMia    = currentUser && l.autor === currentUser.name;
       var costoFmt = l.costo_unit != null ? '$ '+Number(l.costo_unit).toLocaleString('es-GT') : '—';
       var tsShort  = l.ts_creacion ? l.ts_creacion.substring(11,16) : '';
-      var acciones = (!cerrada && esMia)
-        ? '<button class="btn btn-xs cdgv2-del-btn" data-id="'+escH(l.id)+'" style="background:#c0392b;color:#fff;font-size:.72rem;padding:3px 9px;border-radius:6px;border:none;cursor:pointer;margin-left:6px">🗑</button>'
+      var rowBg    = esMia ? '#fff' : '#f9f9f7';
+      // Fotos de la línea (máx 3) — miniaturas
+      var fotosLinea = Array.isArray(l.fotos) ? l.fotos : [];
+      var fotosHtml = fotosLinea.map(function(url, fi){
+        return '<a href="'+escH(url)+'" target="_blank">'
+          +'<img src="'+escH(url)+'" data-linea-id="'+escH(l.id)+'" data-foto-idx="'+fi+'"'
+          +' style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:pointer"'
+          +' loading="lazy"></a>';
+      }).join('');
+      // Botón agregar foto (solo líneas propias, activas, < 3 fotos)
+      var btnFoto = (!cerrada && esMia && fotosLinea.length < 3)
+        ? '<button class="cdgv2-add-foto-btn" data-linea-id="'+escH(l.id)+'" data-sku="'+escH(l.sku)+'" data-fotos-count="'+fotosLinea.length+'"'
+          +' style="background:#f5f5f3;border:1px dashed #bbb;border-radius:6px;padding:3px 7px;font-size:.75rem;cursor:pointer;color:#555;white-space:nowrap">📷+'
+          +(3-fotosLinea.length)+'</button>'
         : '';
-      var rowBg = esMia ? '#fff' : '#f9f9f7';
-      return '<div style="background:'+rowBg+';border:1px solid #e8e8e8;border-radius:8px;padding:.6rem .8rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
+      var btnDel = (!cerrada && esMia)
+        ? '<button class="cdgv2-del-btn" data-id="'+escH(l.id)+'"'
+          +' style="background:#c0392b;color:#fff;font-size:.72rem;padding:3px 9px;border-radius:6px;border:none;cursor:pointer">🗑</button>'
+        : '';
+      return '<div style="background:'+rowBg+';border:1px solid #e8e8e8;border-radius:8px;padding:.6rem .8rem;margin-bottom:.4rem">'
+        // Fila principal: SKU, desc, cantidad, costo, autor
+        +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
         +'<span style="font-weight:700;min-width:70px;font-size:.88rem">'+escH(l.sku)+'</span>'
         +'<span style="flex:1;min-width:120px;font-size:.85rem;color:#333">'+escH(l.descripcion||'—')+'</span>'
         +'<span style="min-width:60px;text-align:right;font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</span>'
         +'<span style="min-width:80px;text-align:right;font-size:.8rem;color:#666">'+costoFmt+'</span>'
         +'<span style="font-size:.75rem;color:#aaa;white-space:nowrap">'+escH(l.autor)+' '+tsShort+'</span>'
-        + acciones
+        +btnDel
+        +'</div>'
+        // Fila de fotos
+        +(fotosHtml || btnFoto
+          ? '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:.4rem">'+fotosHtml+btnFoto+'</div>'
+          : '')
         +'</div>';
     }).join('');
-  // Handlers de borrar
+
+  // Handler borrar línea
   el.querySelectorAll('.cdgv2-del-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(!confirm('¿Eliminás esta línea?')) return;
-      var lid = btn.dataset.id;
+      var lid   = btn.dataset.id;
       var lmeta = cdgv2LicenciaActual;
       cdgv2Fetch('DELETE', '/api/cdg/v2/'+(lmeta?lmeta.id:'?')+'/linea/'+lid,
         { usuario: currentUser.name })
@@ -7230,6 +7302,47 @@ function renderCdgv2Lineas(){
           if(!d.ok) alert(d.error||'Error al eliminar');
           else cdgv2PollearLicencia(lmeta.id, false);
         }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+
+  // Handler agregar foto por línea
+  el.querySelectorAll('.cdgv2-add-foto-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(!currentUser || !cdgv2LicenciaActual) return;
+      var lineaId    = btn.dataset.lineaId;
+      var sku        = btn.dataset.sku;
+      var fotosCount = parseInt(btn.dataset.fotosCount)||0;
+      if(fotosCount >= 3){ alert('Máximo 3 fotos por línea.'); return; }
+      var inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+      inp.onchange = function(){
+        if(!inp.files[0]) return;
+        btn.textContent = 'Subiendo…'; btn.disabled = true;
+        // Comprimir primero (igual que fotos de hallazgo y CDG encabezado)
+        window.compressImage(inp.files[0])
+          .then(function(blob){
+            return window.uploadFotoAndGetUrl(blob, 'cdg-sku',
+              cdgv2LicenciaActual.id, sku, null);
+          })
+          .then(function(fotoUrl){
+            // PATCH para agregar la URL a las fotos existentes de la línea
+            var linea = cdgv2Lineas.find(function(x){ return x.id === lineaId; });
+            var fotasActuales = Array.isArray(linea && linea.fotos) ? linea.fotos.slice() : [];
+            fotasActuales.push(fotoUrl);
+            return cdgv2Fetch('PATCH',
+              '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/linea/'+lineaId,
+              { usuario: currentUser.name, fotos: fotasActuales });
+          })
+          .then(function(d){
+            if(!d.ok) alert(d.error||'Error al guardar foto');
+            cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
+          })
+          .catch(function(e){
+            alert('Error al subir foto: '+(e.message||e));
+            btn.textContent = '📷+'; btn.disabled = false;
+          });
+      };
+      inp.click();
     });
   });
 }
@@ -7280,6 +7393,60 @@ function renderCdgv2Fotos(meta){
 /* ── AGREGAR LÍNEA ──────────────────────────────────────────────── */
 // Autocomplete SKU desde sku_catalog
 var cdgv2SkuTimer = null;
+var cdgv2AddFotos = []; // fotos seleccionadas para la línea que se está creando
+
+// Handler para agregar foto ANTES de crear la línea
+document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
+  if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
+  if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
+  var inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+  inp.onchange = function(){
+    if(!inp.files[0]) return;
+    var btn = e.target;
+    btn.textContent = 'Subiendo…'; btn.disabled = true;
+    window.compressImage(inp.files[0])
+      .then(function(blob){
+        // Subir con un SKU temporal; se reemplazará en el PATCH si es necesario
+        var skuTemp = document.getElementById('cdgv2-add-sku').value.trim() || 'tmp';
+        var licId   = cdgv2LicenciaActual ? cdgv2LicenciaActual.id : 'tmp';
+        return window.uploadFotoAndGetUrl(blob, 'cdg-sku', licId, skuTemp, null);
+      })
+      .then(function(url){
+        cdgv2AddFotos.push(url);
+        renderCdgv2AddFotosRow();
+      })
+      .catch(function(e2){
+        alert('Error al subir foto: '+(e2.message||e2));
+        btn.textContent = '📷 Agregar foto'; btn.disabled = false;
+      });
+  };
+  inp.click();
+});
+
+function renderCdgv2AddFotosRow(){
+  var row = document.getElementById('cdgv2-add-fotos-row');
+  if(!row) return;
+  var html = cdgv2AddFotos.map(function(url, i){
+    return '<div style="position:relative;display:inline-block">'
+      +'<img src="'+escH(url)+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #ccc">'
+      +'<button class="cdgv2-add-foto-del" data-idx="'+i+'"'
+        +' style="position:absolute;top:-4px;right:-4px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:.65rem;cursor:pointer;line-height:1">×</button>'
+      +'</div>';
+  }).join('');
+  if(cdgv2AddFotos.length < 3){
+    html += '<button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>';
+  }
+  row.innerHTML = html;
+  // Handler de borrar foto del formulario
+  row.querySelectorAll('.cdgv2-add-foto-del').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      cdgv2AddFotos.splice(parseInt(btn.dataset.idx), 1);
+      renderCdgv2AddFotosRow();
+    });
+  });
+}
+
 document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
   clearTimeout(cdgv2SkuTimer);
   var sku = this.value.trim();
@@ -7313,12 +7480,17 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   var sku  = document.getElementById('cdgv2-add-sku').value.trim();
   var desc = document.getElementById('cdgv2-add-desc').value.trim();
   var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
+  // Extraer valor numérico del costo (el campo muestra "$ 1,234.56" o "Auto")
+  var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');
+  var costoUnit = costoRaw ? parseFloat(costoRaw) : null;
   var msg  = document.getElementById('cdgv2-add-msg');
   if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
   if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
   msg.innerHTML = '<span style="color:#888">Guardando…</span>';
   cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
-    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty
+    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
+    costoUnit: costoUnit, // incluir costo para analítica
+    fotos: cdgv2AddFotos.slice()
   }).then(function(d){
     if(!d.ok && !d.aviso){
       msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
@@ -7329,12 +7501,35 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
     document.getElementById('cdgv2-add-qty').value  = '';
     document.getElementById('cdgv2-add-costo').value = '';
     document.getElementById('cdgv2-add-desc-auto').textContent = '';
+    cdgv2AddFotos = []; renderCdgv2AddFotosRow(); // resetear fotos del form
     if(d.aviso) msg.innerHTML = '<span style="color:#e67e22">'+escH(d.aviso)+'</span>';
     cdgv2PollearLicencia(meta.id, false);
   }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
 });
 
 /* ── GUARDAR PROGRESO ───────────────────────────────────────────── */
+/* ── HALLAZGO DESDE CDG v2 ──────────────────────────────────────── */
+// Reutiliza el modal-cdg-hallazgo existente (mismo de CDG v1).
+// Al abrir, pre-carga el ID de la licencia como nombre del conteo.
+document.getElementById('btn-cdgv2-hallazgo').addEventListener('click', function(){
+  if(!cdgv2LicenciaActual){ alert('Abrí una licencia primero.'); return; }
+  var modal = document.getElementById('modal-cdg-hallazgo');
+  if(!modal){ alert('Modal de hallazgo no disponible.'); return; }
+  // Pre-llenar nombre del conteo con el ID de la licencia v2
+  var el = document.getElementById('cdg-hall-cont-name');
+  if(el) el.textContent = cdgv2LicenciaActual.id;
+  // Limpiar campos
+  var campos = ['cdg-hall-turno','cdg-hall-area','cdg-hall-tipo','cdg-hall-desc'];
+  campos.forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  var fechaInp = document.getElementById('cdg-hall-fecha');
+  if(fechaInp){ var n=new Date(); fechaInp.value=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0'); }
+  window._cdgHallFotoData = null;
+  window._editingCDGHallId = null;
+  var prev = document.getElementById('cdg-hall-foto-preview');
+  if(prev) prev.style.display='none';
+  modal.style.display = 'flex';
+});
+
 document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
   if(!currentUser || !cdgv2LicenciaActual) return;
   var meta = cdgv2LicenciaActual;
@@ -7379,6 +7574,7 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
     cdgv2LicenciaActual = null;
     cdgv2Lineas = [];
     cdgv2LineasDesde = null;
+    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
   }
 }, true); // capture = true para ejecutar ANTES del navBack
 
