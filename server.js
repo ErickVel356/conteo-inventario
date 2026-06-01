@@ -284,6 +284,16 @@ app.get('/api/cdg', (req, res) => res.json(state.cdg||{}));
 app.post('/api/cdg/save', (req, res) => {
   const { contId, items, usuario, tipo, fotoGral, fotos } = req.body;
   if(!contId) return res.status(400).json({ ok:false });
+  // FIX (sáb 30-may-2026, v19): validación defensiva de items.
+  // Si items llega null/undefined (payload mal formado, tablet vieja, etc.),
+  // rechazar antes de tocar el state. Sin esto, items:null pasa la guardia
+  // ((null||[]).length = 0) y luego state.cdg[contId].items = null rompe el conteo.
+  if(!Array.isArray(items)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'No se guardó: el conteo llegó sin lista de líneas válida. Recargá la pantalla e intentá de nuevo.'
+    });
+  }
   if(!state.cdg[contId]) {
     state.cdg[contId] = {
       items:  [],
@@ -291,6 +301,22 @@ app.post('/api/cdg/save', (req, res) => {
       autor:  usuario,
       fecha:  new Date().toLocaleDateString('es')
     };
+  }
+  // FIX (sáb 30-may-2026, v19): protección contra sobreescritura accidental.
+  // Escenario: Julio guarda 50 items. Otro usuario abre CDG con lista vacía y
+  // guarda 1 item → borra los 50 de Julio (Bug B1 CDG v1).
+  // Guardia: si ya hay items y el nuevo array tiene menos de la mitad Y el
+  // usuario no es el autor original → rechazar con 409 y mensaje claro.
+  // Nota: items ya validado como Array arriba, usar .length directo.
+  var existentes    = (state.cdg[contId].items || []).length;
+  var nuevos        = items.length;
+  var autorOriginal = state.cdg[contId].autor || state.cdg[contId].lastEditor;
+  if(existentes > 2 && nuevos < existentes / 2 && autorOriginal && autorOriginal !== usuario) {
+    console.log('CDG save BLOQUEADO: ' + usuario + ' intentó reducir ' + contId + ' de ' + existentes + ' a ' + nuevos + ' items (autor: ' + autorOriginal + ')');
+    return res.status(409).json({
+      ok:    false,
+      error: 'Este conteo ya tiene ' + existentes + ' líneas. Recargá el conteo antes de guardar. Para reemplazarlo usá desbloqueo de supervisor o CDG v2 multiusuario.'
+    });
   }
   state.cdg[contId].items      = items;
   state.cdg[contId].lastEditor = usuario;
