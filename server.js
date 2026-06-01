@@ -1795,8 +1795,10 @@ app.post('/api/cdg/v2/crear', async (req, res) => {
 // Express hace match en orden de definición. Si /:id va primero, captura
 // "sku-catalog" como parámetro :id y las rutas de catálogo nunca se alcanzan.
 // ── GET /api/cdg/v2/sku-catalog/buscar ────────────────────────────────────
-// Busca la descripción de un SKU en el catálogo.
+// Busca la descripción y costo de un SKU en el catálogo.
 // Query: ?sku=XXXX
+// FIX (lun 1-jun-2026, server v19): incluir costo en select y respuesta.
+// Antes solo devolvía sku,descripcion — el cliente no podía autollenar el costo.
 app.get('/api/cdg/v2/sku-catalog/buscar', async (req, res) => {
   var sku = req.query.sku;
   if(!sku) return res.status(400).json({ ok: false, error: 'falta sku' });
@@ -1805,10 +1807,15 @@ app.get('/api/cdg/v2/sku-catalog/buscar', async (req, res) => {
     if(!SUPABASE_URL || !SUPABASE_KEY) {
       return res.json({ ok: true, encontrado: false });
     }
-    var query = '?sku=eq.' + encodeURIComponent(String(sku).trim()) + '&select=sku,descripcion';
+    var query = '?sku=eq.' + encodeURIComponent(String(sku).trim()) + '&select=sku,descripcion,costo';
     var rows  = await supabase('GET', 'sku_catalog', null, query);
     if(Array.isArray(rows) && rows.length > 0) {
-      res.json({ ok: true, encontrado: true, sku: rows[0].sku, descripcion: rows[0].descripcion });
+      var row = rows[0];
+      // costo: devolver como número o null (nunca como string con símbolo)
+      var costo = (row.costo != null && row.costo !== '' && Number(row.costo) > 0)
+        ? Number(row.costo)
+        : null;
+      res.json({ ok: true, encontrado: true, sku: row.sku, descripcion: row.descripcion, costo: costo });
     } else {
       res.json({ ok: true, encontrado: false });
     }
