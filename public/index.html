@@ -650,22 +650,107 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
     <!-- ── PÁGINA: CDG SELECTOR (clásico vs v2) ─────────────── -->
     <div id="pg-cdg-menu" class="page">
+      <!-- FIX (lun 1-jun-2026, v5.2.28): Fase 1 rediseño CDG — 3 opciones en el menú principal. -->
       <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Seleccioná el módulo de conteo CDG.</p>
       <div class="submenu-list">
-        <div class="submenu-item" id="sm-cdg-clasico">
-          <div class="si-icon">🏢</div>
-          <div class="si-text">
-            <div class="si-title">CDG Clásico</div>
-            <div class="si-sub">Un usuario · Envíos a Hamilton (U25)</div>
-          </div>
-        </div>
+        <!-- sm-cdg-v2: conteo colaborativo multiusuario — opción principal -->
         <div class="submenu-item" id="sm-cdg-v2">
           <div class="si-icon">👥</div>
           <div class="si-text">
-            <div class="si-title">CDG v2 — Multiusuario</div>
-            <div class="si-sub">Varios contadores · Licencias colaborativas</div>
+            <div class="si-title">Conteo colaborativo</div>
+            <div class="si-sub">Varios contadores por licencia · recomendado</div>
           </div>
           <span class="submenu-badge badge" style="background:#e8f5e9;color:#2e7d32">NUEVO</span>
+        </div>
+        <!-- sm-cdg-historial: consulta read-only -->
+        <div class="submenu-item" id="sm-cdg-historial">
+          <div class="si-icon">📋</div>
+          <div class="si-text">
+            <div class="si-title">Historial y consulta</div>
+            <div class="si-sub">Ver conteos guardados y finalizados</div>
+          </div>
+        </div>
+        <!-- sm-cdg-clasico: cdg clásico un usuario -->
+        <div class="submenu-item" id="sm-cdg-clasico">
+          <div class="si-icon">🏢</div>
+          <div class="si-text">
+            <div class="si-title">Conteo individual (clásico)</div>
+            <div class="si-sub">Un solo contador · en transición</div>
+          </div>
+        </div>
+        <!-- sm-cdg-admin: solo supervisores, oculto para no-sup -->
+        <div class="submenu-item" id="sm-cdg-admin" style="display:none">
+          <div class="si-icon">🔧</div>
+          <div class="si-text">
+            <div class="si-title">Administración</div>
+            <div class="si-sub">Desbloquear y supervisar licencias</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PÁGINA: CDG HISTORIAL ──────────────────────────────── -->
+    <!-- FIX (lun 1-jun-2026, v5.2.28): página nueva — solo botones que invocan
+         showCDGHist() existente. No mueve ni reescribe nada del historial real. -->
+    <div id="pg-cdg-historial" class="page">
+      <!-- FIX (lun 1-jun-2026, v5.2.28 rev): selector de tipo + panel propio.
+           showCDGHistEn() renderiza aquí en lugar de en cdg-hist-panel (pg-cdg).
+           Los botones originales de pg-cdg siguen usando showCDGHist() sin cambios. -->
+
+      <!-- Selector de tipos (visible cuando no hay historial abierto) -->
+      <div id="cdg-historial-tipos" style="margin-bottom:.5rem">
+        <p style="font-size:.9rem;color:#666;margin-bottom:1rem">Seleccioná el tipo de bodega.</p>
+        <div class="submenu-list">
+          <div class="submenu-item" id="sm-cdg-hist-cdg">
+            <div class="si-icon">📋</div>
+            <div class="si-text">
+              <div class="si-title">Historial CDG</div>
+              <div class="si-sub">Conteos de bodega CDG</div>
+            </div>
+          </div>
+          <div class="submenu-item" id="sm-cdg-hist-ktm">
+            <div class="si-icon">📋</div>
+            <div class="si-text">
+              <div class="si-title">Historial KTM</div>
+              <div class="si-sub">Conteos de bodega KTM</div>
+            </div>
+          </div>
+          <div class="submenu-item" id="sm-cdg-hist-otros">
+            <div class="si-icon">📋</div>
+            <div class="si-text">
+              <div class="si-title">Historial Otros</div>
+              <div class="si-sub">Otros tipos de bodega</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel de resultados — se llena con showCDGHistEn() -->
+      <div id="cdg-historial-page-panel" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-historial-page-title">Historial</h3>
+          <button class="btn btn-sm" id="btn-cdg-historial-page-close">← Volver</button>
+        </div>
+        <div id="cdg-historial-page-content"></div>
+      </div>
+    </div>
+
+    <!-- ── PÁGINA: CDG ADMINISTRACIÓN ────────────────────────── -->
+    <!-- FIX (lun 1-jun-2026, v5.2.28): página nueva solo para supervisores.
+         Por ahora placeholder — no mueve unlock real ni lógica existente. -->
+    <div id="pg-cdg-admin" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:1rem">Funciones de supervisión CDG.</p>
+      <div class="card" style="background:#fff3cd;border:1px solid #ffc107;padding:1rem;margin-bottom:1rem">
+        <p style="font-size:.85rem;font-weight:600;margin-bottom:.25rem">🔧 Administración CDG en preparación</p>
+        <p style="font-size:.82rem;color:#666;margin:0">Las funciones de desbloqueo y gestión avanzada estarán disponibles aquí próximamente.<br>Por ahora usá el panel de desbloqueo dentro de CDG Clásico.</p>
+      </div>
+      <div class="submenu-list">
+        <div class="submenu-item" id="sm-cdg-admin-clasico">
+          <div class="si-icon">🏢</div>
+          <div class="si-text">
+            <div class="si-title">Ir a CDG Clásico</div>
+            <div class="si-sub">Panel de desbloqueo disponible dentro</div>
+          </div>
         </div>
       </div>
     </div>
@@ -1517,6 +1602,7 @@ document.getElementById('mc-cdg').addEventListener('click',function(){
   // Si no, ir directo al clásico (comportamiento anterior sin cambios).
   if(CDG_V2_HABILITADO) {
     navTo('pg-cdg-menu','🏢 Conteos CDG');
+    cdgMenuMostrarAdmin();
     return;
   }
   navTo('pg-cdg','🏢 Conteos CDG');
@@ -7074,6 +7160,202 @@ var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
 var CDGV2_LISTA_POLL_MS = 5000;   // 5s entre polls de la lista (descubrir licencias nuevas)
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
+// FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
+
+// ── showCDGHistEn: igual que showCDGHist pero renderiza en IDs indicados ──────────────
+// Propósito: pg-cdg-historial tiene sus propios IDs de panel/título/contenido.
+// Los botones de pg-cdg siguen usando showCDGHist() con los IDs originales (sin cambios).
+// showCDGHistEn no modifica showCDGHist ni los elementos de pg-cdg.
+function showCDGHistEn(tipo, panelId, titleId, contentId) {
+  var panel   = document.getElementById(panelId);
+  var title   = document.getElementById(titleId);
+  var content = document.getElementById(contentId);
+  if(!panel||!title||!content) return;
+
+  // Mostrar "cargando" mientras fetch corre
+  document.getElementById('cdg-historial-tipos').style.display = 'none';
+  title.textContent = 'Cargando…';
+  content.innerHTML = '<p style="color:#aaa;text-align:center;padding:1.5rem;font-size:.85rem">Cargando historial…</p>';
+  panel.style.display = '';
+
+  // Misma lógica de fetch que showCDGHist — copia exacta para no tocar el original
+  var renderPromise = fetch('/api/cdg').then(function(r){
+    if(!r.ok) throw new Error('Render not ok');
+    return r.json();
+  }).catch(function(){ return {}; });
+
+  var supaPromise = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    if(rows && rows.length > 0) {
+      try { var parsed = JSON.parse(rows[0].value); return parsed.cdg || {}; }
+      catch(e) { return {}; }
+    }
+    return {};
+  }).catch(function(){ return {}; });
+
+  Promise.all([renderPromise, supaPromise]).then(function(results){
+    var renderData = results[0] || {};
+    var supaData   = results[1] || {};
+    var data = {};
+    Object.keys(supaData).forEach(function(k){ data[k] = supaData[k]; });
+    Object.keys(renderData).forEach(function(k){
+      var r = renderData[k];
+      var s = supaData[k];
+      if(!s) { data[k] = r; return; }
+      var rItems = (r.items||[]).length;
+      var sItems = (s.items||[]).length;
+      if(rItems < sItems) { data[k] = s; return; }
+      data[k] = r;
+    });
+
+    var keys = Object.keys(data).filter(function(k){
+      var t = data[k].tipo||'CDG';
+      if(tipo==='otro') return t!=='CDG'&&t!=='KTM';
+      return t===tipo;
+    });
+    title.textContent = 'Historial ' + tipo + ' ('+keys.length+')';
+    if(!keys.length){
+      content.innerHTML='<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin conteos de tipo '+escH(tipo)+'.</p>';
+      panel.style.display='';
+      return;
+    }
+
+    var rows = keys.map(function(id){
+      var c = data[id];
+      var items = c.items||[];
+      var lineas = items.length;
+      var totalSkus = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
+      var totalCosto = items.reduce(function(a,it){
+        var cu = Number(it.costo) || getCosto(it.sku) || 0;
+        return a + cu * (Number(it.qty)||0);
+      }, 0);
+      return { id:id, c:c, lineas:lineas, totalSkus:totalSkus, totalCosto:totalCosto };
+    });
+
+    // IDs únicos para botones export dentro de este panel (evitan colisión con los de pg-cdg)
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
+      +'<span style="font-size:.85rem;color:#666"><strong>'+keys.length+'</strong> conteo'+(keys.length!==1?'s':'')+' '+escH(tipo)+'</span>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +'<button class="btn btn-sm btn-green" id="btn-cdgp-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Resumen</button>'
+      +'<button class="btn btn-sm" id="btn-cdgp-hist-xlsx-analitica" data-tipo="'+escH(tipo)+'" style="background:#0066cc;color:#fff;font-weight:600">📊 Exportar Analítica</button>'
+      +'</div>'
+      +'</div>';
+
+    h += '<div class="tbl-wrap" style="margin-bottom:0"><table>'
+      +'<thead><tr>'
+      +'<th>Correlativo U25</th>'
+      +'<th class="tc">Líneas</th>'
+      +'<th class="tc">Unidades</th>'
+      +'<th class="tc">Costo total</th>'
+      +'<th>Estado</th>'
+      +'<th>Autor</th>'
+      +'<th class="tc">Acciones</th>'
+      +'</tr></thead><tbody>';
+    rows.forEach(function(r){
+      var c = r.c;
+      var isLocked = c.bloqueado === true;
+      var badge = isLocked
+        ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
+        : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
+      // pg-cdg-historial es READ-ONLY: solo Ver y exportar por línea.
+      // Continuar y Desbloquear se hacen desde CDG Clásico, no desde aquí.
+      var actions = '<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">';
+      actions += '<button class="btn btn-xs cdgp-view-btn" data-id="'+escH(r.id)+'" style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
+      actions += '<button class="btn btn-xs cdgp-report-btn" data-id="'+escH(r.id)+'" title="Reporte individual">📥</button>';
+      actions += '</div>';
+      h += '<tr>'
+        +'<td><strong>'+escH(r.id)+'</strong></td>'
+        +'<td class="tc">'+r.lineas+'</td>'
+        +'<td class="tc">'+r.totalSkus+'</td>'
+        +'<td class="tc" style="font-family:monospace">Q'+r.totalCosto.toFixed(2)+'</td>'
+        +'<td>'+badge+'</td>'
+        +'<td style="font-size:.78rem;color:#888">'+escH(c.autor||'—')+'</td>'
+        +'<td class="tc">'+actions+'</td>'
+        +'</tr>';
+    });
+    h += '</tbody></table></div>';
+    content.innerHTML = h;
+
+    // Wire exports (reutiliza las mismas funciones de exportación)
+    var btnXlsx = document.getElementById('btn-cdgp-hist-xlsx');
+    if(btnXlsx) btnXlsx.addEventListener('click', function(){ exportCDGHistExcel(rows, tipo); });
+    var btnXlsxAna = document.getElementById('btn-cdgp-hist-xlsx-analitica');
+    if(btnXlsxAna) btnXlsxAna.addEventListener('click', function(){ exportCDGAnalitica(rows, tipo); });
+
+    // Wire Ver (read-only)
+    content.querySelectorAll('.cdgp-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        if(typeof viewCDGReadOnly === 'function') viewCDGReadOnly(this.dataset.id, data[this.dataset.id]);
+      });
+    });
+
+    // Wire Reporte individual
+    content.querySelectorAll('.cdgp-report-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        exportCDGReporteIndividual(this.dataset.id, data[this.dataset.id]);
+      });
+    });
+
+    // pg-cdg-historial es READ-ONLY. No hay wire de Continuar ni Desbloquear aquí.
+    // Esas acciones siguen disponibles desde CDG Clásico (showCDGHist original).
+    panel.style.display='';
+  }).catch(function(e){ console.warn('CDG hist (page) error:',e); });
+}
+
+// ── Navegación menú CDG ────────────────────────────────────────────────────
+
+// sm-cdg-historial → pg-cdg-historial
+document.getElementById('sm-cdg-historial').addEventListener('click', function(){
+  navTo('pg-cdg-historial','📋 Historial / Consulta CDG');
+  // Resetear estado: mostrar selector, ocultar panel de resultados previos
+  document.getElementById('cdg-historial-tipos').style.display = '';
+  document.getElementById('cdg-historial-page-panel').style.display = 'none';
+});
+
+// sm-cdg-admin → pg-cdg-admin
+document.getElementById('sm-cdg-admin').addEventListener('click', function(){
+  navTo('pg-cdg-admin','🔧 Administración CDG');
+});
+
+// Botones de tipo en pg-cdg-historial → showCDGHistEn (panel propio)
+document.getElementById('sm-cdg-hist-cdg').addEventListener('click', function(){
+  showCDGHistEn('CDG','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
+});
+document.getElementById('sm-cdg-hist-ktm').addEventListener('click', function(){
+  showCDGHistEn('KTM','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
+});
+document.getElementById('sm-cdg-hist-otros').addEventListener('click', function(){
+  showCDGHistEn('otro','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
+});
+
+// Botón "← Volver" dentro del panel de resultados: vuelve al selector de tipos
+document.getElementById('btn-cdg-historial-page-close').addEventListener('click', function(){
+  document.getElementById('cdg-historial-page-panel').style.display = 'none';
+  document.getElementById('cdg-historial-page-content').innerHTML = '';
+  document.getElementById('cdg-historial-tipos').style.display = '';
+});
+
+// Desde pg-cdg-admin: acceso rápido al clásico (donde está el panel de unlock real)
+document.getElementById('sm-cdg-admin-clasico').addEventListener('click', function(){
+  navTo('pg-cdg','🏢 Conteos CDG');
+  cdgSkus=[];
+  cdgFotos={};
+  cdgFotoGral=null;
+  document.getElementById('cdg-u25').value='';
+  document.getElementById('cdg-sku').value='';
+  document.getElementById('cdg-desc').value='';
+  document.getElementById('cdg-qty').value='';
+  renderCDGSkuList();
+});
+
+// Mostrar opción Admin en el menú solo si es supervisor.
+// Se llama desde mc-cdg (el punto de entrada al menú CDG) y no necesita hookear navTo.
+function cdgMenuMostrarAdmin(){
+  var el = document.getElementById('sm-cdg-admin');
+  if(el) el.style.display = (typeof isSup === 'function' && isSup()) ? '' : 'none';
+}
+
 document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
   navTo('pg-cdg','🏢 Conteos CDG');
   // Reset estado CDG v1
