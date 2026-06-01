@@ -735,13 +735,14 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <div id="cdgv2-add-form" style="background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.75rem">
         <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar línea</div>
         <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
-          <div class="cdg-field" style="flex:1;min-width:90px">
+          <div class="cdg-field" style="flex:1;min-width:90px;position:relative">
             <label>SKU</label>
-            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="numeric">
+            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="numeric" autocomplete="off">
+            <div id="cdgv2-sku-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;font-size:.82rem"></div>
           </div>
           <div class="cdg-field" style="flex:3;min-width:150px">
             <label>Descripción <span id="cdgv2-add-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
-            <input type="text" class="field-inp" id="cdgv2-add-desc" placeholder="Descripción del producto">
+            <input type="text" class="field-inp" id="cdgv2-add-desc" placeholder="Ingresá el SKU primero" readonly style="background:#f5f5f3">
           </div>
           <div class="cdg-field" style="min-width:80px">
             <label>Cantidad</label>
@@ -7590,36 +7591,160 @@ function renderCdgv2AddFotosRow(){
   });
 }
 
+// Cerrar sugerencias al perder foco del SKU (con pequeño delay para permitir click en sugerencia)
+document.getElementById('cdgv2-add-sku').addEventListener('blur', function(){
+  setTimeout(cdgv2CerrarSugerencias, 150);
+});
+
+// FIX (lun 1-jun-2026, v5.2.28): estado de validación del SKU actual.
+// Previene guardar SKU nuevo con descripción del SKU anterior.
+// null = sin validar | 'pendiente' = lookup en vuelo | 'ok' = validado | 'no_encontrado' = no existe
+var cdgv2SkuValidado = null;
+var cdgv2SkuValidadoPara = ''; // qué SKU fue el que se validó
+
+function cdgv2ResetDescForm(){
+  // Llamar cada vez que cambia el SKU: limpia campos y marca como no validado
+  var descEl  = document.getElementById('cdgv2-add-desc');
+  var costoEl = document.getElementById('cdgv2-add-costo');
+  var autoEl  = document.getElementById('cdgv2-add-desc-auto');
+  descEl.value    = '';
+  descEl.readOnly = true;
+  descEl.style.background = '#f5f5f3';
+  descEl.placeholder = 'Buscando…';
+  costoEl.value   = '';
+  autoEl.textContent = '';
+  cdgv2SkuValidado    = null;
+  cdgv2SkuValidadoPara = '';
+}
+
+// Timer separado para sugerencias (más rápido que el lookup exacto)
+var cdgv2SugerirTimer = null;
+
+function cdgv2CerrarSugerencias(){
+  var el = document.getElementById('cdgv2-sku-sugerencias');
+  if(el){ el.style.display = 'none'; el.innerHTML = ''; }
+}
+
+function cdgv2SeleccionarSugerencia(sku, descripcion, costo){
+  // Al elegir una sugerencia: llenar SKU, descripción bloqueada y costo
+  document.getElementById('cdgv2-add-sku').value = sku;
+  cdgv2CerrarSugerencias();
+  var descEl  = document.getElementById('cdgv2-add-desc');
+  var costoEl = document.getElementById('cdgv2-add-costo');
+  var autoEl  = document.getElementById('cdgv2-add-desc-auto');
+  descEl.value         = descripcion;
+  descEl.readOnly      = true;
+  descEl.style.background = '#f5f5f3';
+  descEl.placeholder   = '';
+  costoEl.value        = costo != null ? costo : '';
+  autoEl.innerHTML     = '<span style="color:#1e7e34">✓ '+escH(descripcion)+'</span>';
+  cdgv2SkuValidado     = 'ok';
+  cdgv2SkuValidadoPara = sku;
+  // Mover foco a cantidad para agilizar el flujo
+  var qtyEl = document.getElementById('cdgv2-add-qty');
+  if(qtyEl) qtyEl.focus();
+}
+
 document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
   clearTimeout(cdgv2SkuTimer);
-  var sku = this.value.trim();
+  clearTimeout(cdgv2SugerirTimer);
+  var sku    = this.value.trim();
   var autoEl = document.getElementById('cdgv2-add-desc-auto');
+  var descEl = document.getElementById('cdgv2-add-desc');
   var costoEl = document.getElementById('cdgv2-add-costo');
-  if(!sku){ autoEl.textContent = ''; costoEl.value = ''; return; }
-  cdgv2SkuTimer = setTimeout(function(){
-    // FIX (lun 1-jun-2026, v5.2.28 rev): sku_catalog tiene prioridad absoluta sobre costos legacy.
-    // Flujo: buscar en sku_catalog → si d.costo > 0, usar siempre ese valor (sin condición de campo vacío).
-    // Solo si sku_catalog no devuelve costo (0 / null / no encontrado) se usa costos[sku] como fallback.
-    cdgv2Fetch('GET', '/api/cdg/v2/sku-catalog/buscar?sku='+encodeURIComponent(sku))
+  if(!sku){
+    // SKU borrado: limpiar todo y volver a estado inicial
+    autoEl.textContent   = '';
+    descEl.value         = '';
+    descEl.readOnly      = true;
+    descEl.style.background = '#f5f5f3';
+    descEl.placeholder   = 'Ingresá el SKU primero';
+    costoEl.value        = '';
+    cdgv2SkuValidado     = null;
+    cdgv2SkuValidadoPara = '';
+    cdgv2CerrarSugerencias();
+    return;
+  }
+  // Sugerencias: disparar rápido (250ms) para dar feedback mientras escribe
+  cdgv2SugerirTimer = setTimeout(function(){
+    var q = document.getElementById('cdgv2-add-sku').value.trim();
+    if(q.length < 2) return;
+    fetch('/api/cdg/v2/sku-catalog/sugerir?q='+encodeURIComponent(q))
+      .then(function(r){ return r.json(); })
       .then(function(d){
+        var actual = document.getElementById('cdgv2-add-sku').value.trim();
+        if(actual !== q) return; // usuario siguió escribiendo
+        var el = document.getElementById('cdgv2-sku-sugerencias');
+        if(!el) return;
+        if(!d.ok || !d.resultados || !d.resultados.length){ el.style.display='none'; return; }
+        el.innerHTML = d.resultados.map(function(r){
+          var costoTxt = r.costo != null ? ' · Q '+r.costo.toLocaleString('es-GT') : '';
+          return '<div class="cdgv2-sug-item" data-sku="'+escH(r.sku)+'" data-desc="'+escH(r.descripcion)+'" data-costo="'+(r.costo!=null?r.costo:'')+'"'
+            +' style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+            +'<strong>'+escH(r.sku)+'</strong> '+escH(r.descripcion)+'<span style="color:#888;font-size:.75rem">'+escH(costoTxt)+'</span>'
+            +'</div>';
+        }).join('');
+        el.style.display = '';
+        el.querySelectorAll('.cdgv2-sug-item').forEach(function(item){
+          item.addEventListener('mousedown', function(e){
+            // mousedown en lugar de click para disparar antes del blur del input
+            e.preventDefault();
+            var c = item.dataset.costo;
+            cdgv2SeleccionarSugerencia(item.dataset.sku, item.dataset.desc, c !== '' ? Number(c) : null);
+          });
+        });
+      }).catch(function(){});
+  }, 250);
+
+  // Cambió el SKU — limpiar descripción vieja inmediatamente mientras carga
+  cdgv2ResetDescForm();
+  cdgv2SkuValidado = 'pendiente';
+  cdgv2SkuValidadoPara = sku;
+
+  cdgv2SkuTimer = setTimeout(function(){
+    // Guardar el SKU por el que disparamos — si el usuario sigue escribiendo
+    // y llega otra respuesta, ignorarla (cierre sobre skuConsultado)
+    var skuConsultado = sku;
+    cdgv2Fetch('GET', '/api/cdg/v2/sku-catalog/buscar?sku='+encodeURIComponent(skuConsultado))
+      .then(function(d){
+        // Ignorar respuesta si el usuario ya cambió el SKU de nuevo
+        if(document.getElementById('cdgv2-add-sku').value.trim() !== skuConsultado) return;
         if(d.encontrado){
-          autoEl.textContent = '✓ '+d.descripcion;
-          var descEl = document.getElementById('cdgv2-add-desc');
-          if(!descEl.value) descEl.value = d.descripcion;
+          // Descripción: siempre reemplazar (corrige el bug de descripción vieja)
+          autoEl.textContent   = '✓ '+d.descripcion;
+          descEl.value         = d.descripcion;
+          descEl.readOnly      = true;  // bloqueado — viene del catálogo
+          descEl.style.background = '#f5f5f3';
+          descEl.placeholder   = '';
+          // Costo: sku_catalog tiene prioridad. Mostrar entero redondeado (sin decimales largos)
+          if(d.costo && d.costo > 0) {
+            costoEl.value = Math.round(d.costo);
+          } else if(typeof costos !== 'undefined' && costos[skuConsultado]) {
+            costoEl.value = Math.round(Number(costos[skuConsultado]));
+          } else {
+            costoEl.value = '';
+          }
+          cdgv2SkuValidado     = 'ok';
+          cdgv2SkuValidadoPara = skuConsultado;
         } else {
-          autoEl.textContent = '';
-        }
-        // Prioridad: sku_catalog > costos legacy. costoUnit siempre numérico, sin Q ni $.
-        if(d.costo && d.costo > 0) {
-          costoEl.value = d.costo;
-        } else if(typeof costos !== 'undefined' && costos[sku]) {
-          costoEl.value = Number(costos[sku]);
+          // SKU no encontrado en catálogo
+          autoEl.innerHTML     = '<span style="color:#c0392b">SKU no encontrado en catálogo</span>';
+          descEl.value         = '';
+          descEl.readOnly      = true;
+          descEl.style.background = '#fff3f3';
+          descEl.placeholder   = 'SKU no existe en catálogo';
+          costoEl.value        = '';
+          cdgv2SkuValidado     = 'no_encontrado';
+          cdgv2SkuValidadoPara = skuConsultado;
         }
       }).catch(function(){
+        if(document.getElementById('cdgv2-add-sku').value.trim() !== skuConsultado) return;
         autoEl.textContent = '';
-        // Endpoint falló — intentar fallback legacy
-        if(typeof costos !== 'undefined' && costos[sku]) {
-          costoEl.value = Number(costos[sku]);
+        descEl.placeholder = 'Error al buscar — reintentá';
+        cdgv2SkuValidado   = null; // permite reintentar
+        // Fallback legacy solo si el endpoint falla
+        if(typeof costos !== 'undefined' && costos[skuConsultado]) {
+          costoEl.value = Math.round(Number(costos[skuConsultado]));
         }
       });
   }, 400);
@@ -7633,28 +7758,41 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   var sku  = document.getElementById('cdgv2-add-sku').value.trim();
   var desc = document.getElementById('cdgv2-add-desc').value.trim();
   var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
-  // Extraer valor numérico del costo (el campo muestra "$ 1,234.56" o "Auto")
   var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');
   var costoUnit = costoRaw ? parseFloat(costoRaw) : null;
   var msg  = document.getElementById('cdgv2-add-msg');
   if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+  // Validar que el SKU fue consultado y existe antes de guardar
+  if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
+    msg.innerHTML = '<span style="color:#e67e22">Esperando validación del SKU…</span>'; return;
+  }
+  if(cdgv2SkuValidado === 'no_encontrado') {
+    msg.innerHTML = '<span style="color:#c0392b">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
+  }
+  if(cdgv2SkuValidado === null) {
+    msg.innerHTML = '<span style="color:#e67e22">Ingresá el SKU y esperá la validación.</span>'; return;
+  }
   if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
   msg.innerHTML = '<span style="color:#888">Guardando…</span>';
   cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
     usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
-    costoUnit: costoUnit, // incluir costo para analítica
+    costoUnit: costoUnit,
     fotos: cdgv2AddFotos.slice()
   }).then(function(d){
     if(!d.ok && !d.aviso){
       msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
     }
+    // Reset completo del form tras agregar exitosamente
     msg.innerHTML = '';
-    document.getElementById('cdgv2-add-sku').value  = '';
-    document.getElementById('cdgv2-add-desc').value = '';
-    document.getElementById('cdgv2-add-qty').value  = '';
+    document.getElementById('cdgv2-add-sku').value   = '';
+    document.getElementById('cdgv2-add-desc').value  = '';
+    document.getElementById('cdgv2-add-desc').placeholder = 'Ingresá el SKU primero';
+    document.getElementById('cdgv2-add-qty').value   = '';
     document.getElementById('cdgv2-add-costo').value = '';
     document.getElementById('cdgv2-add-desc-auto').textContent = '';
-    cdgv2AddFotos = []; renderCdgv2AddFotosRow(); // resetear fotos del form
+    cdgv2SkuValidado     = null;
+    cdgv2SkuValidadoPara = '';
+    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
     if(d.aviso) msg.innerHTML = '<span style="color:#e67e22">'+escH(d.aviso)+'</span>';
     cdgv2PollearLicencia(meta.id, false);
   }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
