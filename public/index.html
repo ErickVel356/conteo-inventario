@@ -425,7 +425,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.25 · 27-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.27 · 30-may</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -646,6 +646,130 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <button class="btn btn-warn" id="btn-cdg-unlock">🔓 Desbloquear</button>
         </div>
       </div>
+    </div>
+
+    <!-- ── PÁGINA: CDG SELECTOR (clásico vs v2) ─────────────── -->
+    <div id="pg-cdg-menu" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Seleccioná el módulo de conteo CDG.</p>
+      <div class="submenu-list">
+        <div class="submenu-item" id="sm-cdg-clasico">
+          <div class="si-icon">🏢</div>
+          <div class="si-text">
+            <div class="si-title">CDG Clásico</div>
+            <div class="si-sub">Un usuario · Envíos a Hamilton (U25)</div>
+          </div>
+        </div>
+        <div class="submenu-item" id="sm-cdg-v2">
+          <div class="si-icon">👥</div>
+          <div class="si-text">
+            <div class="si-title">CDG v2 — Multiusuario</div>
+            <div class="si-sub">Varios contadores · Licencias colaborativas</div>
+          </div>
+          <span class="submenu-badge badge" style="background:#e8f5e9;color:#2e7d32">NUEVO</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PÁGINA: CDG v2 LISTA DE LICENCIAS ─────────────────── -->
+    <div id="pg-cdg-v2-lista" class="page">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:1rem">
+        <p style="font-size:.85rem;color:#666;margin:0">Licencias activas del día. Uníte a una o creá una nueva.</p>
+        <button class="btn btn-sm btn-dark" id="btn-cdgv2-nueva">➕ Nueva licencia</button>
+      </div>
+
+      <!-- Formulario crear nueva licencia (colapsable) -->
+      <div id="cdgv2-form-crear" style="display:none;margin-bottom:1rem">
+        <div class="card" style="padding:1rem">
+          <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:.75rem;text-transform:uppercase;letter-spacing:.3px">Nueva licencia</div>
+          <div class="cdg-row">
+            <div class="cdg-field" style="flex:2;min-width:140px">
+              <label>Correlativo U25</label>
+              <input type="text" class="field-inp" id="cdgv2-new-u25" placeholder="U25-101010">
+            </div>
+            <div class="cdg-field" style="flex:1;min-width:100px">
+              <label>Tipo de bodega</label>
+              <select id="cdgv2-new-tipo" class="field-inp">
+                <option value="CDG">CDG</option>
+                <option value="KTM">KTM</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div class="cdg-field" style="justify-content:flex-end">
+              <label>&nbsp;</label>
+              <button class="btn btn-sm btn-dark" id="btn-cdgv2-crear-ok" style="min-width:100px">Crear</button>
+            </div>
+          </div>
+          <div id="cdgv2-crear-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        </div>
+      </div>
+
+      <!-- Lista de licencias -->
+      <div id="cdgv2-licencias-list">
+        <div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">Cargando licencias…</div>
+      </div>
+      <div id="cdgv2-lista-msg" style="font-size:.82rem;color:#888;margin-top:.5rem;text-align:center"></div>
+    </div>
+
+    <!-- ── PÁGINA: CDG v2 LICENCIA INDIVIDUAL ──────────────────── -->
+    <div id="pg-cdg-v2-licencia" class="page">
+      <!-- Header de la licencia -->
+      <div class="card" id="cdgv2-lic-header" style="margin-bottom:.75rem;padding:.85rem 1rem">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:1rem;font-weight:700" id="cdgv2-lic-titulo">—</div>
+            <div style="font-size:.8rem;color:#666;margin-top:2px" id="cdgv2-lic-meta">—</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span id="cdgv2-lic-estado-badge" style="font-size:.75rem;padding:3px 10px;border-radius:10px;font-weight:600"></span>
+            <span style="font-size:.78rem;color:#888" id="cdgv2-lic-poll-ts"></span>
+          </div>
+        </div>
+        <!-- Fotos encabezado (5 slots) -->
+        <div style="margin-top:.75rem">
+          <div style="font-size:.78rem;color:#555;font-weight:500;margin-bottom:6px">📷 Evidencia fotográfica</div>
+          <div id="cdgv2-foto-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px"></div>
+        </div>
+      </div>
+
+      <!-- Formulario agregar línea -->
+      <div id="cdgv2-add-form" style="background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.75rem">
+        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar línea</div>
+        <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
+          <div class="cdg-field" style="flex:1;min-width:90px">
+            <label>SKU</label>
+            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="numeric">
+          </div>
+          <div class="cdg-field" style="flex:3;min-width:150px">
+            <label>Descripción <span id="cdgv2-add-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
+            <input type="text" class="field-inp" id="cdgv2-add-desc" placeholder="Descripción del producto">
+          </div>
+          <div class="cdg-field" style="min-width:80px">
+            <label>Cantidad</label>
+            <input type="number" class="field-inp" id="cdgv2-add-qty" min="0" placeholder="0">
+          </div>
+          <div class="cdg-field" style="min-width:90px">
+            <label>Costo unit.</label>
+            <input type="text" class="field-inp" id="cdgv2-add-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
+          </div>
+          <div class="cdg-field" style="justify-content:flex-end">
+            <label>&nbsp;</label>
+            <button class="btn btn-sm btn-dark" id="btn-cdgv2-add-linea" style="min-width:90px">+ Agregar</button>
+          </div>
+        </div>
+        <div id="cdgv2-add-msg" style="font-size:.82rem;margin-top:.4rem"></div>
+      </div>
+
+      <!-- Lista de líneas -->
+      <div id="cdgv2-lineas-container" style="margin-bottom:.75rem">
+        <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando líneas…</div>
+      </div>
+
+      <!-- Botones de acción -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.5rem">
+        <button class="btn btn-sm" id="btn-cdgv2-guardar-prog" style="flex:1">💾 Guardar progreso</button>
+        <button class="btn btn-dark" id="btn-cdgv2-finalizar" style="flex:2;display:none">🔒 Finalizar y bloquear</button>
+      </div>
+      <div id="cdgv2-lic-msg" style="font-size:.82rem;margin-top:.5rem"></div>
     </div>
 
     <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
@@ -961,6 +1085,10 @@ var STORE_KEY = 'conteo_fisico_v4';
 /* ══════════════════════════════════════════════════════════════════
    ESTADO GLOBAL
 ══════════════════════════════════════════════════════════════════ */
+// FIX (sáb 30-may-2026, v5.2.27): feature flag para CDG v2 multi-usuario.
+// Cambiar a true cuando el módulo esté listo para el equipo.
+var CDG_V2_HABILITADO = false;
+
 var currentUser  = null;
 var teorico      = {};   // { contId: { items, type, cdgValidado? } }
 var fisico       = {};   // { contId: [{fisico,daniado,quien,ts,calcExpr}] | null }
@@ -1366,6 +1494,12 @@ document.getElementById('mc-hamilton').addEventListener('click',function(){
   updateSubmenúCounts();
 });
 document.getElementById('mc-cdg').addEventListener('click',function(){
+  // FIX (sáb 30-may-2026, v5.2.27): si CDG v2 está habilitado, mostrar selector.
+  // Si no, ir directo al clásico (comportamiento anterior sin cambios).
+  if(CDG_V2_HABILITADO) {
+    navTo('pg-cdg-menu','🏢 Conteos CDG');
+    return;
+  }
   navTo('pg-cdg','🏢 Conteos CDG');
   cdgSkus=[];
   cdgFotos={};
@@ -1636,6 +1770,26 @@ function saveCDGDirectToSupabase(contId, conteoData) {
       try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
     }
     if(!current.cdg) current.cdg = {};
+    // FIX (sáb 30-may-2026, v5.2.27): guardia B1 — misma lógica que el servidor
+    // en /api/cdg/save. Sin esta guardia, la escritura directa a Supabase
+    // bypasseaba el servidor y sobreescribía igualmente los datos de otro usuario.
+    // Verificar contra el dato REAL en Supabase (current) recién leído, no contra
+    // el estado local del cliente que puede estar desactualizado.
+    var _existentes    = ((current.cdg[contId] || {}).items || []).length;
+    var _nuevos        = (conteoData.items || []).length;
+    var _autorOriginal = (current.cdg[contId] || {}).autor;
+    var _usuarioActual = conteoData.autor;
+    if(_existentes > 2 && _nuevos < _existentes / 2 && _autorOriginal && _autorOriginal !== _usuarioActual) {
+      console.warn('CDG direct save BLOQUEADO: ' + _usuarioActual + ' intentó reducir ' +
+        contId + ' de ' + _existentes + ' a ' + _nuevos + ' items (autor: ' + _autorOriginal + ')');
+      if(typeof window.showNetworkBanner === 'function') {
+        window.showNetworkBanner(
+          'No se guardó: "' + contId + '" ya tiene ' + _existentes +
+          ' líneas de ' + _autorOriginal + '. No podés sobreescribir ese conteo.'
+        );
+      }
+      return '__BLOQUEADO__'; // señal para que el .then final no loguee "OK" engañoso
+    }
     current.cdg[contId] = conteoData;
     // Also update teorico/fisico if the CDG was finalized
     if(conteoData.bloqueado && conteoData.items) {
@@ -1668,7 +1822,8 @@ function saveCDGDirectToSupabase(contId, conteoData) {
       if(!r.ok) throw new Error('POST state HTTP ' + r.status);
       return r;
     });
-  }).then(function(){
+  }).then(function(result){
+    if(result === '__BLOQUEADO__') return; // aborto por guardia B1, banner ya mostrado
     console.log('CDG direct Supabase save OK:', contId);
     // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar
     // banner. Si está visible, queda visible hasta cierre manual.
@@ -3219,6 +3374,45 @@ document.getElementById('cdg-sku').addEventListener('blur', function(){
     if(costoInp) costoInp.value = 'No encontrado';
     if(autoLbl)  autoLbl.textContent = '';
   }
+});
+
+// FIX (sáb 30-may-2026, v5.2.27): al salir del campo U25, verificar si ya
+// existe un conteo para ese correlativo. Si hay items guardados de otro
+// usuario, cargarlos en cdgSkus para que el form muestre lo que ya hay y
+// no se pueda guardar encima accidentalmente.
+document.getElementById('cdg-u25').addEventListener('blur', function(){
+  var u25 = this.value.trim();
+  if(!u25 || cdgSkus.length > 0) return; // ya tiene items en pantalla, no pisar
+  fetch('/api/cdg')
+    .then(function(r){ return r.json(); })
+    .then(function(cdgState){
+      var existente = cdgState[u25];
+      if(!existente || !existente.items || existente.items.length === 0) return;
+      var autor = existente.autor || 'otro usuario';
+      if(existente.status === 'locked') {
+        showMsg('cdg-msg','warn','Este conteo está BLOQUEADO (finalizado por '+autor+'). Solo un supervisor puede desbloquearlo.');
+        return;
+      }
+      if(existente.items.length > 0) {
+        var cargar = confirm(
+          '⚠️ '+u25+' ya tiene '+existente.items.length+' líneas guardadas por '+autor+'.\n\n'+
+          '¿Cargar esas líneas para continuar desde donde quedaron?\n\n'+
+          '(Si elegís NO, cualquier guardado sobreescribirá los datos existentes.)'
+        );
+        if(cargar) {
+          cdgSkus = existente.items.slice();
+          if(existente.fotos) cdgFotos = Object.assign({}, existente.fotos);
+          if(existente.tipo) {
+            var tipoSel = document.getElementById('cdg-tipo');
+            if(tipoSel) tipoSel.value = existente.tipo;
+          }
+          renderCDGSkuList();
+          if(typeof renderCDGFotoGrid === 'function') renderCDGFotoGrid();
+          showMsg('cdg-msg','ok','✓ Cargadas '+cdgSkus.length+' líneas de '+autor+'. Podés continuar agregando.');
+        }
+      }
+    })
+    .catch(function(){}); // silencioso si no hay conexión
 });
 
 function renderCDGSkuList(){
@@ -6806,6 +7000,387 @@ window.fotoSrc = function(foto) {
   //   - https://...supabase.co/.../foto.jpg (nuevo)
   return foto;
 };
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     CDG v2 — Módulo multi-usuario (cliente v5.2.27, sáb 30-may-2026)
+     Fase 3: UI completa para licencias colaborativas.
+     Requiere server v19 con endpoints /api/cdg/v2/*.
+     Feature flag: CDG_V2_HABILITADO (default false).
+══════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+
+/* ── Estado CDG v2 ─────────────────────────────────────────────── */
+var cdgv2LicenciaActual = null;   // meta objeto de la licencia abierta
+var cdgv2Lineas         = [];     // array de líneas cargadas
+var cdgv2LineasDesde    = null;   // ISO timestamp del último poll de líneas
+var cdgv2PollTimer      = null;   // setInterval del polling
+var cdgv2ListaTimer     = null;   // setInterval del polling de lista
+var CDGV2_POLL_MS       = 15000;  // 15s entre polls
+
+/* ── Helpers de navegación CDG v2 ──────────────────────────────── */
+document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
+  navTo('pg-cdg','🏢 Conteos CDG');
+  // Reset estado CDG v1
+  if(typeof cdgSkus !== 'undefined') cdgSkus = [];
+  document.getElementById('cdg-u25').value = '';
+  document.getElementById('cdg-sku').value = '';
+  document.getElementById('cdg-desc').value = '';
+  document.getElementById('cdg-qty').value = '';
+  if(typeof renderCDGSkuList === 'function') renderCDGSkuList();
+  if(typeof renderCDGFotoGrid === 'function') renderCDGFotoGrid();
+  document.getElementById('cdg-msg').innerHTML = '';
+});
+
+document.getElementById('sm-cdg-v2').addEventListener('click', function(){
+  cdgv2AbrirLista();
+});
+
+/* ── API helpers CDG v2 ────────────────────────────────────────── */
+function cdgv2Fetch(method, path, body){
+  var opts = { method: method, headers: {'Content-Type':'application/json'} };
+  if(body) opts.body = JSON.stringify(body);
+  return fetch(path, opts).then(function(r){ return r.json(); });
+}
+
+/* ── LISTA DE LICENCIAS ─────────────────────────────────────────── */
+function cdgv2AbrirLista(){
+  navTo('pg-cdg-v2-lista','👥 CDG v2 — Licencias');
+  document.getElementById('cdgv2-form-crear').style.display = 'none';
+  document.getElementById('cdgv2-crear-msg').innerHTML = '';
+  cdgv2CargarLista();
+  clearInterval(cdgv2ListaTimer);
+  cdgv2ListaTimer = setInterval(cdgv2CargarLista, CDGV2_POLL_MS);
+}
+
+function cdgv2CargarLista(){
+  cdgv2Fetch('GET', '/api/cdg/v2/listar').then(function(d){
+    if(!d.ok){ renderCdgv2ListaVacia('Error al cargar licencias'); return; }
+    renderCdgv2Lista(d.licencias || []);
+  }).catch(function(){ renderCdgv2ListaVacia('Sin conexión'); });
+}
+
+function renderCdgv2Lista(licencias){
+  var el = document.getElementById('cdgv2-licencias-list');
+  if(!licencias.length){
+    el.innerHTML = '<div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">No hay licencias activas. Creá una nueva.</div>';
+    return;
+  }
+  el.innerHTML = licencias.map(function(l){
+    var estadoColor = l.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
+    var estadoText  = l.estado === 'activo' ? 'Activa' : 'Cerrada';
+    var estadoFg    = l.estado === 'activo' ? '#2e7d32' : '#c62828';
+    var usuarios    = (l.usuarios || []).join(', ') || '—';
+    return '<div class="submenu-item cdgv2-lic-item" data-id="'+escH(l.id)+'" style="flex-direction:column;align-items:flex-start;gap:4px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;width:100%">'
+      +'<div style="font-weight:700;font-size:.975rem">'+escH(l.id)+'</div>'
+      +'<span style="font-size:.72rem;padding:2px 9px;border-radius:10px;background:'+estadoColor+';color:'+estadoFg+';font-weight:600">'+estadoText+'</span>'
+      +'</div>'
+      +'<div style="font-size:.8rem;color:#666">'+escH(l.tipo)+' · Creado por '+escH(l.creadoPor)+'</div>'
+      +'<div style="font-size:.78rem;color:#888">'+l.totalLineas+' líneas · Usuarios: '+escH(usuarios)+'</div>'
+      +'</div>';
+  }).join('');
+  el.querySelectorAll('.cdgv2-lic-item').forEach(function(item){
+    item.addEventListener('click', function(){
+      cdgv2AbrirLicencia(item.dataset.id);
+    });
+  });
+}
+
+function renderCdgv2ListaVacia(msg){
+  document.getElementById('cdgv2-licencias-list').innerHTML =
+    '<div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">'+escH(msg)+'</div>';
+}
+
+/* Crear nueva licencia */
+document.getElementById('btn-cdgv2-nueva').addEventListener('click', function(){
+  var f = document.getElementById('cdgv2-form-crear');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+});
+
+document.getElementById('btn-cdgv2-crear-ok').addEventListener('click', function(){
+  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
+  var u25  = document.getElementById('cdgv2-new-u25').value.trim();
+  var tipo = document.getElementById('cdgv2-new-tipo').value;
+  var msg  = document.getElementById('cdgv2-crear-msg');
+  if(!u25){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el correlativo U25.</span>'; return; }
+  msg.innerHTML = 'Creando…';
+  cdgv2Fetch('POST', '/api/cdg/v2/crear', { id: u25, tipo: tipo, usuario: currentUser.name })
+    .then(function(d){
+      if(!d.ok){ msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      document.getElementById('cdgv2-form-crear').style.display = 'none';
+      msg.innerHTML = '';
+      cdgv2AbrirLicencia(d.licencia.id);
+    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
+});
+
+/* ── LICENCIA INDIVIDUAL ─────────────────────────────────────────── */
+function cdgv2AbrirLicencia(licenciaId){
+  clearInterval(cdgv2ListaTimer);
+  clearInterval(cdgv2PollTimer);
+  cdgv2LicenciaActual = null;
+  cdgv2Lineas = [];
+  cdgv2LineasDesde = null;
+  navTo('pg-cdg-v2-licencia','📋 Licencia '+licenciaId);
+  document.getElementById('cdgv2-lic-titulo').textContent = licenciaId;
+  document.getElementById('cdgv2-lic-meta').textContent = 'Cargando…';
+  document.getElementById('cdgv2-lineas-container').innerHTML =
+    '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando líneas…</div>';
+  document.getElementById('cdgv2-lic-msg').innerHTML = '';
+  document.getElementById('cdgv2-add-msg').innerHTML = '';
+  cdgv2PollearLicencia(licenciaId, true);
+  cdgv2PollTimer = setInterval(function(){ cdgv2PollearLicencia(licenciaId, false); }, CDGV2_POLL_MS);
+
+  // Unirse a la licencia
+  if(currentUser){
+    cdgv2Fetch('POST', '/api/cdg/v2/'+licenciaId+'/accion', { usuario: currentUser.name, tipo: 'unirse' })
+      .catch(function(){});
+  }
+}
+
+function cdgv2PollearLicencia(licenciaId, esPrimerCarga){
+  var url = '/api/cdg/v2/'+licenciaId;
+  if(cdgv2LineasDesde) url += '?lineasDesde='+encodeURIComponent(cdgv2LineasDesde);
+  cdgv2Fetch('GET', url).then(function(d){
+    if(!d.ok) return;
+    cdgv2LicenciaActual = d.meta;
+    // Actualizar timestamp del poll
+    cdgv2LineasDesde = new Date().toISOString();
+    // Aplicar líneas del delta
+    if(d.lineas && d.lineas.length){
+      d.lineas.forEach(function(l){
+        var idx = cdgv2Lineas.findIndex(function(x){ return x.id === l.id; });
+        if(l.eliminada){
+          if(idx >= 0) cdgv2Lineas.splice(idx, 1);
+        } else {
+          if(idx >= 0) cdgv2Lineas[idx] = l;
+          else cdgv2Lineas.push(l);
+        }
+      });
+      cdgv2Lineas.sort(function(a,b){ return a.ts_creacion < b.ts_creacion ? -1 : 1; });
+    }
+    renderCdgv2Header(d.meta);
+    renderCdgv2Lineas();
+    renderCdgv2Fotos(d.meta);
+    var ts = document.getElementById('cdgv2-lic-poll-ts');
+    if(ts) ts.textContent = 'Actualizado '+new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'});
+  }).catch(function(){
+    var ts = document.getElementById('cdgv2-lic-poll-ts');
+    if(ts) ts.textContent = 'Sin conexión…';
+  });
+}
+
+function renderCdgv2Header(meta){
+  if(!meta) return;
+  document.getElementById('cdgv2-lic-titulo').textContent = meta.id + ' · ' + meta.tipo;
+  var finalizador = meta.finalizador || meta.creadoPor;
+  document.getElementById('cdgv2-lic-meta').textContent =
+    'Creado por ' + meta.creadoPor + ' · Finalizador: ' + finalizador +
+    ' · ' + (meta.totalLineas||0) + ' líneas';
+  var badge = document.getElementById('cdgv2-lic-estado-badge');
+  badge.textContent = meta.estado === 'activo' ? '● Activa' : '■ Cerrada';
+  badge.style.background = meta.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
+  badge.style.color = meta.estado === 'activo' ? '#2e7d32' : '#c62828';
+  // Botón finalizar: solo para el finalizador, solo si activa
+  var btnFin = document.getElementById('btn-cdgv2-finalizar');
+  var esFin  = currentUser && currentUser.name === finalizador;
+  btnFin.style.display = (esFin && meta.estado === 'activo') ? '' : 'none';
+  // Form agregar: ocultar si cerrada
+  document.getElementById('cdgv2-add-form').style.display = meta.estado === 'activo' ? '' : 'none';
+}
+
+function renderCdgv2Lineas(){
+  var el = document.getElementById('cdgv2-lineas-container');
+  if(!cdgv2Lineas.length){
+    el.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin líneas aún. Agregá la primera.</div>';
+    return;
+  }
+  var cerrada = cdgv2LicenciaActual && cdgv2LicenciaActual.estado === 'cerrado';
+  el.innerHTML = '<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Líneas ('+cdgv2Lineas.length+')</div>'
+    + cdgv2Lineas.map(function(l, idx){
+      var esMia = currentUser && l.autor === currentUser.name;
+      var costoFmt = l.costo_unit != null ? '$ '+Number(l.costo_unit).toLocaleString('es-GT') : '—';
+      var tsShort  = l.ts_creacion ? l.ts_creacion.substring(11,16) : '';
+      var acciones = (!cerrada && esMia)
+        ? '<button class="btn btn-xs cdgv2-del-btn" data-id="'+escH(l.id)+'" style="background:#c0392b;color:#fff;font-size:.72rem;padding:3px 9px;border-radius:6px;border:none;cursor:pointer;margin-left:6px">🗑</button>'
+        : '';
+      var rowBg = esMia ? '#fff' : '#f9f9f7';
+      return '<div style="background:'+rowBg+';border:1px solid #e8e8e8;border-radius:8px;padding:.6rem .8rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
+        +'<span style="font-weight:700;min-width:70px;font-size:.88rem">'+escH(l.sku)+'</span>'
+        +'<span style="flex:1;min-width:120px;font-size:.85rem;color:#333">'+escH(l.descripcion||'—')+'</span>'
+        +'<span style="min-width:60px;text-align:right;font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</span>'
+        +'<span style="min-width:80px;text-align:right;font-size:.8rem;color:#666">'+costoFmt+'</span>'
+        +'<span style="font-size:.75rem;color:#aaa;white-space:nowrap">'+escH(l.autor)+' '+tsShort+'</span>'
+        + acciones
+        +'</div>';
+    }).join('');
+  // Handlers de borrar
+  el.querySelectorAll('.cdgv2-del-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(!confirm('¿Eliminás esta línea?')) return;
+      var lid = btn.dataset.id;
+      var lmeta = cdgv2LicenciaActual;
+      cdgv2Fetch('DELETE', '/api/cdg/v2/'+(lmeta?lmeta.id:'?')+'/linea/'+lid,
+        { usuario: currentUser.name })
+        .then(function(d){
+          if(!d.ok) alert(d.error||'Error al eliminar');
+          else cdgv2PollearLicencia(lmeta.id, false);
+        }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+}
+
+function renderCdgv2Fotos(meta){
+  var grid = document.getElementById('cdgv2-foto-grid');
+  if(!grid || !meta) return;
+  var labels = ['MARCHAMO','MANIFIESTO','PLACA FURGÓN','OTRO','OTRO 2'];
+  var fotos  = meta.fotosEncabezado || [];
+  var cerrada = meta.estado === 'cerrado';
+  grid.innerHTML = labels.map(function(lbl, i){
+    var url = fotos[i] || '';
+    var inner = url
+      ? '<img src="'+escH(url)+'" style="width:100%;height:60px;object-fit:cover;border-radius:6px">'
+      : '<div style="height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px"><span style="font-size:1.2rem">📷</span><span style="font-size:.65rem;color:#888">'+lbl+'</span></div>';
+    var cursor = (!cerrada && !url) ? 'pointer' : 'default';
+    return '<div class="cdgv2-foto-slot" data-idx="'+i+'" style="border:1px dashed #ccc;border-radius:8px;overflow:hidden;cursor:'+cursor+'">'+inner+'</div>';
+  }).join('');
+  if(!cerrada){
+    grid.querySelectorAll('.cdgv2-foto-slot').forEach(function(slot){
+      slot.addEventListener('click', function(){
+        var idx = parseInt(slot.dataset.idx);
+        if(fotos[idx]) return; // ya tiene foto
+        var inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+        inp.onchange = function(){
+          if(!inp.files[0]) return;
+          slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+          window.uploadFotoAndGetUrl(inp.files[0], 'cdg-gral', meta.id, null, null)
+            .then(function(fotoUrl){
+              var fotosNuevas = fotos.slice();
+              fotosNuevas[idx] = fotoUrl;
+              return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
+                { usuario: currentUser.name, fotos: [fotoUrl] });
+            })
+            .then(function(d){
+              if(!d.ok) alert(d.error||'Error al guardar foto');
+              cdgv2PollearLicencia(meta.id, false);
+            })
+            .catch(function(e){ alert('Error al subir foto: '+e.message); slot.innerHTML = '<div>Error</div>'; });
+        };
+        inp.click();
+      });
+    });
+  }
+}
+
+/* ── AGREGAR LÍNEA ──────────────────────────────────────────────── */
+// Autocomplete SKU desde sku_catalog
+var cdgv2SkuTimer = null;
+document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
+  clearTimeout(cdgv2SkuTimer);
+  var sku = this.value.trim();
+  var autoEl = document.getElementById('cdgv2-add-desc-auto');
+  var costoEl = document.getElementById('cdgv2-add-costo');
+  if(!sku){ autoEl.textContent = ''; costoEl.value = ''; return; }
+  cdgv2SkuTimer = setTimeout(function(){
+    // Buscar en sku_catalog
+    cdgv2Fetch('GET', '/api/cdg/v2/sku-catalog/buscar?sku='+encodeURIComponent(sku))
+      .then(function(d){
+        if(d.encontrado){
+          autoEl.textContent = '✓ '+d.descripcion;
+          var descEl = document.getElementById('cdgv2-add-desc');
+          if(!descEl.value) descEl.value = d.descripcion;
+        } else {
+          autoEl.textContent = '';
+        }
+      }).catch(function(){ autoEl.textContent = ''; });
+    // Buscar costo en costos
+    if(typeof costos !== 'undefined' && costos[sku]){
+      costoEl.value = '$ '+Number(costos[sku]).toLocaleString('es-GT');
+    }
+  }, 400);
+});
+
+document.getElementById('btn-cdgv2-add-linea').addEventListener('click', function(){
+  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
+  var meta = cdgv2LicenciaActual;
+  if(!meta){ alert('Abrí una licencia primero.'); return; }
+  if(meta.estado === 'cerrado'){ alert('La licencia está cerrada.'); return; }
+  var sku  = document.getElementById('cdgv2-add-sku').value.trim();
+  var desc = document.getElementById('cdgv2-add-desc').value.trim();
+  var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
+  var msg  = document.getElementById('cdgv2-add-msg');
+  if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+  if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
+  msg.innerHTML = '<span style="color:#888">Guardando…</span>';
+  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
+    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty
+  }).then(function(d){
+    if(!d.ok && !d.aviso){
+      msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
+    }
+    msg.innerHTML = '';
+    document.getElementById('cdgv2-add-sku').value  = '';
+    document.getElementById('cdgv2-add-desc').value = '';
+    document.getElementById('cdgv2-add-qty').value  = '';
+    document.getElementById('cdgv2-add-costo').value = '';
+    document.getElementById('cdgv2-add-desc-auto').textContent = '';
+    if(d.aviso) msg.innerHTML = '<span style="color:#e67e22">'+escH(d.aviso)+'</span>';
+    cdgv2PollearLicencia(meta.id, false);
+  }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
+});
+
+/* ── GUARDAR PROGRESO ───────────────────────────────────────────── */
+document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
+  if(!currentUser || !cdgv2LicenciaActual) return;
+  var meta = cdgv2LicenciaActual;
+  var msg  = document.getElementById('cdgv2-lic-msg');
+  msg.innerHTML = '<span style="color:#888">Guardando…</span>';
+  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/accion',
+    { usuario: currentUser.name, tipo: 'guardar_progreso' })
+    .then(function(d){
+      msg.innerHTML = d.ok
+        ? '<span style="color:#1e7e34">✓ Progreso registrado</span>'
+        : '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
+      setTimeout(function(){ msg.innerHTML=''; }, 3000);
+    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
+});
+
+/* ── FINALIZAR Y BLOQUEAR ───────────────────────────────────────── */
+document.getElementById('btn-cdgv2-finalizar').addEventListener('click', function(){
+  if(!currentUser || !cdgv2LicenciaActual) return;
+  var meta = cdgv2LicenciaActual;
+  if(!confirm('¿Cerrar definitivamente la licencia '+meta.id+'? Esta acción bloqueará la edición para todos los usuarios.')) return;
+  var msg = document.getElementById('cdgv2-lic-msg');
+  msg.innerHTML = '<span style="color:#888">Cerrando…</span>';
+  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/accion',
+    { usuario: currentUser.name, tipo: 'cerrar' })
+    .then(function(d){
+      if(!d.ok){ msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      msg.innerHTML = '<span style="color:#1e7e34">✓ Licencia cerrada y bloqueada.</span>';
+      clearInterval(cdgv2PollTimer);
+      cdgv2PollearLicencia(meta.id, false);
+    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
+});
+
+/* ── LIMPIAR TIMERS AL SALIR de páginas CDG v2 ──────────────────── */
+// Cuando el usuario navega fuera de pg-cdg-v2-lista o pg-cdg-v2-licencia
+// a través del botón back, detenemos los polls.
+var _origNavBack = window.navBack || null;
+document.getElementById('btn-topbar-back').addEventListener('click', function(){
+  var activo = document.querySelector('.page.active');
+  if(activo && (activo.id === 'pg-cdg-v2-lista' || activo.id === 'pg-cdg-v2-licencia')){
+    clearInterval(cdgv2ListaTimer);
+    clearInterval(cdgv2PollTimer);
+    cdgv2LicenciaActual = null;
+    cdgv2Lineas = [];
+    cdgv2LineasDesde = null;
+  }
+}, true); // capture = true para ejecutar ANTES del navBack
 
 })();
 </script>
