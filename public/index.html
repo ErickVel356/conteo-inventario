@@ -778,6 +778,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <button class="btn btn-dark" id="btn-cdgv2-finalizar" style="flex:2;display:none">🔒 Finalizar y bloquear</button>
       </div>
       <div id="cdgv2-lic-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+
+      <!-- Panel de hallazgos de esta licencia CDG v2 -->
+      <div id="cdgv2-hallazgos-panel" style="margin-top:.75rem;display:none">
+        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">⚠ Hallazgos de esta licencia</div>
+        <div id="cdgv2-hallazgos-list"></div>
+      </div>
     </div>
 
     <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
@@ -5846,7 +5852,7 @@ function viewCDGReadOnly(id, c){
   var fotosSkuCount = items.filter(function(it){ return !!it.foto; }).length;
   var fotosTotalCount = fotosGralCount + fotosSkuCount;
   var hallazgosAsocCount = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
-    return h.tipo === 'CDG' && (h.cont === id || h.contenedor === id || h.u25 === id);
+    return h.tipo === 'CDG' && !h.cdgVersion && (h.cont === id || h.contenedor === id || h.u25 === id);
   }).length;
 
   var html = '';
@@ -5944,7 +5950,7 @@ function viewCDGReadOnly(id, c){
   // sección siempre estaba vacía aunque hubiera hallazgos reales.
   // (count ya calculado arriba como hallazgosAsocCount)
   var hallazgosAsoc = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
-    return h.tipo === 'CDG' && (h.cont === id || h.contenedor === id || h.u25 === id);
+    return h.tipo === 'CDG' && !h.cdgVersion && (h.cont === id || h.contenedor === id || h.u25 === id);
   });
   // FIX (rev ChatGPT F, vie 22-may-2026): siempre mostrar sección de
   // hallazgos. Si no hay, decirlo explícitamente — evita la duda
@@ -6389,10 +6395,22 @@ function exportCDGReporteIndividual(id, c){
     if(prev) prev.style.display='none';
     if(status) status.textContent='';
     if(inp) inp.value='';
+    window._cdgV2LicenciaId = null; // Fix: asegurar que no queda flag de CDG v2
     modal.classList.add('open');
   });
 
-  if(btnCancel) btnCancel.addEventListener('click', function(){ modal.classList.remove('open'); });
+  if(btnCancel) btnCancel.addEventListener('click', function(){
+    window._cdgV2LicenciaId = null; // Fix: limpiar si se cancela desde CDG v2
+    modal.classList.remove('open');
+  });
+
+  // Click fuera del cuadro (overlay): también limpiar el flag de CDG v2
+  modal.addEventListener('click', function(e){
+    if(e.target === modal){
+      window._cdgV2LicenciaId = null;
+      modal.classList.remove('open');
+    }
+  });
 
   // --- Photo ---
   var btnFoto    = document.getElementById('btn-cdg-hall-foto');
@@ -6435,7 +6453,9 @@ function exportCDGReporteIndividual(id, c){
     var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
     var tipoH  = (document.getElementById('cdg-hall-tipo')||{}).value||'';
     var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
-    var u25    = (document.getElementById('cdg-u25')||{}).value||'CDG';
+    // Fix: si se abrió desde CDG v2, usar el ID de la licencia v2 como cont
+    // en lugar del campo cdg-u25 (que pertenece a CDG v1 y puede estar vacío).
+    var u25    = window._cdgV2LicenciaId || (document.getElementById('cdg-u25')||{}).value||'CDG';
     if(!desc){ alert('Describe el hallazgo.'); return; }
     if(!turno){ alert('Selecciona el turno.'); return; }
     if(!area){ alert('Selecciona el área o proceso.'); return; }
@@ -6518,6 +6538,12 @@ function exportCDGReporteIndividual(id, c){
         autor: currentUser ? currentUser.name : '—',
         ts: new Date().toLocaleString('es')
       };
+      // Si se abrió desde CDG v2, marcarlo para distinguirlo en la UI
+      if(window._cdgV2LicenciaId) {
+        hall.cdgVersion = 2;
+        hall.cdgV2Licencia = window._cdgV2LicenciaId;
+        window._cdgV2LicenciaId = null; // limpiar flag
+      }
       hallazgos.push(hall);
       // FIX (rev Claude 2, mié 20-may-2026 noche): addHist faltante en CDG.
       addHist('Registró hallazgo CDG en '+hall.cont);
@@ -6545,6 +6571,7 @@ function exportCDGReporteIndividual(id, c){
     // Refresh both lists if open
     if(typeof renderHallazgosList==='function') renderHallazgosList();
     if(typeof renderCDGHallazgosPanel==='function') renderCDGHallazgosPanel();
+    if(typeof renderCdgv2Hallazgos==='function') renderCdgv2Hallazgos();
   });
 })();
 
@@ -6554,8 +6581,8 @@ function renderCDGHallazgosPanel(){
   var content = document.getElementById('cdg-hallazgos-content');
   var title   = document.getElementById('cdg-hallazgos-title');
   if(!content) return;
-  // Filter to CDG-origin hallazgos
-  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG'; });
+  // Filter to CDG v1 hallazgos only — excluir cdgVersion===2 (pertenecen a CDG v2)
+  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG' && !h.cdgVersion; });
   if(title) title.textContent = '⚠ Hallazgos CDG ('+cdgHall.length+')';
   if(!cdgHall.length){
     content.innerHTML = '<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">No hay hallazgos CDG registrados aún. Usa el botón "⚠ Crear hallazgo" arriba.</p>';
@@ -6663,7 +6690,7 @@ function openCDGHallazgoModal(id){
 
 // Export Word with all CDG hallazgos
 function exportCDGHallazgosWord(){
-  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG'; });
+  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG' && !h.cdgVersion; });
   if(!cdgHall.length){ alert('No hay hallazgos CDG para exportar.'); return; }
   var today = new Date();
   var fecha = today.toLocaleDateString('es');
@@ -7042,7 +7069,8 @@ window.cdgv2Cleanup = function(){
   cdgv2LineasDesde = null;        cdgv2AddFotos = [];
   if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
 };
-var CDGV2_POLL_MS       = 15000;  // 15s entre polls
+var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
+var CDGV2_LISTA_POLL_MS = 5000;   // 5s entre polls de la lista (descubrir licencias nuevas)
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
 document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
@@ -7076,7 +7104,7 @@ function cdgv2AbrirLista(){
   document.getElementById('cdgv2-crear-msg').innerHTML = '';
   cdgv2CargarLista();
   clearInterval(cdgv2ListaTimer);
-  cdgv2ListaTimer = setInterval(cdgv2CargarLista, CDGV2_POLL_MS);
+  cdgv2ListaTimer = setInterval(cdgv2CargarLista, CDGV2_LISTA_POLL_MS);
 }
 
 function cdgv2CargarLista(){
@@ -7144,7 +7172,22 @@ document.getElementById('btn-cdgv2-crear-ok').addEventListener('click', function
   msg.innerHTML = 'Creando…';
   cdgv2Fetch('POST', '/api/cdg/v2/crear', { id: u25, tipo: tipo, usuario: currentUser.name })
     .then(function(d){
-      if(!d.ok){ msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      if(!d.ok){
+        // Si ya existe, refrescar lista y ofrecer abrir directamente
+        if(d.error && d.error.indexOf('Ya existe') >= 0) {
+          msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error)+'</span>'
+            +'<br><button class="btn btn-sm cdgv2-abrir-existente" data-id="'+escH(u25)+'" style="margin-top:4px">Abrir esa licencia →</button>';
+          // addEventListener en lugar de onclick inline — cdgv2AbrirLicencia está en el IIFE
+          var btnAbrir = msg.querySelector('.cdgv2-abrir-existente');
+          if(btnAbrir) btnAbrir.addEventListener('click', function(){
+            cdgv2AbrirLicencia(this.dataset.id);
+          });
+          cdgv2CargarLista(); // refrescar lista para que aparezca
+        } else {
+          msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
+        }
+        return;
+      }
       document.getElementById('cdgv2-form-crear').style.display = 'none';
       msg.innerHTML = '';
       cdgv2AbrirLicencia(d.licencia.id);
@@ -7215,6 +7258,7 @@ function cdgv2PollearLicencia(licenciaId, esPrimerCarga){
     renderCdgv2Header(d.meta);
     renderCdgv2Lineas();
     renderCdgv2Fotos(d.meta);
+    renderCdgv2Hallazgos();
     var ts = document.getElementById('cdgv2-lic-poll-ts');
     if(ts) ts.textContent = 'Actualizado '+new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'});
   }).catch(function(){
@@ -7314,7 +7358,7 @@ function renderCdgv2Lineas(){
       var fotosCount = parseInt(btn.dataset.fotosCount)||0;
       if(fotosCount >= 3){ alert('Máximo 3 fotos por línea.'); return; }
       var inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+      inp.type = 'file'; inp.accept = 'image/*'; 
       inp.onchange = function(){
         if(!inp.files[0]) return;
         btn.textContent = 'Subiendo…'; btn.disabled = true;
@@ -7322,7 +7366,7 @@ function renderCdgv2Lineas(){
         window.compressImage(inp.files[0])
           .then(function(blob){
             return window.uploadFotoAndGetUrl(blob, 'cdg-sku',
-              cdgv2LicenciaActual.id, sku, null);
+              cdgv2SafeRefId(cdgv2LicenciaActual.id), sku, null);
           })
           .then(function(fotoUrl){
             // PATCH para agregar la URL a las fotos existentes de la línea
@@ -7350,57 +7394,105 @@ function renderCdgv2Lineas(){
 function renderCdgv2Fotos(meta){
   var grid = document.getElementById('cdgv2-foto-grid');
   if(!grid || !meta) return;
-  var labels = ['MARCHAMO','MANIFIESTO','PLACA FURGÓN','OTRO','OTRO 2'];
-  var fotos  = meta.fotosEncabezado || [];
+  var labels  = ['MARCHAMO','MANIFIESTO','PLACA FURGÓN','OTRO','OTRO 2'];
+  var fotos   = meta.fotosEncabezado || [];
   var cerrada = meta.estado === 'cerrado';
+  // Reusar patrón idéntico a CDG v1 (renderCDGFotoGrid):
+  // input[type=file][accept="image/*"] sin capture forzado → el dispositivo
+  // ofrece cámara y galería según sus propias capacidades.
   grid.innerHTML = labels.map(function(lbl, i){
     var url = fotos[i] || '';
-    var inner = url
-      ? '<img src="'+escH(url)+'" style="width:100%;height:60px;object-fit:cover;border-radius:6px">'
-      : '<div style="height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px"><span style="font-size:1.2rem">📷</span><span style="font-size:.65rem;color:#888">'+lbl+'</span></div>';
-    var cursor = (!cerrada && !url) ? 'pointer' : 'default';
-    return '<div class="cdgv2-foto-slot" data-idx="'+i+'" style="border:1px dashed #ccc;border-radius:8px;overflow:hidden;cursor:'+cursor+'">'+inner+'</div>';
+    if(url) {
+      return '<div class="cdg-foto-slot has-photo" data-idx="'+i+'">'
+        +'<img src="'+escH(url)+'" alt="'+escH(lbl)+'">'
+        +'<div class="slot-label-overlay">'+escH(lbl)+'</div>'
+        // Borrar foto no implementado en esta versión (server no soporta reemplazar array)
+        +'</div>';
+    }
+    if(cerrada) {
+      return '<div class="cdg-foto-slot" data-idx="'+i+'">'
+        +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div></div>';
+    }
+    return '<div class="cdg-foto-slot" data-idx="'+i+'">'
+      +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div>'
+      +'<input type="file" accept="image/*" style="display:none" data-idx="'+i+'">'
+      +'</div>';
   }).join('');
-  if(!cerrada){
-    grid.querySelectorAll('.cdgv2-foto-slot').forEach(function(slot){
-      slot.addEventListener('click', function(){
-        var idx = parseInt(slot.dataset.idx);
-        if(fotos[idx]) return; // ya tiene foto
-        var inp = document.createElement('input');
-        inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
-        inp.onchange = function(){
-          if(!inp.files[0]) return;
-          slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-          window.uploadFotoAndGetUrl(inp.files[0], 'cdg-gral', meta.id, null, null)
-            .then(function(fotoUrl){
-              var fotosNuevas = fotos.slice();
-              fotosNuevas[idx] = fotoUrl;
-              return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
-                { usuario: currentUser.name, fotos: [fotoUrl] });
-            })
-            .then(function(d){
-              if(!d.ok) alert(d.error||'Error al guardar foto');
-              cdgv2PollearLicencia(meta.id, false);
-            })
-            .catch(function(e){ alert('Error al subir foto: '+e.message); slot.innerHTML = '<div>Error</div>'; });
-        };
-        inp.click();
-      });
+
+  if(cerrada) return;
+
+  // Wiring igual a CDG v1: click en slot → abrir file picker
+  grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
+    var inp = slot.querySelector('input[type=file]');
+    if(!inp) return;
+    slot.addEventListener('click', function(e){
+      if(e.target.classList && e.target.classList.contains('slot-del')) return;
+      inp.click();
     });
-  }
+    inp.addEventListener('change', function(){
+      if(!this.files[0]) return;
+      var idx = parseInt(this.dataset.idx);
+      slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+      // safeRefId: mismo patrón de sanitización que CDG v1 (sin espacios ni chars especiales)
+      var safeId = cdgv2SafeRefId(meta.id);
+      window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
+        .then(function(fotoUrl){
+          return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
+            { usuario: currentUser.name, fotos: [fotoUrl] });
+        })
+        .then(function(d){
+          if(!d.ok) alert(d.error||'Error al guardar foto');
+          cdgv2PollearLicencia(meta.id, false);
+        })
+        .catch(function(e){
+          alert('Error al subir foto: '+e.message);
+          cdgv2PollearLicencia(meta.id, false);
+        });
+    });
+  });
+
+  // Nota: borrar foto de encabezado no implementado en v1 de CDG v2
+  // (requiere que el server soporte reemplazar el array completo con lock).
+}
+
+/* ── HALLAZGOS CDG v2 ───────────────────────────────────────────── */
+function renderCdgv2Hallazgos(){
+  var panel = document.getElementById('cdgv2-hallazgos-panel');
+  var list  = document.getElementById('cdgv2-hallazgos-list');
+  if(!panel || !list || !cdgv2LicenciaActual) return;
+  var licId = cdgv2LicenciaActual.id;
+  // Filtrar hallazgos de esta licencia v2 — no contamina CDG v1
+  var hall2 = (typeof hallazgos !== 'undefined' ? hallazgos : []).filter(function(h){
+    return h.tipo === 'CDG' && h.cdgVersion === 2 && h.cdgV2Licencia === licId;
+  });
+  if(!hall2.length){ panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  list.innerHTML = hall2.map(function(h){
+    return '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.5rem .75rem;margin-bottom:.4rem;font-size:.83rem">'
+      +'<span style="font-weight:600">'+escH(h.tipoHallazgo||'Hallazgo')+'</span>'
+      +' — '+escH(h.desc||'')
+      +'<span style="color:#888;margin-left:.5rem">'+escH(h.autor)+' · '+escH(h.ts)+'</span>'
+      +'</div>';
+  }).join('');
 }
 
 /* ── AGREGAR LÍNEA ──────────────────────────────────────────────── */
 // Autocomplete SKU desde sku_catalog
 var cdgv2SkuTimer = null;
 var cdgv2AddFotos = []; // fotos seleccionadas para la línea que se está creando
+// FIX: sanitizar ID de licencia para uso como refId en Storage.
+// El server valida refId con /^[A-Za-z0-9_\-./]+$/ — espacios no permitidos.
+// "U25-99999 PRUEBA 2" → "U25-99999_PRUEBA_2"
+function cdgv2SafeRefId(id) {
+  return String(id||'').replace(/[^A-Za-z0-9_\-\.]/g, '_');
+}
 
 // Handler para agregar foto ANTES de crear la línea
 document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
   if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
   if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
   var inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+  inp.type = 'file'; inp.accept = 'image/*'; 
   inp.onchange = function(){
     if(!inp.files[0]) return;
     var btn = e.target;
@@ -7409,7 +7501,7 @@ document.getElementById('cdgv2-add-fotos-row').addEventListener('click', functio
       .then(function(blob){
         // Subir con un SKU temporal; se reemplazará en el PATCH si es necesario
         var skuTemp = document.getElementById('cdgv2-add-sku').value.trim() || 'tmp';
-        var licId   = cdgv2LicenciaActual ? cdgv2LicenciaActual.id : 'tmp';
+        var licId   = cdgv2LicenciaActual ? cdgv2SafeRefId(cdgv2LicenciaActual.id) : 'tmp';
         return window.uploadFotoAndGetUrl(blob, 'cdg-sku', licId, skuTemp, null);
       })
       .then(function(url){
@@ -7527,7 +7619,8 @@ document.getElementById('btn-cdgv2-hallazgo').addEventListener('click', function
   window._editingCDGHallId = null;
   var prev = document.getElementById('cdg-hall-foto-preview');
   if(prev) prev.style.display='none';
-  modal.style.display = 'flex';
+  modal.classList.add('open'); // FIX: mismo mecanismo que CDG v1 para que el close funcione
+  window._cdgV2LicenciaId = cdgv2LicenciaActual.id; // marcar para que el save lo sepa
 });
 
 document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
