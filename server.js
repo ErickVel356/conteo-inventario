@@ -2305,44 +2305,49 @@ app.post('/api/cdg/v2/:id/accion', async (req, res) => {
 
     // ── cerrar ──────────────────────────────────────────────────────────────
     else if(tipo === 'cerrar') {
-      if(meta.finalizador !== usuario) {
-        return res.status(403).json({ ok: false, error: 'Solo el finalizador puede cerrar la licencia.' });
-      }
       if(meta.estado === 'cerrado') {
         return res.status(400).json({ ok: false, error: 'La licencia ya está cerrada.' });
       }
-      meta.estado      = 'cerrado';
-      meta.fechaCierre = now;
-      cdgBitacora(meta, usuario, 'licencia_cerrada', '');
-      Object.keys(meta.usuarios).forEach(function(u) {
-        meta.usuarios[u].estado = 'inactivo';
-      });
-      meta.version = (meta.version || 0) + 1;
-
-      // FIX (lun 1-jun-2026, v19): orden correcto del lock.
-      // 1. closing=true en memoria → nuevos writes reciben 423 de inmediato
-      // 2. drain → esperar writes que ya entraron (hasta 15s; lanza si no drena)
-      // 3. re-leer meta fresco → captura fotos/bitácora escritas antes del lock
-      // 4. aplicar mutaciones de cierre al meta fresco
-      // 5. guardar meta cerrado en Supabase → lock distribuido para tablets
-      // 6. leer líneas → garantía de que no hay writes activos ni en vuelo
-      cdgLockStartClosing(licenciaId);
-      await cdgLockWaitDrain(licenciaId, 15000); // lanza si timeout
-
-      // Re-leer meta fresco post-drain: el drain garantiza que todos los writes
-      // anteriores ya persistieron, así que este meta tiene fotos/bitácora completos.
-      var metaFresco = await cdgGetMeta(licenciaId);
-      if(metaFresco) {
-        // Aplicar mutaciones de cierre sobre el meta más reciente
-        metaFresco.estado      = 'cerrado';
-        metaFresco.fechaCierre = now;
-        metaFresco.version     = (metaFresco.version || 0) + 1;
-        cdgBitacora(metaFresco, usuario, 'licencia_cerrada', '');
-        Object.keys(metaFresco.usuarios || {}).forEach(function(u){
-          metaFresco.usuarios[u].estado = 'inactivo';
+      // FIX (lun 1-jun-2026, v19): permitir cierre a cualquier usuario activo
+      // unido a la licencia, no solo al finalizador.
+      // Razón operativa: en multiusuario el finalizador puede no estar disponible.
+      // Supervisor (isSup desde el cliente) siempre puede cerrar.
+      var esFinalizador   = meta.finalizador === usuario;
+      var esActivoEnLic   = meta.usuarios && meta.usuarios[usuario]
+                            && meta.usuarios[usuario].estado === 'activo';
+      var esSupervisorCDG = req.body.esSupervisor === true;
+      if(!esFinalizador && !esActivoEnLic && !esSupervisorCDG) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Solo usuarios activos de la licencia o el finalizador pueden cerrar.'
         });
-        meta = metaFresco; // usar el meta fresco de aquí en adelante
       }
+      // FIX (lun 1-jun-2026, v19): orden correcto — lock primero, re-leer fresco,
+      // luego aplicar TODOS los campos de cierre al meta fresco para no perderlos.
+      // 1. closing=true en memoria → nuevos writes reciben 423 de inmediato
+      // 2. drain → esperar writes activos (hasta 15s; lanza si no drena)
+      // 3. re-leer meta fresco → tiene fotos/bitácora de todos los writes anteriores
+      // 4. aplicar TODOS los campos de cierre al fresco
+      // 5. guardar en Supabase → lock distribuido
+      // 6. leer líneas con garantía
+      cdgLockStartClosing(licenciaId);
+      await cdgLockWaitDrain(licenciaId, 15000);
+
+      var metaFresco = await cdgGetMeta(licenciaId);
+      var base = metaFresco || meta;
+
+      // Aplicar TODOS los campos de cierre sobre el meta más reciente
+      base.estado             = 'cerrado';
+      base.fechaCierre        = now;
+      base.cerradoPor         = usuario;
+      base.finalizadorOriginal = base.finalizador;
+      base.version            = (base.version || 0) + 1;
+      cdgBitacora(base, usuario, 'licencia_cerrada',
+        esFinalizador ? 'por finalizador' : esSupervisorCDG ? 'por supervisor' : 'por usuario activo');
+      Object.keys(base.usuarios || {}).forEach(function(u){
+        base.usuarios[u].estado = 'inactivo';
+      });
+      meta = base;
 
       await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG cerrar lock');
 
@@ -2444,8 +2449,10 @@ app.post('/api/cdg/v2/:id/accion', async (req, res) => {
       // Escenario sin este fix: guardar_progreso lee meta (activo), cierre guarda
       // meta cerrado + crea Hamilton, guardar_progreso termina y pisa con meta stale
       // → licencia reabierta en Supabase con Hamilton ya creado.
+      // EXCEPCIÓN: 'desbloquear' tiene que guardar estado='activo' sobre una licencia
+      // cerrada — es exactamente su propósito, no debe ser bloqueado por esta guardia.
       var metaFresh = await cdgGetMeta(licenciaId);
-      if(metaFresh && metaFresh.estado === 'cerrado') {
+      if(metaFresh && metaFresh.estado === 'cerrado' && tipo !== 'desbloquear') {
         return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras procesabas esta acción. No se guardaron cambios.' });
       }
       meta.version = (meta.version || 0) + 1;
