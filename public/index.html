@@ -7278,10 +7278,46 @@ function renderCdgv2Header(meta){
   badge.textContent = meta.estado === 'activo' ? '● Activa' : '■ Cerrada';
   badge.style.background = meta.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
   badge.style.color = meta.estado === 'activo' ? '#2e7d32' : '#c62828';
-  // Botón finalizar: solo para el finalizador, solo si activa
-  var btnFin = document.getElementById('btn-cdgv2-finalizar');
-  var esFin  = currentUser && currentUser.name === finalizador;
-  btnFin.style.display = (esFin && meta.estado === 'activo') ? '' : 'none';
+  // Botón finalizar: cualquier usuario activo en la licencia puede cerrar
+  var btnFin   = document.getElementById('btn-cdgv2-finalizar');
+  var msgFin   = document.getElementById('cdgv2-lic-msg');
+  var esActivo = currentUser && meta.usuarios && meta.usuarios[currentUser.name]
+                 && meta.usuarios[currentUser.name].estado === 'activo';
+  var esFin    = currentUser && currentUser.name === finalizador;
+  var esSup    = typeof isSup === 'function' && isSup();
+  var puedeFinalizarUI = meta.estado === 'activo' && (esActivo || esFin || esSup);
+  btnFin.style.display = puedeFinalizarUI ? '' : 'none';
+  // Texto claro para usuarios no autorizados cuando la licencia está activa
+  if(meta.estado === 'activo' && !puedeFinalizarUI && currentUser) {
+    msgFin.innerHTML = '<span style="color:#888;font-size:.8rem">Solo usuarios activos de la licencia pueden finalizarla. Uníte primero agregando una línea.</span>';
+  }
+  // Botón desbloquear: solo supervisores, solo si cerrada
+  var btnDesbloquear = document.getElementById('btn-cdgv2-desbloquear');
+  if(!btnDesbloquear) {
+    // Crear el botón si no existe aún
+    btnDesbloquear = document.createElement('button');
+    btnDesbloquear.id = 'btn-cdgv2-desbloquear';
+    btnDesbloquear.className = 'btn btn-sm';
+    btnDesbloquear.style.cssText = 'background:#fff3cd;color:#856404;border:1px solid #ffc107;margin-left:6px';
+    btnDesbloquear.textContent = '🔓 Desbloquear (supervisor)';
+    btnDesbloquear.addEventListener('click', function(){
+      if(!currentUser || !cdgv2LicenciaActual) return;
+      if(!confirm('¿Desbloquear la licencia '+cdgv2LicenciaActual.id+'? El equipo podrá volver a editarla.')) return;
+      var msgEl = document.getElementById('cdgv2-lic-msg');
+      msgEl.innerHTML = '<span style="color:#888">Desbloqueando…</span>';
+      cdgv2Fetch('POST', '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/accion',
+        { usuario: currentUser.name, tipo: 'desbloquear', supervisor: true })
+        .then(function(d){
+          if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+          msgEl.innerHTML = '<span style="color:#1e7e34">✓ Licencia desbloqueada.</span>';
+          cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
+        }).catch(function(){ msgEl.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
+    });
+    // Insertarlo junto al badge de estado
+    var badgeEl = document.getElementById('cdgv2-lic-estado-badge');
+    if(badgeEl && badgeEl.parentNode) badgeEl.parentNode.appendChild(btnDesbloquear);
+  }
+  btnDesbloquear.style.display = (meta.estado === 'cerrado' && esSup) ? '' : 'none';
   // Form agregar: ocultar si cerrada
   document.getElementById('cdgv2-add-form').style.display = meta.estado === 'activo' ? '' : 'none';
 }
@@ -7646,7 +7682,8 @@ document.getElementById('btn-cdgv2-finalizar').addEventListener('click', functio
   var msg = document.getElementById('cdgv2-lic-msg');
   msg.innerHTML = '<span style="color:#888">Cerrando…</span>';
   cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/accion',
-    { usuario: currentUser.name, tipo: 'cerrar' })
+    { usuario: currentUser.name, tipo: 'cerrar',
+      esSupervisor: typeof isSup === 'function' && isSup() })
     .then(function(d){
       if(!d.ok){ msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
       msg.innerHTML = '<span style="color:#1e7e34">✓ Licencia cerrada y bloqueada.</span>';
