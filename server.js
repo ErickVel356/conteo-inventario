@@ -169,6 +169,14 @@ function saveDailyState(label) {
   return dbSet('daily_state', buildDailyStatePayload())
     .catch(e => console.log((label||'save')+' error:', e.message));
 }
+// FIX (lun 1-jun-2026, v19): versión estricta que SÍ rechaza si dbSet falla.
+// saveDailyState() tiene .catch interno — withTimeout() recibe una promesa
+// resuelta aunque Supabase devuelva 500, y el endpoint respondería ok:true
+// sin haber persistido. saveDailyStateStrict() propaga el error para que el
+// caller pueda responder 500 al cliente en operaciones críticas (ej. cerrar v2).
+function saveDailyStateStrict(label) {
+  return dbSet('daily_state', buildDailyStatePayload());
+}
 
 // ── Load state from Supabase on startup ───────────────────────────────────
 async function loadState() {
@@ -1512,6 +1520,42 @@ function mergeSheet(rows, type) {
 // ── Helpers CDG v2 ─────────────────────────────────────────────────────────
 
 // Genera un UUID v4 simple (sin dependencias externas)
+// FIX (lun 1-jun-2026, v19): lock en memoria por licencia para operaciones CDG v2.
+// Resuelve la race condition donde un POST /linea en vuelo puede insertar después
+// de que el cierre ya leyó las líneas para Hamilton.
+// Estructura: { [licenciaId]: { activeWrites: 0, closing: false } }
+var cdgLocks = {};
+function cdgLockAcquire(licenciaId) {
+  if(!cdgLocks[licenciaId]) cdgLocks[licenciaId] = { activeWrites: 0, closing: false };
+  if(cdgLocks[licenciaId].closing) return false; // rechazar — cierre en progreso
+  cdgLocks[licenciaId].activeWrites++;
+  return true;
+}
+function cdgLockRelease(licenciaId) {
+  var l = cdgLocks[licenciaId];
+  if(l && l.activeWrites > 0) l.activeWrites--;
+}
+function cdgLockStartClosing(licenciaId) {
+  if(!cdgLocks[licenciaId]) cdgLocks[licenciaId] = { activeWrites: 0, closing: false };
+  cdgLocks[licenciaId].closing = true;
+}
+function cdgLockClear(licenciaId) {
+  delete cdgLocks[licenciaId];
+}
+async function cdgLockWaitDrain(licenciaId, timeoutMs) {
+  var l = cdgLocks[licenciaId];
+  if(!l) return;
+  var start = Date.now();
+  while(l.activeWrites > 0 && Date.now() - start < timeoutMs) {
+    await new Promise(function(r){ setTimeout(r, 10); });
+  }
+  if(l.activeWrites > 0) {
+    // FIX: lanzar error en lugar de proceder — el cierre no puede correr con
+    // writes activos. El caller limpia el lock y responde error al cliente.
+    throw new Error('Timeout esperando que terminen ' + l.activeWrites + ' escritura(s) activa(s). Reintentá en unos segundos.');
+  }
+}
+
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     var r = Math.random() * 16 | 0;
@@ -1521,12 +1565,22 @@ function uuidv4() {
 
 // Lee la metadata de una licencia CDG desde app_state
 async function cdgGetMeta(licenciaId) {
-  return await dbGet('cdg_meta_' + licenciaId);
+  // FIX (lun 1-jun-2026, v19): normalizar id con trim().toUpperCase() para evitar
+  // claves duplicadas por espacios o mayúsculas (iPad autocapitaliza).
+  return await dbGet('cdg_meta_' + cdgNormId(licenciaId));
 }
 
 // Guarda la metadata de una licencia CDG en app_state
 async function cdgSaveMeta(licenciaId, meta) {
-  await dbSet('cdg_meta_' + licenciaId, meta);
+  await dbSet('cdg_meta_' + cdgNormId(licenciaId), meta);
+}
+
+// FIX (lun 1-jun-2026, v19): helper central de normalización.
+// Todos los endpoints v2 usan cdgNormId() al extraer req.params.id y al
+// construir licencia_id en filas de cdg_lineas. Garantiza que meta y líneas
+// usen siempre la misma clave canónica (sin espacios, mayúsculas).
+function cdgNormId(id) {
+  return String(id || '').trim().toUpperCase();
 }
 
 // Lee las líneas de una licencia desde cdg_lineas (tabla Supabase).
@@ -1536,11 +1590,16 @@ async function cdgSaveMeta(licenciaId, meta) {
 // a otras tablets. El cliente descarta las que tengan eliminada=true.
 async function cdgGetLineas(licenciaId, desde) {
   if(!SUPABASE_URL || !SUPABASE_KEY) return [];
-  var query = '?licencia_id=eq.' + encodeURIComponent(licenciaId)
+  var nId   = cdgNormId(licenciaId);
+  var query = '?licencia_id=eq.' + encodeURIComponent(nId)
             + '&order=ts_creacion.asc';
   if(desde) {
     // Delta: incluir eliminadas para que las tablets las descarten localmente
-    query += '&ts_modif=gt.' + encodeURIComponent(desde);
+    // FIX (lun 1-jun-2026, v19): usar gte. (mayor o igual) en lugar de gt.
+    // Con gt. estricto, dos líneas con el mismo ts_modif pierden la del borde
+    // del cursor — nunca llega en el delta. gte. la reenvía, y el merge del
+    // cliente la descarta como duplicado (findIndex por id). Sin pérdida de datos.
+    query += '&ts_modif=gte.' + encodeURIComponent(desde);
   } else {
     // Carga completa: solo activas
     query += '&eliminada=eq.false';
@@ -1648,8 +1707,10 @@ app.get('/api/cdg/v2/listar', async (req, res) => {
     rows.forEach(function(row) {
       try {
         var meta = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-        // Solo incluir activas o cerradas recientemente (últimas 48h)
-        if(meta && (meta.estado === 'activo' || meta.estado === 'pausado')) {
+        // Incluir activas, pausadas, y cerradas recientes (últimas 48h)
+        var hace48h = new Date(Date.now() - 48*60*60*1000).toISOString();
+        if(meta && (meta.estado === 'activo' || meta.estado === 'pausado' ||
+            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace48h))) {
           licencias.push({
             id:          meta.id,
             tipo:        meta.tipo,
@@ -1686,6 +1747,9 @@ app.post('/api/cdg/v2/crear', async (req, res) => {
     var rand = Math.floor(Math.random() * 9000) + 1000;
     id = 'U25-' + mm + dd + rand;
   }
+  // FIX (lun 1-jun-2026, v19): normalizar id con trim().toUpperCase() para evitar
+  // duplicados por espacios o mayúsculas (iPad autocapitaliza la primera letra).
+  id = cdgNormId(id); // usar helper central
 
   // Verificar que no exista ya
   try {
@@ -1818,7 +1882,7 @@ app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, re
 // conocido de líneas para recibir solo el delta.
 // Query params: lineasDesde (ISO timestamp, opcional)
 app.get('/api/cdg/v2/:id', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var lineasDesde = req.query.lineasDesde || null;
 
   try {
@@ -1846,7 +1910,7 @@ app.get('/api/cdg/v2/:id', async (req, res) => {
 // Body: { usuario, sku, descripcion, cantidad, costoUnit, fotos[] }
 // fotos[]: array de paths en Storage (ya subidos antes de llamar este endpoint)
 app.post('/api/cdg/v2/:id/linea', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
@@ -1855,9 +1919,14 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'falta cantidad' });
   }
 
-  // Validar fotos
+  // Lock: registrar escritura activa. Si la licencia está cerrando → rechazar.
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando. Ya no se pueden agregar líneas.' });
+  }
+
   var fotosArr = Array.isArray(fotos) ? fotos : [];
   if(fotosArr.length > 3) {
+    cdgLockRelease(licenciaId);
     return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
   }
 
@@ -1870,7 +1939,7 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
 
     var now = new Date().toISOString();
     var linea = {
-      licencia_id:  licenciaId,
+      licencia_id:  cdgNormId(licenciaId),
       sku:          String(sku).trim(),
       descripcion:  descripcion || '',
       cantidad:     Number(cantidad),
@@ -1928,6 +1997,8 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
   } catch(e) {
     console.log('CDG v2 agregar linea FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo guardar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId); // liberar escritura activa siempre
   }
 });
 
@@ -1935,11 +2006,14 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
 // Edita una línea propia (datos o fotos). Solo el autor puede editar su línea.
 // Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos? }
 app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var lineaId    = req.params.lineaId;
   var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
 
   try {
     var meta = await cdgGetMeta(licenciaId);
@@ -1995,6 +2069,8 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
   } catch(e) {
     console.log('CDG v2 editar linea FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo editar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
   }
 });
 
@@ -2002,11 +2078,14 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
 // Soft-delete de una línea. Solo el autor puede borrar su propia línea.
 // Body: { usuario }
 app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var lineaId    = req.params.lineaId;
   var { usuario } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
 
   try {
     var meta = await cdgGetMeta(licenciaId);
@@ -2045,6 +2124,8 @@ app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
   } catch(e) {
     console.log('CDG v2 delete linea FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo eliminar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
   }
 });
 
@@ -2052,12 +2133,16 @@ app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
 // Agrega fotos de encabezado a la licencia (máx 5).
 // Body: { usuario, fotos[] } — fotos son paths en Storage ya subidos
 app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var { usuario, fotos } = req.body;
 
   if(!usuario)               return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!Array.isArray(fotos) || fotos.length === 0) {
     return res.status(400).json({ ok: false, error: 'falta fotos' });
+  }
+  // Lock: registrar write de metadata. Si cerrando → 423.
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
   }
 
   try {
@@ -2080,12 +2165,20 @@ app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
     meta.version = (meta.version || 0) + 1;
     if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
 
+    // FIX (lun 1-jun-2026, v19): re-leer meta fresco antes de guardar para
+    // detectar cierre concurrente — mismo patrón que /accion bloque compartido.
+    var metaFreshFotos = await cdgGetMeta(licenciaId);
+    if(metaFreshFotos && metaFreshFotos.estado === 'cerrado') {
+      return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras subías la foto. No se guardó.' });
+    }
     await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG fotos encabezado save');
     console.log('CDG v2 fotos encabezado:', licenciaId, '+' + fotos.length + ' fotos');
     res.json({ ok: true, fotosEncabezado: meta.fotosEncabezado });
   } catch(e) {
     console.log('CDG v2 fotos encabezado FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudieron guardar las fotos. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
   }
 });
 
@@ -2105,11 +2198,21 @@ app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
 //   desbloquear     → supervisor reabre una licencia cerrada
 //                     params: { supervisor: true }
 app.post('/api/cdg/v2/:id/accion', async (req, res) => {
-  var licenciaId = req.params.id;
+  var licenciaId = cdgNormId(req.params.id);
   var { usuario, tipo, nuevoFinalizador, supervisor } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!tipo)    return res.status(400).json({ ok: false, error: 'falta tipo de acción' });
+
+  // Lock para acciones que escriben metadata (no-cerrar).
+  // 'cerrar' gestiona el lock internamente con cdgLockStartClosing/WaitDrain.
+  var lockAdquirido = false;
+  if(tipo !== 'cerrar') {
+    if(!cdgLockAcquire(licenciaId)) {
+      return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+    }
+    lockAdquirido = true;
+  }
 
   try {
     var meta = await cdgGetMeta(licenciaId);
@@ -2211,10 +2314,110 @@ app.post('/api/cdg/v2/:id/accion', async (req, res) => {
       meta.estado      = 'cerrado';
       meta.fechaCierre = now;
       cdgBitacora(meta, usuario, 'licencia_cerrada', '');
-      // Marcar todos los usuarios como inactivos al cerrar
       Object.keys(meta.usuarios).forEach(function(u) {
         meta.usuarios[u].estado = 'inactivo';
       });
+      meta.version = (meta.version || 0) + 1;
+
+      // FIX (lun 1-jun-2026, v19): orden correcto del lock.
+      // 1. closing=true en memoria → nuevos writes reciben 423 de inmediato
+      // 2. drain → esperar writes que ya entraron (hasta 15s; lanza si no drena)
+      // 3. re-leer meta fresco → captura fotos/bitácora escritas antes del lock
+      // 4. aplicar mutaciones de cierre al meta fresco
+      // 5. guardar meta cerrado en Supabase → lock distribuido para tablets
+      // 6. leer líneas → garantía de que no hay writes activos ni en vuelo
+      cdgLockStartClosing(licenciaId);
+      await cdgLockWaitDrain(licenciaId, 15000); // lanza si timeout
+
+      // Re-leer meta fresco post-drain: el drain garantiza que todos los writes
+      // anteriores ya persistieron, así que este meta tiene fotos/bitácora completos.
+      var metaFresco = await cdgGetMeta(licenciaId);
+      if(metaFresco) {
+        // Aplicar mutaciones de cierre sobre el meta más reciente
+        metaFresco.estado      = 'cerrado';
+        metaFresco.fechaCierre = now;
+        metaFresco.version     = (metaFresco.version || 0) + 1;
+        cdgBitacora(metaFresco, usuario, 'licencia_cerrada', '');
+        Object.keys(metaFresco.usuarios || {}).forEach(function(u){
+          metaFresco.usuarios[u].estado = 'inactivo';
+        });
+        meta = metaFresco; // usar el meta fresco de aquí en adelante
+      }
+
+      await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG cerrar lock');
+
+      // Snapshot de state ANTES de mutar para rollback si falla Hamilton.
+      var snapCdg          = state.cdg     ? JSON.parse(JSON.stringify(state.cdg))     : {};
+      var snapTeorico      = state.teorico ? JSON.parse(JSON.stringify(state.teorico)) : {};
+      var snapFisico       = state.fisico  ? JSON.parse(JSON.stringify(state.fisico))  : {};
+      var snapVersion      = state.version;
+      var snapHistorialLen = (state.historial||[]).length;
+
+      var lineasV2 = await cdgGetLineas(licenciaId, null);
+      var itemsV2  = lineasV2.map(function(l) {
+        return {
+          sku:   l.sku,
+          desc:  l.descripcion || '',
+          qty:   l.cantidad,
+          costo: l.costo_unit != null ? l.costo_unit : null,
+          fotos: Array.isArray(l.fotos) ? l.fotos : [],
+          autor: l.autor
+        };
+      });
+      if(!state.cdg) state.cdg = {};
+      state.cdg[licenciaId] = {
+        items:      itemsV2,
+        status:     'locked',
+        autor:      meta.creadoPor,
+        fecha:      new Date().toLocaleDateString('es'),
+        tipo:       meta.tipo || 'CDG',
+        bloqueado:  true,
+        lastEditor: usuario,
+        fromCDGv2:  true
+      };
+      if(!state.teorico) state.teorico = {};
+      if(!state.teorico[licenciaId]) {
+        state.teorico[licenciaId] = {
+          items: itemsV2.map(function(s) {
+            return { sku: s.sku, desc: s.desc, qty: s.qty,
+              raw: { origen: 'CDG', status: 'CDG Validado', tipo: meta.tipo || 'CDG' } };
+          }),
+          type:        meta.tipo || 'CDG',
+          fromCDG:     true,
+          cdgRef:      licenciaId,
+          cdgValidado: true,
+          cdgBloqueado: true
+        };
+        if(!state.fisico) state.fisico = {};
+        state.fisico[licenciaId] = null;
+      }
+      addHistorial(usuario, 'CDG v2 finalizado', licenciaId);
+      state.version++;
+      // Persistir de forma directa y estricta. Si falla → revertir y lanzar
+      // para que el catch del endpoint responda 500 (no ok:true mentiroso).
+      try {
+        await withTimeout(saveDailyStateStrict('CDG v2 cerrar Hamilton'), 20000, 'CDG v2 cerrar Hamilton save');
+      } catch(saveErr) {
+        // Rollback: restaurar state a como estaba antes de las mutaciones
+        state.cdg      = snapCdg;
+        state.teorico  = snapTeorico;
+        state.fisico   = snapFisico;
+        state.version  = snapVersion;
+        if(state.historial) state.historial.length = snapHistorialLen;
+        console.log('CDG v2 cerrar Hamilton ROLLBACK por fallo de persistencia:', saveErr.message);
+        // Best-effort: reabrir la licencia en Supabase restaurando estado + usuarios
+        meta.estado = 'activo'; meta.fechaCierre = null;
+        Object.keys(meta.usuarios || {}).forEach(function(u){
+          if(meta.usuarios[u]) meta.usuarios[u].estado = 'activo';
+        });
+        cdgLockClear(licenciaId); // limpiar lock para permitir nuevas escrituras
+        cdgSaveMeta(licenciaId, meta).catch(function(e2){
+          console.log('CDG v2 cerrar: no se pudo reabrir licencia tras rollback:', e2.message);
+        });
+        throw saveErr; // el catch externo responde 500
+      }
+      console.log('CDG v2 cerrar: entrada Hamilton creada para', licenciaId, '-', itemsV2.length, 'líneas');
+      cdgLockClear(licenciaId); // limpiar lock — licencia cerrada, ya no necesita rastreo
     }
 
     // ── desbloquear ─────────────────────────────────────────────────────────
@@ -2234,14 +2437,29 @@ app.post('/api/cdg/v2/:id/accion', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Tipo de acción desconocido: ' + tipo });
     }
 
-    meta.version = (meta.version || 0) + 1;
-    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG accion save');
+    // Para 'cerrar': meta ya fue guardado con lock early (meta.version ya incrementado).
+    // El bloque compartido haría un segundo increment y save redundante — lo saltamos.
+    if(tipo !== 'cerrar') {
+      // FIX (lun 1-jun-2026, v19): re-leer meta fresco antes de guardar.
+      // Escenario sin este fix: guardar_progreso lee meta (activo), cierre guarda
+      // meta cerrado + crea Hamilton, guardar_progreso termina y pisa con meta stale
+      // → licencia reabierta en Supabase con Hamilton ya creado.
+      var metaFresh = await cdgGetMeta(licenciaId);
+      if(metaFresh && metaFresh.estado === 'cerrado') {
+        return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras procesabas esta acción. No se guardaron cambios.' });
+      }
+      meta.version = (meta.version || 0) + 1;
+      await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG accion save');
+    }
     console.log('CDG v2 accion:', tipo, licenciaId, 'por:', usuario);
     res.json({ ok: true, meta: meta });
 
   } catch(e) {
     console.log('CDG v2 accion FAILED:', tipo, licenciaId, e.message);
+    if(tipo === 'cerrar') cdgLockClear(licenciaId);
     res.status(500).json({ ok: false, error: 'No se pudo ejecutar la acción. Reintentá. (' + e.message + ')' });
+  } finally {
+    if(lockAdquirido) cdgLockRelease(licenciaId);
   }
 });
 
