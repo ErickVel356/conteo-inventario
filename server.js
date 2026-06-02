@@ -3001,3 +3001,181 @@ app.get('/api/cdg/v2/:id/wms', async (req, res) => {
     res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// CDG WMS BULK — POST /api/cdg/wms/bulk
+// FIX (lun 1-jun-2026, server v20): carga masiva de WMS para licencias antiguas.
+// Recibe el mismo Excel WMS (hoja Traslados) y procesa TODAS las licencias.
+// No requiere que la licencia exista como cdg_meta_* v2; sirve para CDG clásico.
+// No crea conteos, no modifica cdg_lineas, no toca Hamilton.
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/cdg/wms/bulk', upload.single('file'), async (req, res) => {
+  var usuario = String(req.body && req.body.usuario ? req.body.usuario : '').trim();
+  if(!usuario)  return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
+
+  try {
+    // ── 1. Parsear Excel ─────────────────────────────────────────────────
+    var wb;
+    try {
+      wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false, cellDates: true });
+    } catch(e) {
+      return res.status(400).json({ ok: false, error: 'El archivo no es un Excel válido. (' + e.message + ')' });
+    }
+
+    var advertencias = [];
+    var sheetName = wb.SheetNames.find(function(n){ return n.trim().toLowerCase() === 'traslados'; });
+    if(!sheetName) {
+      sheetName = wb.SheetNames[0];
+      advertencias.push('Hoja "Traslados" no encontrada; se usó la primera hoja: "' + sheetName + '".');
+    }
+    var ws   = wb.Sheets[sheetName];
+    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    if(rows.length < 2) return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+
+    // ── 2. Detectar columnas (reutiliza la misma lógica del endpoint individual) ─
+    var hdr    = rows[0].map(cdgNormHdr);
+    var cNum   = hdr.indexOf('numero');
+    var cSku   = hdr.indexOf('sku');
+    var cNombre = hdr.indexOf('nombre');
+    if(cNombre < 0) cNombre = hdr.indexOf('descripcion');
+    var cCant  = hdr.indexOf('cant');
+    var cUnis  = hdr.indexOf('unidades');
+    var cFecha = hdr.indexOf('fecha');
+    var cOrig  = hdr.indexOf('origen');
+    var cDest  = hdr.indexOf('destino');
+    var cTipo  = hdr.indexOf('tipo');
+    var cStatus = hdr.indexOf('status');
+    var cLineas = hdr.indexOf('lineas');
+
+    var faltantes = [];
+    if(cNum  < 0) faltantes.push('"Número"');
+    if(cSku  < 0) faltantes.push('"SKU"');
+    if(cCant < 0 && cUnis < 0) faltantes.push('"Cant." o "Unidades"');
+    if(faltantes.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Columnas requeridas no encontradas: ' + faltantes.join(', ') + '. Encabezados: ' + rows[0].join(', ')
+      });
+    }
+
+    // ── 3. Agrupar filas por licencia ─────────────────────────────────────
+    var porLicencia = {};  // licNorm → { skuMap:{}, encabezado, filaCount }
+    rows.slice(1).forEach(function(r) {
+      var licNorm = cdgNormLicWMS(r[cNum]);
+      if(!licNorm) return;
+      var sku  = String(r[cSku]  || '').trim();
+      if(!sku) return;
+      var qty  = cdgParseQty(cCant >= 0 ? r[cCant] : null);
+      if(qty === null) qty = cdgParseQty(cUnis >= 0 ? r[cUnis] : null);
+      if(qty === null) return;
+      var desc = String(cNombre >= 0 ? (r[cNombre] || '') : '').trim();
+
+      if(!porLicencia[licNorm]) {
+        porLicencia[licNorm] = {
+          skuMap: {},
+          skuOrder: [],
+          encabezado: {
+            fecha:     cFecha  >= 0 ? (r[cFecha]  || null) : null,
+            origen:    cOrig   >= 0 ? (r[cOrig]   || null) : null,
+            destino:   cDest   >= 0 ? (r[cDest]   || null) : null,
+            tipo:      cTipo   >= 0 ? (r[cTipo]   || null) : null,
+            status:    cStatus >= 0 ? (r[cStatus] || null) : null,
+            lineasWMS: cLineas >= 0 ? Number(r[cLineas] || 0) : 0
+          }
+        };
+      }
+      var sm = porLicencia[licNorm].skuMap;
+      if(sm[sku]) {
+        sm[sku].cantidad += qty;
+        if(!sm[sku].descripcion && desc) sm[sku].descripcion = desc;
+      } else {
+        sm[sku] = { descripcion: desc, cantidad: qty };
+        porLicencia[licNorm].skuOrder.push(sku);
+      }
+    });
+
+    var licencias = Object.keys(porLicencia);
+    if(!licencias.length) {
+      return res.status(400).json({ ok: false, error: 'No se encontraron filas válidas en el archivo.' });
+    }
+
+    // ── 4. Enriquecer descripciones vacías con sku_catalog (batch por licencia) ──
+    // Recopilar todos los SKUs sin descripción en un solo set
+    var skusSinDesc = [];
+    licencias.forEach(function(lic) {
+      var sm = porLicencia[lic].skuMap;
+      Object.keys(sm).forEach(function(sku){ if(!sm[sku].descripcion) skusSinDesc.push(sku); });
+    });
+    var descMap = {};
+    if(skusSinDesc.length > 0 && SUPABASE_URL && SUPABASE_KEY) {
+      var unique = skusSinDesc.filter(function(v, i, a){ return a.indexOf(v) === i; });
+      var chunkSize = 200;
+      for(var ci = 0; ci < unique.length; ci += chunkSize) {
+        try {
+          var chunk = unique.slice(ci, ci + chunkSize);
+          var cat = await supabase('GET', 'sku_catalog', null,
+            '?sku=in.(' + chunk.map(function(s){ return encodeURIComponent(s); }).join(',') + ')&select=sku,descripcion');
+          if(Array.isArray(cat)) cat.forEach(function(row){ if(row.descripcion) descMap[row.sku] = row.descripcion; });
+        } catch(e) { advertencias.push('Enriquecimiento parcial sku_catalog: ' + e.message); }
+      }
+    }
+
+    // ── 5. Upsert por licencia ─────────────────────────────────────────────
+    var now = new Date().toISOString();
+    var nombreArchivo = req.file.originalname || 'bulk.xlsx';
+    var licenciasActualizadas = [];
+    var licenciasSinConteoCDG = [];
+    var errores = [];
+    var totalSkus = 0;
+
+    for(var li = 0; li < licencias.length; li++) {
+      var lic = licencias[li];
+      var data = porLicencia[lic];
+      var skusArray = data.skuOrder.map(function(sku) {
+        var entry = data.skuMap[sku];
+        var desc  = entry.descripcion || descMap[sku] || '';
+        return { sku: sku, descripcion: desc, cantidad: entry.cantidad };
+      });
+      totalSkus += skusArray.length;
+
+      // Verificar si existe como v2 (meta) — solo informativo, no bloquea
+      var metaV2 = null;
+      try { metaV2 = await cdgGetMeta(lic); } catch(e) { /* no existe como v2 */ }
+      if(!metaV2 && !state.cdg[lic] && !state.teorico[lic]) {
+        licenciasSinConteoCDG.push(lic);
+      }
+
+      try {
+        await cdgUpsertWms(lic, {
+          licencia_id:    lic,
+          skus:           JSON.stringify(skusArray),
+          encabezado:     JSON.stringify(data.encabezado),
+          cargado_por:    usuario,
+          ts_carga:       now,
+          nombre_archivo: nombreArchivo,
+          total_skus:     skusArray.length,
+          total_unidades: skusArray.reduce(function(a, s){ return a + s.cantidad; }, 0)
+        });
+        licenciasActualizadas.push(lic);
+      } catch(upsertErr) {
+        errores.push({ licencia: lic, error: upsertErr.message });
+      }
+    }
+
+    console.log('CDG WMS bulk:', usuario, '—', licenciasActualizadas.length, 'licencias,', totalSkus, 'SKUs');
+    res.json({
+      ok:                      true,
+      totalLicenciasProcesadas: licencias.length,
+      totalSkus:               totalSkus,
+      licenciasActualizadas:   licenciasActualizadas,
+      licenciasSinConteoCDG:  licenciasSinConteoCDG,
+      errores:                 errores,
+      advertencias:            advertencias.length ? advertencias : undefined
+    });
+
+  } catch(e) {
+    console.log('CDG WMS bulk FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'Error en bulk WMS: ' + e.message });
+  }
+});
