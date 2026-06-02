@@ -653,13 +653,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <!--
         ESTRUCTURA FINAL DOCUMENTADA (Deploy Version Considerations.docx):
           1. Captura
-          2. Manifiesto / Validación WMS
+          2. Manifiesto / Validación WMS  ← IMPLEMENTADO en v5.2.29
           3. Reportes
-        "Manifiesto / Validación WMS" se implementará en una fase posterior porque
-        requiere carga WMS, comparación con teórico y persistencia de resultados.
-        Por ahora el menú muestra solo las 3 opciones reales y funcionales.
-        sm-cdg-admin y pg-cdg-admin se mantienen en el DOM pero ocultos y sin
-        llamar a cdgMenuMostrarAdmin(), para no mostrar placeholders en producción.
+        Manifiesto implementado: carga WMS, comparación, exportar Manifiesto individual.
+        Fase 2 (pendiente): integrar en Reportes / Descargar Todo.
+        Fase 3 (pendiente): envío por correo.
+        sm-cdg-admin oculto — no visible en producción actual.
       -->
       <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Seleccioná el módulo de conteo CDG.</p>
       <div class="submenu-list">
@@ -669,6 +668,14 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="si-text">
             <div class="si-title">Captura colaborativa CDG</div>
             <div class="si-sub">Crear o unirse a una licencia de conteo</div>
+          </div>
+        </div>
+        <!-- sm-cdg-manifiesto: Manifiesto / Validación WMS — funcional desde v5.2.29 -->
+        <div class="submenu-item" id="sm-cdg-manifiesto">
+          <div class="si-icon">📄</div>
+          <div class="si-text">
+            <div class="si-title">Manifiesto / Validación WMS</div>
+            <div class="si-sub">Cargar teórico WMS y comparar contra conteo</div>
           </div>
         </div>
         <!-- Reportes / historial — abre historial read-only -->
@@ -761,6 +768,68 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <div class="si-sub">Panel de desbloqueo disponible dentro</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── PÁGINA: CDG MANIFIESTO / VALIDACIÓN WMS ─────────── -->
+    <!-- FIX (lun 1-jun-2026, v5.2.29): pestaña Manifiesto funcional.
+         Carga WMS, comparación vs captura CDG, exportar Manifiesto individual.
+         No toca CDG v1, Hamilton, captura v2, reportes ni cierre/finalizar. -->
+    <div id="pg-cdg-manifiesto" class="page">
+
+      <!-- Selector de licencia -->
+      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Licencia</label>
+            <select id="wms-lic-select" class="field-inp" style="width:100%">
+              <option value="">Seleccioná una licencia…</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:6px;align-items:flex-end;padding-bottom:0">
+            <button class="btn btn-sm" id="btn-wms-refresh-lics" title="Actualizar lista de licencias" style="min-height:36px">🔄</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estado WMS de la licencia seleccionada -->
+      <div id="wms-estado-panel" style="display:none;margin-bottom:.75rem">
+        <div class="card" style="padding:.85rem 1rem">
+          <!-- Header: metadata del WMS cargado -->
+          <div id="wms-meta-display" style="margin-bottom:.75rem;font-size:.83rem;color:#555"></div>
+          <!-- Datos de encabezado del WMS (Origen, Destino, Fecha, Tipo) -->
+          <div id="wms-encabezado-display" style="font-size:.8rem;color:#888;margin-bottom:.75rem"></div>
+          <!-- Botones de acción -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <label class="btn btn-sm btn-dark" style="cursor:pointer;min-height:36px;display:flex;align-items:center;gap:5px">
+              📂 Cargar WMS
+              <input type="file" id="wms-file-input" accept=".xlsx,.xls" style="display:none">
+            </label>
+            <button class="btn btn-sm btn-green" id="btn-wms-exportar" style="display:none">📥 Exportar Manifiesto</button>
+          </div>
+          <div id="wms-upload-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        </div>
+      </div>
+
+      <!-- Comparación WMS vs CDG -->
+      <div id="wms-comparacion-panel" style="display:none">
+        <!-- Resumen numérico -->
+        <div id="wms-resumen" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:.75rem"></div>
+        <!-- Filtros -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem" id="wms-filtros">
+          <button class="btn btn-sm wms-filtro-btn active" data-filtro="todos"       style="font-size:.78rem">Todos</button>
+          <button class="btn btn-sm wms-filtro-btn"        data-filtro="diferencias" style="font-size:.78rem">Solo diferencias</button>
+          <button class="btn btn-sm wms-filtro-btn"        data-filtro="faltantes"   style="font-size:.78rem;background:#fdecea;color:#c0392b">Faltantes</button>
+          <button class="btn btn-sm wms-filtro-btn"        data-filtro="sobrantes"   style="font-size:.78rem;background:#e8f5e9;color:#1b5e20">Sobrantes</button>
+          <button class="btn btn-sm wms-filtro-btn"        data-filtro="ok"          style="font-size:.78rem;background:#e3f2fd;color:#0d47a1">Coincidencias</button>
+        </div>
+        <!-- Tabla de comparación -->
+        <div class="tbl-wrap" id="wms-tabla-wrap"></div>
+      </div>
+
+      <!-- Estado vacío / instrucciones -->
+      <div id="wms-empty-msg" style="text-align:center;padding:2rem;color:#aaa;font-size:.88rem">
+        Seleccioná una licencia para cargar el WMS y comparar.
       </div>
     </div>
 
@@ -7366,6 +7435,379 @@ document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
 document.getElementById('sm-cdg-v2').addEventListener('click', function(){
   cdgv2AbrirLista();
 });
+
+/* ── MANIFIESTO / VALIDACIÓN WMS ────────────────────────────────
+   FIX (lun 1-jun-2026, v5.2.29): pestaña Manifiesto funcional.
+   Carga bajo demanda: ningún fetch al iniciar la app.
+   No toca CDG v1, Hamilton, captura v2, reportes, cierre/finalizar.
+   ────────────────────────────────────────────────────────────── */
+
+// Estado interno del Manifiesto (limpio al cambiar de licencia)
+var wmsLicenciaActual = null;  // id de la licencia seleccionada
+var wmsSkus           = [];    // array del WMS: [{sku, descripcion, cantidad}]
+var wmsLineasCDG      = [];    // líneas capturadas CDG vigentes
+var wmsFilasComp      = [];    // resultado de comparación (array completo)
+var wmsFiltroActivo   = 'todos';
+
+// Navegar a pg-cdg-manifiesto: cargar lista de licencias
+document.getElementById('sm-cdg-manifiesto').addEventListener('click', function(){
+  navTo('pg-cdg-manifiesto','📄 Manifiesto / Validación WMS');
+  wmsCargarLicencias();
+});
+
+// Cargar lista de licencias activas para el selector
+function wmsCargarLicencias(){
+  var sel = document.getElementById('wms-lic-select');
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  fetch('/api/cdg/v2/listar').then(function(r){ return r.json(); }).then(function(d){
+    sel.innerHTML = '<option value="">Seleccioná una licencia…</option>';
+    if(d.ok && d.licencias && d.licencias.length){
+      d.licencias.forEach(function(l){
+        var opt = document.createElement('option');
+        opt.value = l.id;
+        var estado = l.estado === 'activo' ? '● Activa' : '■ Cerrada';
+        opt.textContent = l.id + ' — ' + l.tipo + ' · ' + estado;
+        sel.appendChild(opt);
+      });
+    } else {
+      sel.innerHTML = '<option value="">Sin licencias disponibles</option>';
+    }
+  }).catch(function(){
+    sel.innerHTML = '<option value="">Error al cargar — reintentá</option>';
+  });
+}
+
+document.getElementById('btn-wms-refresh-lics').addEventListener('click', wmsCargarLicencias);
+
+// Al cambiar la licencia: cargar estado WMS
+document.getElementById('wms-lic-select').addEventListener('change', function(){
+  var licId = this.value;
+  wmsLicenciaActual = licId || null;
+  wmsSkus = []; wmsLineasCDG = []; wmsFilasComp = [];
+  wmsOcultarComparacion();
+  document.getElementById('wms-upload-msg').innerHTML = '';
+  if(!licId){
+    document.getElementById('wms-estado-panel').style.display = 'none';
+    document.getElementById('wms-empty-msg').style.display = '';
+    return;
+  }
+  document.getElementById('wms-estado-panel').style.display = '';
+  document.getElementById('wms-empty-msg').style.display = 'none';
+  wmsCargarEstado(licId);
+});
+
+// Cargar estado WMS de una licencia: GET /api/cdg/v2/:id/wms + GET líneas
+function wmsCargarEstado(licId){
+  wmsActualizarMetaDisplay(null, null); // mostrar "Cargando…"
+  document.getElementById('wms-encabezado-display').textContent = '';
+  document.getElementById('btn-wms-exportar').style.display = 'none';
+  wmsOcultarComparacion();
+
+  Promise.all([
+    fetch('/api/cdg/v2/' + encodeURIComponent(licId) + '/wms').then(function(r){ return r.json(); }),
+    fetch('/api/cdg/v2/' + encodeURIComponent(licId)).then(function(r){ return r.json(); })
+  ]).then(function(results){
+    var wmsResp   = results[0];
+    var licResp   = results[1];
+    if(!wmsResp.ok || !licResp.ok) {
+      wmsActualizarMetaDisplay(null, 'Error al cargar datos');
+      return;
+    }
+    wmsSkus      = wmsResp.skus || [];
+    wmsLineasCDG = (licResp.lineas || []).filter(function(l){ return !l.eliminada; });
+
+    wmsActualizarMetaDisplay(wmsResp.wmsMeta, null);
+    wmsActualizarEncabezadoDisplay(wmsResp.encabezado);
+
+    if(wmsSkus.length > 0){
+      // Hay WMS: calcular comparación
+      wmsFilasComp = wmsCompararSkus(wmsSkus, wmsLineasCDG);
+      wmsRenderizarComparacion();
+      document.getElementById('btn-wms-exportar').style.display = '';
+    }
+  }).catch(function(e){
+    wmsActualizarMetaDisplay(null, 'Sin conexión — reintentá');
+  });
+}
+
+function wmsActualizarMetaDisplay(wmsMeta, error){
+  var el = document.getElementById('wms-meta-display');
+  if(error){
+    el.innerHTML = '<span style="color:#c0392b">' + escH(error) + '</span>';
+    return;
+  }
+  if(!wmsMeta){
+    el.innerHTML = '<span style="color:#aaa">Sin WMS cargado. Subí el archivo WMS para comparar.</span>';
+    return;
+  }
+  var ts = wmsMeta.tsCarga ? new Date(wmsMeta.tsCarga).toLocaleString('es-GT',
+    {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  el.innerHTML = '✅ WMS cargado por <strong>' + escH(wmsMeta.cargadoPor) + '</strong>'
+    + ' · ' + ts
+    + ' · <strong>' + (wmsMeta.totalSkus||0) + '</strong> SKUs'
+    + ' · <strong>' + (wmsMeta.totalUnidades||0).toLocaleString('es-GT') + '</strong> unidades'
+    + ' <span style="color:#aaa;font-size:.77rem">· ' + escH(wmsMeta.nombreArchivo||'') + '</span>';
+}
+
+function wmsActualizarEncabezadoDisplay(enc){
+  var el = document.getElementById('wms-encabezado-display');
+  if(!enc){ el.textContent = ''; return; }
+  var partes = [];
+  if(enc.fecha){
+    var f = enc.fecha;
+    // fecha puede venir como ISO string o Date
+    try { f = new Date(enc.fecha).toLocaleDateString('es-GT'); } catch(e){}
+    partes.push('Fecha: ' + f);
+  }
+  if(enc.origen)    partes.push('Origen: ' + enc.origen);
+  if(enc.destino)   partes.push('Destino: ' + enc.destino);
+  if(enc.tipo)      partes.push('Tipo: ' + enc.tipo);
+  if(enc.status)    partes.push('Status WMS: ' + enc.status);
+  if(enc.lineasWMS) partes.push('Líneas WMS: ' + enc.lineasWMS);
+  el.textContent = partes.join(' · ');
+}
+
+// ── Comparación en cliente ─────────────────────────────────────────────────
+// Consolida líneas CDG vigentes por SKU (sumar cantidades del mismo SKU).
+// Compara contra teórico WMS. Unión completa: SKUs solo en WMS, solo en CDG,
+// y en ambos. Diferencia = Validado CDG - Teórico WMS.
+function wmsCompararSkus(skusWMS, lineasCDG){
+  // Consolidar CDG por SKU
+  var cdgMap = {};
+  var cdgDescMap = {};
+  lineasCDG.forEach(function(l){
+    var s = String(l.sku || '').trim().toUpperCase();
+    if(!s) return;
+    cdgMap[s] = (cdgMap[s] || 0) + Number(l.cantidad || 0);
+    if(!cdgDescMap[s] && l.descripcion) cdgDescMap[s] = l.descripcion;
+  });
+
+  // Mapa WMS
+  var wmsMap = {};
+  var wmsDescMap = {};
+  skusWMS.forEach(function(item){
+    var s = String(item.sku || '').trim().toUpperCase();
+    if(!s) return;
+    wmsMap[s]     = (wmsMap[s] || 0) + Number(item.cantidad || 0);
+    if(!wmsDescMap[s] && item.descripcion) wmsDescMap[s] = item.descripcion;
+  });
+
+  // Unión de SKUs
+  var todosSkus = {};
+  Object.keys(wmsMap).forEach(function(s){ todosSkus[s] = true; });
+  Object.keys(cdgMap).forEach(function(s){ todosSkus[s] = true; });
+
+  var filas = Object.keys(todosSkus).map(function(s){
+    var cantWMS = wmsMap[s] || 0;
+    var cantCDG = cdgMap[s] || 0;
+    var dif     = cantCDG - cantWMS;
+    var estado  = dif === 0 ? 'ok' : (dif < 0 ? 'faltante' : 'sobrante');
+    var desc    = wmsDescMap[s] || cdgDescMap[s] || '';
+    return { sku: s, descripcion: desc, cantWMS: cantWMS, cantCDG: cantCDG,
+             diferencia: dif, estado: estado };
+  });
+
+  // Ordenar: faltantes primero, luego sobrantes, luego ok; dentro de cada grupo por SKU
+  var orden = { faltante: 0, sobrante: 1, ok: 2 };
+  filas.sort(function(a, b){
+    if(orden[a.estado] !== orden[b.estado]) return orden[a.estado] - orden[b.estado];
+    return a.sku < b.sku ? -1 : 1;
+  });
+  return filas;
+}
+
+function wmsOcultarComparacion(){
+  document.getElementById('wms-comparacion-panel').style.display = 'none';
+  document.getElementById('wms-tabla-wrap').innerHTML = '';
+  document.getElementById('wms-resumen').innerHTML = '';
+}
+
+function wmsRenderizarComparacion(){
+  var filas = wmsFilasComp;
+  if(!filas || !filas.length) return;
+  var panel = document.getElementById('wms-comparacion-panel');
+  panel.style.display = '';
+
+  // Resumen numérico
+  var nOk       = filas.filter(function(f){ return f.estado==='ok'; }).length;
+  var nFalt     = filas.filter(function(f){ return f.estado==='faltante'; }).length;
+  var nSob      = filas.filter(function(f){ return f.estado==='sobrante'; }).length;
+  var resumen   = document.getElementById('wms-resumen');
+  resumen.innerHTML =
+    '<div style="background:#f5f5f3;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
+    +'<div style="font-weight:700;font-size:1rem">'+filas.length+'</div>'
+    +'<div style="color:#666">Total SKUs</div></div>'
+    +'<div style="background:#fdecea;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
+    +'<div style="font-weight:700;font-size:1rem;color:#c0392b">'+nFalt+'</div>'
+    +'<div style="color:#c0392b">Faltantes</div></div>'
+    +'<div style="background:#e8f5e9;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
+    +'<div style="font-weight:700;font-size:1rem;color:#1b5e20">'+nSob+'</div>'
+    +'<div style="color:#1b5e20">Sobrantes</div></div>'
+    +'<div style="background:#e3f2fd;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
+    +'<div style="font-weight:700;font-size:1rem;color:#0d47a1">'+nOk+'</div>'
+    +'<div style="color:#0d47a1">Coincidencias</div></div>';
+
+  wmsRenderizarTabla();
+}
+
+function wmsRenderizarTabla(){
+  var filtro = wmsFiltroActivo;
+  var filas  = wmsFilasComp.filter(function(f){
+    if(filtro === 'todos')       return true;
+    if(filtro === 'diferencias') return f.estado !== 'ok';
+    if(filtro === 'faltantes')   return f.estado === 'faltante';
+    if(filtro === 'sobrantes')   return f.estado === 'sobrante';
+    if(filtro === 'ok')          return f.estado === 'ok';
+    return true;
+  });
+
+  var wrap = document.getElementById('wms-tabla-wrap');
+  if(!filas.length){
+    wrap.innerHTML = '<p style="text-align:center;color:#aaa;padding:1.5rem;font-size:.85rem">Sin resultados para este filtro.</p>';
+    return;
+  }
+
+  var colores = { ok: '#e3f2fd', faltante: '#fdecea', sobrante: '#e8f5e9' };
+  var h = '<table><thead><tr>'
+    +'<th>SKU</th><th>Descripción</th>'
+    +'<th class="tc">Teórico WMS</th>'
+    +'<th class="tc">Validado CDG</th>'
+    +'<th class="tc">Diferencia</th>'
+    +'</tr></thead><tbody>';
+  filas.forEach(function(f){
+    var bg   = colores[f.estado] || '#fff';
+    var difColor = f.diferencia === 0 ? '#333'
+                 : f.diferencia < 0   ? '#c0392b' : '#1b5e20';
+    var difStr   = f.diferencia > 0 ? '+'+f.diferencia.toLocaleString('es-GT')
+                 : f.diferencia.toLocaleString('es-GT');
+    h += '<tr style="background:'+bg+'">'
+      +'<td style="font-weight:600;font-size:.85rem">'+escH(f.sku)+'</td>'
+      +'<td style="font-size:.82rem;color:#444">'+(f.descripcion ? escH(f.descripcion) : '<span style="color:#aaa">sin descripción</span>')+'</td>'
+      +'<td class="tc">'+f.cantWMS.toLocaleString('es-GT')+'</td>'
+      +'<td class="tc">'+f.cantCDG.toLocaleString('es-GT')+'</td>'
+      +'<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>'
+      +'</tr>';
+  });
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+}
+
+// Filtros
+document.getElementById('wms-filtros').addEventListener('click', function(e){
+  var btn = e.target.closest('.wms-filtro-btn');
+  if(!btn) return;
+  document.querySelectorAll('.wms-filtro-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  wmsFiltroActivo = btn.dataset.filtro;
+  if(wmsFilasComp.length) wmsRenderizarTabla();
+});
+
+// ── Upload WMS ────────────────────────────────────────────────────────────
+document.getElementById('wms-file-input').addEventListener('change', function(){
+  if(!this.files || !this.files[0]) return;
+  if(!wmsLicenciaActual){
+    document.getElementById('wms-upload-msg').innerHTML = '<span style="color:#c0392b">Seleccioná una licencia primero.</span>';
+    return;
+  }
+  if(!currentUser){
+    document.getElementById('wms-upload-msg').innerHTML = '<span style="color:#c0392b">Seleccioná tu nombre primero.</span>';
+    return;
+  }
+  var file    = this.files[0];
+  var msgEl   = document.getElementById('wms-upload-msg');
+  var inputEl = this;
+  msgEl.innerHTML = '<span style="color:#888">⏳ Procesando archivo…</span>';
+
+  var fd = new FormData();
+  fd.append('file', file);
+  fd.append('usuario', currentUser.name);
+
+  fetch('/api/cdg/v2/' + encodeURIComponent(wmsLicenciaActual) + '/wms', {
+    method: 'POST', body: fd
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    inputEl.value = ''; // resetear input para permitir re-carga del mismo archivo
+    if(!d.ok){
+      msgEl.innerHTML = '<span style="color:#c0392b">❌ ' + escH(d.error || 'Error') + '</span>';
+      return;
+    }
+    var txt = '✅ WMS cargado: ' + d.totalSkus + ' SKUs, ' + (d.totalUnidades||0).toLocaleString('es-GT') + ' unidades.';
+    if(d.advertencia) txt += ' ⚠️ ' + escH(d.advertencia);
+    msgEl.innerHTML = '<span style="color:#1e7e34">' + txt + '</span>';
+    // Recargar estado completo para reflejar el nuevo WMS
+    wmsCargarEstado(wmsLicenciaActual);
+  })
+  .catch(function(){
+    inputEl.value = '';
+    msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
+  });
+});
+
+// ── Exportar Manifiesto individual ────────────────────────────────────────
+document.getElementById('btn-wms-exportar').addEventListener('click', function(){
+  if(!wmsLicenciaActual || !wmsFilasComp.length){
+    alert('No hay datos de comparación para exportar.');
+    return;
+  }
+  wmsExportarManifiesto();
+});
+
+function wmsExportarManifiesto(){
+  var licId = wmsLicenciaActual;
+  // Recuperar encabezado del display para las filas de cabecera
+  var encDisplay = document.getElementById('wms-encabezado-display').textContent;
+  var metaDisplay = document.getElementById('wms-meta-display').textContent;
+
+  // Construir filas del Manifiesto
+  // Encabezado del documento
+  var hdrRows = [
+    ['Licencia:', licId],
+    ['Generado:', new Date().toLocaleString('es-GT')],
+    []
+  ];
+  // Parsear encabezado WMS si está disponible (origen, destino, fecha, tipo)
+  if(encDisplay) hdrRows.push(['Detalles WMS:', encDisplay]);
+  hdrRows.push([]); // fila vacía
+
+  // Fila de encabezados de columna
+  var colHdr = ['CODIGO', 'DESCRIPCION', 'CANTIDAD', 'VALIDADO EN CDG', 'DIFERENCIA'];
+  var dataRows = wmsFilasComp.map(function(f){
+    return [f.sku, f.descripcion || 'sin descripción registrada', f.cantWMS, f.cantCDG, f.diferencia];
+  });
+
+  // Totales
+  var totWMS = wmsFilasComp.reduce(function(a,f){ return a+f.cantWMS; }, 0);
+  var totCDG = wmsFilasComp.reduce(function(a,f){ return a+f.cantCDG; }, 0);
+  dataRows.push([]);
+  dataRows.push(['TOTALES', '', totWMS, totCDG, totCDG - totWMS]);
+
+  // Construir libro con SheetJS
+  try {
+    var XLSX = window.XLSX || (typeof require !== 'undefined' ? require('xlsx') : null);
+    if(!XLSX) { alert('SheetJS no disponible. Reintentá.'); return; }
+
+    var wb   = XLSX.utils.book_new();
+    var allRows = hdrRows.concat([colHdr]).concat(dataRows);
+    var ws   = XLSX.utils.aoa_to_sheet(allRows);
+
+    // Ancho de columnas
+    ws['!cols'] = [
+      { wch: 12 }, // CODIGO
+      { wch: 45 }, // DESCRIPCION
+      { wch: 14 }, // CANTIDAD
+      { wch: 16 }, // VALIDADO EN CDG
+      { wch: 12 }  // DIFERENCIA
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Manifiesto');
+
+    var fecha = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    XLSX.writeFile(wb, 'Manifiesto_' + licId + '_' + fecha + '.xlsx');
+  } catch(e) {
+    alert('Error al exportar: ' + (e.message || e));
+  }
+}
 
 /* ── API helpers CDG v2 ────────────────────────────────────────── */
 function cdgv2Fetch(method, path, body){
