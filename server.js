@@ -2545,6 +2545,21 @@ async function cdgUpsertWms(licenciaId, data) {
   await supabase('POST', 'cdg_wms', data, '?on_conflict=licencia_id');
 }
 
+
+// Helper: normalizar valor de columna Número del WMS.
+// El Excel puede traer "U25-161959 · CDG" o "U25-161959 - CDG".
+// Se extrae solo la parte izquierda del separador para comparar con licenciaId.
+function cdgNormLicWMS(v) {
+  var s = String(v || '').trim().toUpperCase();
+  // Separador "·" (U+00B7, punto medio) con o sin espacios
+  var dotIdx = s.indexOf('·');
+  if(dotIdx >= 0) s = s.substring(0, dotIdx);
+  // Separador " - " con espacios
+  var dashIdx = s.indexOf(' - ');
+  if(dashIdx >= 0) s = s.substring(0, dashIdx);
+  return s.trim();
+}
+
 // Parseo robusto de cantidad: soporta 1234, "1,234", "1,234.00", espacios.
 // Retorna null si no es numérico o <= 0.
 function cdgParseQty(val) {
@@ -2639,17 +2654,21 @@ app.post('/api/cdg/v2/:id/wms', upload.single('file'), async (req, res) => {
     }
 
     // ── 5. Filtrar por licencia ────────────────────────────────────────────
-    // Normalización obligatoria: ambos lados toUpperCase().trim()
+    // FIX (lun 1-jun-2026, server v20): normalizar ambos lados con cdgNormLicWMS.
+    // El Excel puede traer "U25-161959 · CDG" o "U25-161959 - CDG" en col Número.
+    // cdgNormLicWMS extrae la parte izquierda del separador antes de comparar.
+    var licNorm = cdgNormLicWMS(licenciaId);
     var filasFiltradas = rows.slice(1).filter(function(r) {
-      return String(r[cNum] || '').trim().toUpperCase() === licenciaId;
+      return cdgNormLicWMS(r[cNum]) === licNorm;
     });
 
     if(filasFiltradas.length === 0) {
       // Listar las primeras 10 licencias encontradas para diagnóstico
+      // Listar usando cdgNormLicWMS para que el usuario vea "PRUEBA BIANCA" y no "PRUEBA BIANCA · CDG"
       var licEncontradas = [];
       var vistas = {};
       for(var i = 1; i < rows.length && licEncontradas.length < 10; i++) {
-        var v = String(rows[i][cNum] || '').trim().toUpperCase();
+        var v = cdgNormLicWMS(rows[i][cNum]);
         if(v && !vistas[v]) { licEncontradas.push(v); vistas[v] = true; }
       }
       return res.status(400).json({
