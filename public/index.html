@@ -759,6 +759,9 @@ textarea.field-inp{resize:vertical;min-height:72px}
             📦 Cargar WMS masivo
             <input type="file" id="rcdg-bulk-wms-file" accept=".xlsx,.xls" style="display:none">
           </label>
+          <button class="btn btn-sm" id="rcdg-btn-sincronizar-hamilton" style="background:#e3f2fd;color:#1565c0;font-size:.75rem" title="Actualizar conteos CDG en Hamilton con datos del WMS">
+            🔄 Sincronizar Hamilton CDG
+          </button>
         </div>
         <div id="rcdg-bulk-wms-msg" style="font-size:.82rem;margin-bottom:.4rem"></div>
 
@@ -7510,6 +7513,38 @@ function rcdgEstadoHamilton(teo, fis) {
   return 'en_proceso';
 }
 
+// ── rcdgNormFecha: normalizar cualquier fecha a YYYY-MM-DD ─────────────────
+// Soporta: ISO "2026-06-01T..." · Local es/GT "1/6/2026" · "01/06/2026" · ya YYYY-MM-DD.
+// Devuelve null si no se puede parsear.
+function rcdgNormFecha(v) {
+  if(!v) return null;
+  var s = String(v).trim();
+  // Ya es YYYY-MM-DD o ISO
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // Formato D/M/YYYY o DD/MM/YYYY (toLocaleDateString('es') de Guatemala)
+  var mDMY = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(mDMY) {
+    var d = String(mDMY[1]).padStart(2,'0');
+    var m = String(mDMY[2]).padStart(2,'0');
+    return mDMY[3] + '-' + m + '-' + d;
+  }
+  // Fallback: intentar Date()
+  try {
+    var dt = new Date(s);
+    if(!isNaN(dt.getTime())) return dt.toISOString().slice(0,10);
+  } catch(e) {}
+  return null;
+}
+
+// Hoy en America/Guatemala (YYYY-MM-DD)
+function rcdgHoyGT() {
+  try {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+  } catch(e) {
+    return new Date().toISOString().slice(0,10);
+  }
+}
+
 // ── RESUMEN / TABLERO ─────────────────────────────────────────────────────
 function rcdgRenderResumen() {
   if(!rcdgDatos) return;
@@ -7536,7 +7571,9 @@ function rcdgRenderResumen() {
     var wmsKey = String(id).trim().toUpperCase();
     var wmsInfo = wmsLookup[wmsKey];
     // Fecha: usar c.fecha o c.fechaCreacion
-    var fecha = c.fechaCreacion || c.fecha || null;
+    // FIX (mar 2-jun-2026, v5.2.29 rev): normalizar fecha al guardar en todos.
+    // c.fecha de v1 viene como "1/6/2026" (toLocaleDateString); rcdgNormFecha la convierte.
+    var fecha = rcdgNormFecha(c.fechaCreacion || c.fecha || null);
     todos.push({
       id: id, fuente: 'clasico',
       tipo: c.tipo || 'CDG',
@@ -7557,7 +7594,8 @@ function rcdgRenderResumen() {
     var wmsKey2 = String(l.id).trim().toUpperCase();
     var wmsInfo2 = wmsLookup[wmsKey2];
     // Fecha: preferir fechaCreacion, luego fechaCierre como fallback
-    var fecha2 = l.fechaCreacion || l.fechaCierre || null;
+    // Normalizar fecha v2 también (ISO ya, pero por consistencia)
+    var fecha2 = rcdgNormFecha(l.fechaCreacion || l.fechaCierre || null);
     todos.push({
       id: l.id, fuente: 'colaborativo',
       tipo: l.tipo || 'CDG',
@@ -7583,13 +7621,14 @@ function rcdgRenderResumen() {
                    || (rcdgFiltroTipo === 'otro' && c.tipo !== 'CDG' && c.tipo !== 'KTM');
     var okFuente = rcdgFiltroFuente === 'todos' || c.fuente === rcdgFiltroFuente;
     var okFecha  = true;
-    if((rcdgFechaDesde || rcdgFechaHasta) && c.fecha) {
-      var fStr = '';
-      try { fStr = new Date(c.fecha).toISOString().slice(0,10); } catch(e){}
-      if(rcdgFechaDesde && fStr && fStr < rcdgFechaDesde) okFecha = false;
-      if(rcdgFechaHasta && fStr && fStr > rcdgFechaHasta) okFecha = false;
-    } else if((rcdgFechaDesde || rcdgFechaHasta) && !c.fecha) {
-      okFecha = false; // sin fecha → excluir cuando hay filtro activo
+    if(rcdgFechaDesde || rcdgFechaHasta) {
+      var fStr = rcdgNormFecha(c.fecha); // normaliza D/M/YYYY, ISO, etc.
+      if(!fStr) {
+        okFecha = false; // sin fecha → excluir con filtro activo
+      } else {
+        if(rcdgFechaDesde && fStr < rcdgFechaDesde) okFecha = false;
+        if(rcdgFechaHasta && fStr > rcdgFechaHasta) okFecha = false;
+      }
     }
     return okTipo && okFuente && okFecha;
   });
@@ -7649,7 +7688,7 @@ function rcdgRenderResumen() {
         ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.72rem;padding:2px 7px;border-radius:10px">● Activo</span>'
         : '<span style="background:#fff8e1;color:#f57c00;font-size:.72rem;padding:2px 7px;border-radius:10px">📝 Borrador</span>');
     var fechaStr = c.fecha ? (function(){
-      try { return new Date(c.fecha).toLocaleDateString('es-GT',{day:'2-digit',month:'2-digit',year:'2-digit'}); } catch(e){ return c.fecha; }
+      var n=rcdgNormFecha(c.fecha); if(!n) return c.fecha; var p=n.split('-'); return p[2]+'/'+p[1]+'/'+p[0].slice(2);
     })() : '—';
     var unidStr = c.unidades != null ? c.unidades.toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
     var costoStr = c.costo != null ? 'Q'+Math.round(c.costo).toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
@@ -7785,7 +7824,7 @@ function rcdgRenderResumen() {
     if(inputDesde) inputDesde.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
     if(inputHasta) inputHasta.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
     if(btnHoy) btnHoy.addEventListener('click', function(){
-      var hoy = new Date().toISOString().slice(0,10);
+      var hoy = rcdgHoyGT(); // zona horaria Guatemala, no UTC
       if(inputDesde) inputDesde.value = hoy;
       if(inputHasta) inputHasta.value = hoy;
       if(rcdgDatos) rcdgRenderResumen();
@@ -7794,6 +7833,37 @@ function rcdgRenderResumen() {
       if(inputDesde) inputDesde.value = '';
       if(inputHasta) inputHasta.value = '';
       if(rcdgDatos) rcdgRenderResumen();
+    });
+
+    // OBJ C: sincronizar Hamilton CDG con datos WMS
+    var btnSincHam = document.getElementById('rcdg-btn-sincronizar-hamilton');
+    if(btnSincHam) btnSincHam.addEventListener('click', function(){
+      if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
+      var msgEl = document.getElementById('rcdg-bulk-wms-msg');
+      if(!confirm('¿Actualizar todos los conteos CDG en Hamilton con el Teórico WMS cargado?\nEsta acción es segura y no borra datos.')) return;
+      btnSincHam.disabled = true;
+      msgEl.innerHTML = '<span style="color:#888">⏳ Sincronizando Hamilton CDG…</span>';
+      fetch('/api/cdg/wms/sincronizar-hamilton', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ usuario: currentUser.name })
+      }).then(function(r){ return r.json(); })
+        .then(function(d){
+          btnSincHam.disabled = false;
+          if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
+          var txt = '✅ Sincronizado: '
+            + d.actualizadas.length + ' actualizadas · '
+            + (d.yaActualizadas||[]).length + ' ya tenían WMS · '
+            + (d.sinConteo||[]).length + ' sin conteo Hamilton';
+          msgEl.innerHTML = '<span style="color:#1e7e34">'+txt+'</span>';
+          // Recargar datos para reflejar el nuevo estado Hamilton
+          lastVersion = -1; pollNow();
+          rcdgDatos = null; rcdgCargarDatos();
+        })
+        .catch(function(){
+          btnSincHam.disabled = false;
+          msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
+        });
     });
 
     // OBJ 1 UI: bulk WMS upload
@@ -7893,7 +7963,7 @@ function rcdgRenderHistorial() {
       : (c.estado==='activo'
         ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.7rem;padding:2px 6px;border-radius:10px">●</span>'
         : '<span style="background:#fff8e1;color:#f57c00;font-size:.7rem;padding:2px 6px;border-radius:10px">📝</span>');
-    var fechaStr = c.fecha ? (function(){ try { return new Date(c.fecha).toLocaleDateString('es-GT',{day:'2-digit',month:'2-digit',year:'2-digit'}); } catch(e){ return c.fecha; } })() : '—';
+    var fechaStr = (function(){ var n=rcdgNormFecha(c.fecha); if(!n) return '—'; var p=n.split('-'); return p[2]+'/'+p[1]+'/'+p[0].slice(2); })();
 
     var acciones = '<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:center">';
     acciones += '<button class="btn btn-xs rcdg-hist-ver" data-id="'+escH(c.id)+'" data-fuente="'+c.fuente+'"'
@@ -8285,20 +8355,74 @@ document.getElementById('sm-cdg-manifiesto').addEventListener('click', function(
 });
 
 // Cargar lista de licencias activas para el selector
+// FIX (lun 1-jun-2026, v5.2.29 rev): wmsCargarLicencias lista v1 + v2 + Solo WMS.
+// Antes solo listaba v2. Ahora incluye:
+//   - CDG v2 (colaborativo) desde /api/cdg/v2/listar?historico=true
+//   - CDG v1 (clásico) desde state.cdg local
+//   - Solo WMS: licencias en cdg_wms que no tienen v1 ni v2
+// wmsLicFuente: mapa licId → 'colaborativo' | 'clasico' | 'solo_wms'
+var wmsLicFuente = {};
+
 function wmsCargarLicencias(){
   var sel = document.getElementById('wms-lic-select');
   sel.innerHTML = '<option value="">Cargando…</option>';
-  fetch('/api/cdg/v2/listar').then(function(r){ return r.json(); }).then(function(d){
+  wmsLicFuente = {};
+
+  // Tres fuentes en paralelo
+  var pV2 = fetch('/api/cdg/v2/listar?historico=true')
+    .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,licencias:[]}; });
+  var pV1 = fetch('/api/cdg')
+    .then(function(r){ return r.json(); }).catch(function(){ return {}; });
+  var pWms = fetch(SUPABASE_URL + '/rest/v1/cdg_wms?select=licencia_id,total_skus,cargado_por', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).catch(function(){ return []; });
+
+  Promise.all([pV2, pV1, pWms]).then(function(res){
+    var v2 = (res[0].licencias || []);
+    var v1 = res[1] || {};
+    var wmsRows = Array.isArray(res[2]) ? res[2] : [];
+
     sel.innerHTML = '<option value="">Seleccioná una licencia…</option>';
-    if(d.ok && d.licencias && d.licencias.length){
-      d.licencias.forEach(function(l){
-        var opt = document.createElement('option');
-        opt.value = l.id;
-        var estado = l.estado === 'activo' ? '● Activa' : '■ Cerrada';
-        opt.textContent = l.id + ' — ' + l.tipo + ' · ' + estado;
-        sel.appendChild(opt);
-      });
-    } else {
+
+    // Set de IDs ya agregados para no duplicar
+    var agregados = {};
+
+    // 1. v2 colaborativo
+    v2.forEach(function(l){
+      var estado = l.estado === 'activo' ? '● Activa' : '■ Cerrada';
+      var opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = '[Colaborativo] ' + l.id + ' — ' + (l.tipo||'CDG') + ' · ' + estado;
+      sel.appendChild(opt);
+      wmsLicFuente[l.id] = 'colaborativo';
+      agregados[l.id.toUpperCase()] = true;
+    });
+
+    // 2. v1 clásico
+    Object.keys(v1).forEach(function(id){
+      if(agregados[id.toUpperCase()]) return;
+      var c = v1[id];
+      var opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = '[Clásico] ' + id + ' — ' + (c.tipo||'CDG') + (c.bloqueado?' · Finalizado':' · Borrador');
+      sel.appendChild(opt);
+      wmsLicFuente[id] = 'clasico';
+      agregados[id.toUpperCase()] = true;
+    });
+
+    // 3. Solo WMS (en cdg_wms pero no en v1 ni v2)
+    wmsRows.forEach(function(w){
+      var wid = String(w.licencia_id||'').trim().toUpperCase();
+      if(!wid || agregados[wid]) return;
+      var opt = document.createElement('option');
+      opt.value = w.licencia_id;
+      opt.textContent = '[Solo WMS] ' + w.licencia_id + ' — ' + w.total_skus + ' SKUs';
+      sel.appendChild(opt);
+      wmsLicFuente[w.licencia_id] = 'solo_wms';
+      agregados[wid] = true;
+    });
+
+    if(!sel.options.length || sel.options.length === 1) {
       sel.innerHTML = '<option value="">Sin licencias disponibles</option>';
     }
   }).catch(function(){
@@ -8325,31 +8449,64 @@ document.getElementById('wms-lic-select').addEventListener('change', function(){
   wmsCargarEstado(licId);
 });
 
-// Cargar estado WMS de una licencia: GET /api/cdg/v2/:id/wms + GET líneas
+// FIX (lun 1-jun-2026, v5.2.29 rev): wmsCargarEstado soporta las tres fuentes.
+// colaborativo → GET /api/cdg/v2/:id/wms + GET /api/cdg/v2/:id (líneas)
+// clasico → GET /api/cdg/v2/:id/wms (solo WMS; líneas vienen de state.cdg local)
+// solo_wms → GET /api/cdg/v2/:id/wms; líneas vacías (Validado CDG = 0 para todo)
 function wmsCargarEstado(licId){
-  wmsActualizarMetaDisplay(null, null); // mostrar "Cargando…"
+  wmsActualizarMetaDisplay(null, null);
   document.getElementById('wms-encabezado-display').textContent = '';
   document.getElementById('btn-wms-exportar').style.display = 'none';
   wmsOcultarComparacion();
 
-  Promise.all([
-    fetch('/api/cdg/v2/' + encodeURIComponent(licId) + '/wms').then(function(r){ return r.json(); }),
-    fetch('/api/cdg/v2/' + encodeURIComponent(licId)).then(function(r){ return r.json(); })
-  ]).then(function(results){
-    var wmsResp   = results[0];
-    var licResp   = results[1];
-    if(!wmsResp.ok || !licResp.ok) {
-      wmsActualizarMetaDisplay(null, 'Error al cargar datos');
-      return;
-    }
-    wmsSkus      = wmsResp.skus || [];
-    wmsLineasCDG = (licResp.lineas || []).filter(function(l){ return !l.eliminada; });
+  var fuente = wmsLicFuente[licId] || 'colaborativo';
 
-    wmsActualizarMetaDisplay(wmsResp.wmsMeta, null);
-    wmsActualizarEncabezadoDisplay(wmsResp.encabezado);
+  // GET WMS: usar endpoint general /api/cdg/wms/:id (no exige cdg_meta v2).
+  // FIX (mar 2-jun-2026, v5.2.29 rev): antes usaba /api/cdg/v2/:id/wms que
+  // exigía cdg_meta y bloqueaba v1 clásico y "Solo WMS".
+  var pWms = fetch('/api/cdg/wms/' + encodeURIComponent(licId))
+    .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,skus:[]}; });
+
+  // GET líneas: solo para v2; v1 usa state.cdg local; solo_wms vacío
+  var pLineas;
+  if(fuente === 'colaborativo') {
+    pLineas = fetch('/api/cdg/v2/' + encodeURIComponent(licId))
+      .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,lineas:[]}; });
+  } else if(fuente === 'clasico') {
+    // Leer de state.cdg local (ya disponible por el polling de Hamilton)
+    var cdgEntry = (typeof window !== 'undefined' && window._cdgState && window._cdgState[licId])
+      || (typeof state !== 'undefined' && state.cdg && state.cdg[licId])
+      || null;
+    // El cliente lo tiene en la variable global "cdg" si existe (expuesta por publicState)
+    var cdgLocal = (typeof cdg !== 'undefined' && cdg[licId]) ? cdg[licId] : null;
+    var itemsCdgV1 = cdgLocal ? (cdgLocal.items || []) : [];
+    // Convertir al formato que espera wmsCompararSkus (igual que líneas v2)
+    var lineasV1 = itemsCdgV1.map(function(it){
+      return { sku: it.sku, cantidad: it.qty, descripcion: it.desc || '', eliminada: false };
+    });
+    pLineas = Promise.resolve({ ok: true, lineas: lineasV1 });
+  } else {
+    // solo_wms: sin líneas CDG — todo el WMS mostrará Validado CDG = 0
+    pLineas = Promise.resolve({ ok: true, lineas: [] });
+  }
+
+  Promise.all([pWms, pLineas]).then(function(results){
+    var wmsResp  = results[0];
+    var licResp  = results[1];
+
+    wmsSkus = wmsResp.ok ? (wmsResp.skus || []) : [];
+
+    // Líneas CDG vigentes según fuente
+    if(fuente === 'colaborativo') {
+      wmsLineasCDG = licResp.ok ? (licResp.lineas || []).filter(function(l){ return !l.eliminada; }) : [];
+    } else {
+      wmsLineasCDG = licResp.lineas || [];
+    }
+
+    wmsActualizarMetaDisplay(wmsResp.wmsMeta || null, wmsSkus.length ? null : 'Sin WMS cargado para esta licencia');
+    wmsActualizarEncabezadoDisplay(wmsResp.encabezado || null);
 
     if(wmsSkus.length > 0){
-      // Hay WMS: calcular comparación
       wmsFilasComp = wmsCompararSkus(wmsSkus, wmsLineasCDG);
       wmsRenderizarComparacion();
       document.getElementById('btn-wms-exportar').style.display = '';
@@ -8551,7 +8708,9 @@ document.getElementById('wms-file-input').addEventListener('change', function(){
   fd.append('file', file);
   fd.append('usuario', currentUser.name);
 
-  fetch('/api/cdg/v2/' + encodeURIComponent(wmsLicenciaActual) + '/wms', {
+  // FIX (mar 2-jun-2026, v5.2.29 rev): usar endpoint general /api/cdg/wms/:id.
+  // El endpoint v2 exigía cdg_meta, fallaba para licencias clásicas y solo-WMS.
+  fetch('/api/cdg/wms/' + encodeURIComponent(wmsLicenciaActual), {
     method: 'POST', body: fd
   })
   .then(function(r){ return r.json(); })
