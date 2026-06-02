@@ -8350,6 +8350,20 @@ var wmsFiltroActivo   = 'todos';
 
 // Navegar a pg-cdg-manifiesto: cargar lista de licencias
 document.getElementById('sm-cdg-manifiesto').addEventListener('click', function(){
+  // FIX (mar 2-jun-2026, v5.2.29 rev): resetear estado al abrir Manifiesto.
+  // wmsLicenciaActual puede tener un U25 de la sesión anterior aunque el
+  // selector muestre "Seleccioná una licencia...".
+  wmsLicenciaActual = '';
+  wmsSkus = []; wmsLineasCDG = []; wmsFilasComp = [];
+  var estadoPanel = document.getElementById('wms-estado-panel');
+  var emptyMsg    = document.getElementById('wms-empty-msg');
+  var uploadMsg   = document.getElementById('wms-upload-msg');
+  var exportBtn   = document.getElementById('btn-wms-exportar');
+  if(estadoPanel) estadoPanel.style.display = 'none';
+  if(emptyMsg)    emptyMsg.style.display = '';
+  if(uploadMsg)   uploadMsg.innerHTML = '';
+  if(exportBtn)   exportBtn.style.display = 'none';
+  wmsOcultarComparacion();
   navTo('pg-cdg-manifiesto','📄 Manifiesto / Validación WMS');
   wmsCargarLicencias();
 });
@@ -8367,6 +8381,8 @@ function wmsCargarLicencias(){
   var sel = document.getElementById('wms-lic-select');
   sel.innerHTML = '<option value="">Cargando…</option>';
   wmsLicFuente = {};
+  // FIX (mar 2-jun-2026): resetear licencia actual al recargar la lista
+  wmsLicenciaActual = '';
 
   // Tres fuentes en paralelo
   var pV2 = fetch('/api/cdg/v2/listar?historico=true')
@@ -8435,10 +8451,20 @@ document.getElementById('btn-wms-refresh-lics').addEventListener('click', wmsCar
 // Al cambiar la licencia: cargar estado WMS
 document.getElementById('wms-lic-select').addEventListener('change', function(){
   var licId = this.value;
-  wmsLicenciaActual = licId || null;
+  wmsLicenciaActual = licId || '';
   wmsSkus = []; wmsLineasCDG = []; wmsFilasComp = [];
   wmsOcultarComparacion();
   document.getElementById('wms-upload-msg').innerHTML = '';
+  // FIX (mar 2-jun-2026): deshabilitar label "Cargar WMS" si no hay licencia
+  var labelCargar = document.querySelector('label[for="wms-file-input"], label:has(#wms-file-input)');
+  // fallback: buscar el label por su input hijo
+  var wmsFileInput = document.getElementById('wms-file-input');
+  var labelEl = wmsFileInput ? wmsFileInput.closest('label') : null;
+  if(labelEl) {
+    labelEl.style.opacity = licId ? '1' : '0.4';
+    labelEl.style.pointerEvents = licId ? '' : 'none';
+    labelEl.title = licId ? 'Cargar WMS para esta licencia' : 'Seleccioná una licencia primero';
+  }
   if(!licId){
     document.getElementById('wms-estado-panel').style.display = 'none';
     document.getElementById('wms-empty-msg').style.display = '';
@@ -8691,25 +8717,33 @@ document.getElementById('wms-filtros').addEventListener('click', function(e){
 // ── Upload WMS ────────────────────────────────────────────────────────────
 document.getElementById('wms-file-input').addEventListener('change', function(){
   if(!this.files || !this.files[0]) return;
-  if(!wmsLicenciaActual){
-    document.getElementById('wms-upload-msg').innerHTML = '<span style="color:#c0392b">Seleccioná una licencia primero.</span>';
+  var inputEl = this;
+  var msgEl   = document.getElementById('wms-upload-msg');
+
+  // FIX (mar 2-jun-2026, v5.2.29 rev): leer el selector en el momento del click,
+  // no confiar en wmsLicenciaActual que puede tener un valor stale de la sesión anterior.
+  var licSeleccionada = (document.getElementById('wms-lic-select') || {}).value || '';
+  if(!licSeleccionada){
+    msgEl.innerHTML = '<span style="color:#c0392b">Seleccioná una licencia antes de cargar WMS.</span>';
+    inputEl.value = '';
     return;
   }
   if(!currentUser){
-    document.getElementById('wms-upload-msg').innerHTML = '<span style="color:#c0392b">Seleccioná tu nombre primero.</span>';
+    msgEl.innerHTML = '<span style="color:#c0392b">Seleccioná tu nombre primero.</span>';
+    inputEl.value = '';
     return;
   }
-  var file    = this.files[0];
-  var msgEl   = document.getElementById('wms-upload-msg');
-  var inputEl = this;
+  // Sincronizar la variable global con lo que el selector tiene ahora
+  wmsLicenciaActual = licSeleccionada;
+
+  var file = this.files[0];
   msgEl.innerHTML = '<span style="color:#888">⏳ Procesando archivo…</span>';
 
   var fd = new FormData();
   fd.append('file', file);
   fd.append('usuario', currentUser.name);
 
-  // FIX (mar 2-jun-2026, v5.2.29 rev): usar endpoint general /api/cdg/wms/:id.
-  // El endpoint v2 exigía cdg_meta, fallaba para licencias clásicas y solo-WMS.
+  // Endpoint general /api/cdg/wms/:id (no exige cdg_meta, sirve para v1, v2 y solo-WMS).
   fetch('/api/cdg/wms/' + encodeURIComponent(wmsLicenciaActual), {
     method: 'POST', body: fd
   })
