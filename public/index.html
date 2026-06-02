@@ -723,10 +723,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
       -->
 
       <!-- Pestañas internas -->
+      <!-- FIX (lun 1-jun-2026, v5.2.29 rev): onclick removido, cableado con addEventListener en JS.
+           Evita que un fallo anterior en el script deje los botones sin respuesta. -->
       <div class="tab-pills" style="margin-bottom:.75rem">
-        <button class="tab-pill on"  id="rcdg-tab-resumen"   onclick="rcdgSwitchTab('resumen')">📊 Resumen</button>
-        <button class="tab-pill"     id="rcdg-tab-historial" onclick="rcdgSwitchTab('historial')">📋 Historial</button>
-        <button class="tab-pill"     id="rcdg-tab-hallazgos" onclick="rcdgSwitchTab('hallazgos')">⚠️ Hallazgos</button>
+        <button class="tab-pill on"  id="rcdg-tab-resumen">📊 Resumen</button>
+        <button class="tab-pill"     id="rcdg-tab-historial">📋 Historial</button>
+        <button class="tab-pill"     id="rcdg-tab-hallazgos">⚠️ Hallazgos</button>
       </div>
 
       <!-- ── PESTAÑA: RESUMEN / TABLERO ──────────────────────────── -->
@@ -7333,6 +7335,17 @@ function rcdgSwitchTab(tab) {
   if(tab === 'historial'  && rcdgDatos) rcdgRenderHistorial();
 }
 
+// FIX (lun 1-jun-2026, v5.2.29 rev): cablear pestañas con addEventListener.
+// Reemplaza los onclick inline que dependían de que rcdgSwitchTab estuviera
+// definido al parsear el HTML — ahora se registran aquí, después de la definición.
+(function(){
+  var tabs = ['resumen','historial','hallazgos'];
+  tabs.forEach(function(t){
+    var btn = document.getElementById('rcdg-tab-'+t);
+    if(btn) btn.addEventListener('click', function(){ rcdgSwitchTab(t); });
+  });
+})();
+
 // ── Carga de datos: v1 (state.cdg) + v2 (/api/cdg/v2/listar) ─────────────
 function rcdgCargarDatos() {
   document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
@@ -7522,16 +7535,18 @@ function rcdgRenderResumen() {
     btn.addEventListener('click', function(){
       var id = btn.dataset.id, fuente = btn.dataset.fuente;
       if(fuente === 'colaborativo') {
-        // Navegar a Captura v2 y abrir esa licencia
+        // v2: abrir en Captura (modo edición si activa, lectura si cerrada según permisos)
         if(typeof cdgv2AbrirLicencia === 'function') cdgv2AbrirLicencia(id);
       } else {
-        // Abrir historial v1 con showCDGHist (en pg-cdg original) — sin tocar nada
-        navTo('pg-cdg','🏢 Conteos CDG');
-        setTimeout(function(){
-          var tipo = (rcdgDatos.v1[id]||{}).tipo || 'CDG';
-          var tipoArg = (tipo!=='CDG'&&tipo!=='KTM') ? 'otro' : tipo;
-          if(typeof showCDGHist === 'function') showCDGHist(tipoArg);
-        }, 150);
+        // FIX (lun 1-jun-2026, v5.2.29 rev): v1 usa viewCDGReadOnly (read-only).
+        // Antes: navTo('pg-cdg') + showCDGHist → abría la pantalla operativa de CDG clásico.
+        // Ahora: abre el modal de vista solo lectura sin salir de Reportes.
+        var c = rcdgDatos && rcdgDatos.v1 ? rcdgDatos.v1[id] : null;
+        if(c && typeof viewCDGReadOnly === 'function') {
+          viewCDGReadOnly(id, c);
+        } else {
+          alert('No se pudo cargar el detalle de ' + id);
+        }
       }
     });
   });
@@ -7679,8 +7694,13 @@ function rcdgRenderHistorial() {
       if(btn.dataset.fuente==='colaborativo'){
         if(typeof cdgv2AbrirLicencia==='function') cdgv2AbrirLicencia(btn.dataset.id);
       } else {
-        navTo('pg-cdg','🏢 Conteos CDG');
-        setTimeout(function(){ if(typeof showCDGHist==='function') showCDGHist((rcdgDatos.v1[btn.dataset.id]||{}).tipo==='KTM'?'KTM':'CDG'); },150);
+        // FIX (lun 1-jun-2026, v5.2.29 rev): v1 usa viewCDGReadOnly (read-only).
+        var c = rcdgDatos && rcdgDatos.v1 ? rcdgDatos.v1[btn.dataset.id] : null;
+        if(c && typeof viewCDGReadOnly === 'function') {
+          viewCDGReadOnly(btn.dataset.id, c);
+        } else {
+          alert('No se pudo cargar el detalle de ' + btn.dataset.id);
+        }
       }
     });
   });
@@ -7972,26 +7992,29 @@ document.getElementById('sm-cdg-historial').addEventListener('click', function()
 // si el elemento existe en el DOM, pero no hace nada visible.
 document.getElementById('sm-cdg-admin').addEventListener('click', function(){ /* reservado */ });
 
-// Botones de tipo en pg-cdg-historial → showCDGHistEn (panel propio)
-document.getElementById('sm-cdg-hist-cdg').addEventListener('click', function(){
-  showCDGHistEn('CDG','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
-});
-document.getElementById('sm-cdg-hist-ktm').addEventListener('click', function(){
-  showCDGHistEn('KTM','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
-});
-document.getElementById('sm-cdg-hist-otros').addEventListener('click', function(){
-  showCDGHistEn('otro','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content');
-});
-
-// Botón "← Volver" dentro del panel de resultados: vuelve al selector de tipos
-document.getElementById('btn-cdg-historial-page-close').addEventListener('click', function(){
-  document.getElementById('cdg-historial-page-panel').style.display = 'none';
-  document.getElementById('cdg-historial-page-content').innerHTML = '';
-  document.getElementById('cdg-historial-tipos').style.display = '';
-});
-
-// sm-cdg-admin-clasico: dentro de pg-cdg-admin (oculto). Handler registrado por precaución.
-document.getElementById('sm-cdg-admin-clasico').addEventListener('click', function(){ /* reservado */ });
+// FIX (lun 1-jun-2026, v5.2.29 rev): handlers legacy de pg-cdg-historial protegidos.
+// Los elementos sm-cdg-hist-cdg/ktm/otros y btn-cdg-historial-page-close ya no existen
+// en el DOM (la página fue reestructurada con pestañas Resumen/Historial/Hallazgos).
+// Se mantiene el código como referencia pero envuelto en guardas para no romper nada.
+(function(){
+  var elCdg    = document.getElementById('sm-cdg-hist-cdg');
+  var elKtm    = document.getElementById('sm-cdg-hist-ktm');
+  var elOtros  = document.getElementById('sm-cdg-hist-otros');
+  var elClose  = document.getElementById('btn-cdg-historial-page-close');
+  var elAdmin  = document.getElementById('sm-cdg-admin-clasico');
+  if(elCdg)   elCdg.addEventListener('click', function(){ showCDGHistEn('CDG','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
+  if(elKtm)   elKtm.addEventListener('click', function(){ showCDGHistEn('KTM','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
+  if(elOtros) elOtros.addEventListener('click', function(){ showCDGHistEn('otro','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
+  if(elClose) elClose.addEventListener('click', function(){
+    var pp = document.getElementById('cdg-historial-page-panel');
+    var pc = document.getElementById('cdg-historial-page-content');
+    var pt = document.getElementById('cdg-historial-tipos');
+    if(pp) pp.style.display = 'none';
+    if(pc) pc.innerHTML = '';
+    if(pt) pt.style.display = '';
+  });
+  if(elAdmin) elAdmin.addEventListener('click', function(){ /* reservado */ });
+})();
 
 // cdgMenuMostrarAdmin: no se llama en producción actual.
 // Reservada para cuando Administración sea una sección funcional completa.
