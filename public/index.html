@@ -748,6 +748,20 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="clasico"      style="font-size:.75rem">Clásico</button>
           <button class="btn btn-sm" id="rcdg-btn-refresh" style="margin-left:auto;font-size:.75rem">🔄 Actualizar</button>
         </div>
+        <!-- Filtro de fecha + botón bulk WMS -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:.6rem">
+          <span style="font-size:.78rem;color:#666;font-weight:600">Fecha:</span>
+          <input type="date" id="rcdg-filtro-fecha-desde" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:130px" title="Desde">
+          <input type="date" id="rcdg-filtro-fecha-hasta" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:130px" title="Hasta">
+          <button class="btn btn-sm" id="rcdg-btn-hoy" style="font-size:.75rem">Hoy</button>
+          <button class="btn btn-sm" id="rcdg-btn-fecha-clear" style="font-size:.75rem">✕</button>
+          <label class="btn btn-sm" style="margin-left:auto;cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.75rem" title="Cargar WMS para todas las licencias del archivo">
+            📦 Cargar WMS masivo
+            <input type="file" id="rcdg-bulk-wms-file" accept=".xlsx,.xls" style="display:none">
+          </label>
+        </div>
+        <div id="rcdg-bulk-wms-msg" style="font-size:.82rem;margin-bottom:.4rem"></div>
+
         <!-- Tabla resumen -->
         <div class="tbl-wrap" id="rcdg-tabla-resumen-wrap">
           <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
@@ -994,9 +1008,10 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <!-- Panel de hallazgos de esta licencia CDG v2.
            FIX (lun 1-jun-2026, v5.2.29): siempre visible, incluye botón Crear hallazgo. -->
       <div id="cdgv2-hallazgos-panel" style="margin-top:.75rem">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem">
+        <div style="margin-bottom:.4rem">
+          <!-- FIX (lun 1-jun-2026, v5.2.29 rev): btn-cdgv2-hallazgo-panel quitado.
+               Solo queda btn-cdgv2-hallazgo en la barra de acciones. -->
           <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">⚠ Hallazgos de esta licencia</div>
-          <button class="btn btn-sm btn-warn" id="btn-cdgv2-hallazgo-panel" style="font-size:.75rem;padding:3px 10px">⚠ Crear hallazgo</button>
         </div>
         <div id="cdgv2-hallazgos-list"></div>
       </div>
@@ -7445,7 +7460,14 @@ function rcdgCargarDatos() {
   // Captura colaborativa y Manifiesto siguen usando /api/cdg/v2/listar sin parámetro.
   var p2 = fetch('/api/cdg/v2/listar?historico=true').then(function(r){ return r.json(); }).catch(function(){ return { ok:false, licencias:[] }; });
 
-  Promise.all([p1render, p1supa, p2]).then(function(res){
+  // WMS batch: listar todas las filas de cdg_wms en una sola query (evitar una query por licencia).
+  // Se leen las columnas ligeras (sin skus jsonb completo) para el estado del tablero.
+  // Limitación documentada: si hay >1000 licencias con WMS podría truncarse por el límite de Supabase.
+  var p3wms = fetch(SUPABASE_URL + '/rest/v1/cdg_wms?select=licencia_id,total_skus,cargado_por,ts_carga', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).catch(function(){ return []; });
+
+  Promise.all([p1render, p1supa, p2, p3wms]).then(function(res){
     var renderData = res[0] || {};
     var supaData   = res[1] || {};
     // Merge v1 igual que showCDGHistEn
@@ -7459,7 +7481,12 @@ function rcdgCargarDatos() {
 
     var v2list = (res[2].licencias || []);
 
-    rcdgDatos = { v1: v1, v2: v2list };
+    // WMS lookup: mapa licenciaId → { totalSkus, cargadoPor, tsCarga }
+    var wmsRows = Array.isArray(res[3]) ? res[3] : [];
+    var wmsLookup = {};
+    wmsRows.forEach(function(w){ wmsLookup[String(w.licencia_id||'').trim().toUpperCase()] = w; });
+
+    rcdgDatos = { v1: v1, v2: v2list, wmsLookup: wmsLookup };
     rcdgRenderResumen();
     if(rcdgTabActiva === 'historial')  rcdgRenderHistorial();
     if(rcdgTabActiva === 'hallazgos')  rcdgRenderHallazgos();
@@ -7467,6 +7494,20 @@ function rcdgCargarDatos() {
     document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
       '<div style="text-align:center;padding:1.5rem;color:#c0392b;font-size:.85rem">Error al cargar: '+escH(e.message||'sin conexión')+'</div>';
   });
+}
+
+// ── Helper: determinar estado Hamilton de una licencia CDG ──────────────────
+// Usa teorico/fisico locales (variables globales del estado Hamilton).
+// sin WMS/Hamilton: "no_creado" | con teorico: "creado" | con fisico parcial: "en_proceso" | completo: "contado"
+function rcdgEstadoHamilton(teo, fis) {
+  if(!teo || !teo.items || !teo.items.length) return 'no_creado';
+  if(fis === null || fis === undefined) return 'creado';   // Hamilton creado, sin físico
+  var items = teo.items;
+  var fisArr = Array.isArray(fis) ? fis : [];
+  var conFisico = fisArr.filter(function(f){ return f && f.fisico !== null && f.fisico !== undefined; }).length;
+  if(conFisico === 0) return 'creado';
+  if(conFisico >= items.length) return 'contado';
+  return 'en_proceso';
 }
 
 // ── RESUMEN / TABLERO ─────────────────────────────────────────────────────
@@ -7478,6 +7519,7 @@ function rcdgRenderResumen() {
   var todos = [];
 
   // v1: state.cdg entries
+  var wmsLookup = (rcdgDatos && rcdgDatos.wmsLookup) || {};
   Object.keys(v1).forEach(function(id){
     var c = v1[id];
     var items = c.items || [];
@@ -7486,39 +7528,70 @@ function rcdgRenderResumen() {
       var cu = Number(it.costo) || (typeof getCosto==='function' ? getCosto(it.sku)||0 : 0);
       return a + cu * (Number(it.qty)||0);
     }, 0);
+    // Estado Hamilton: leer de state.teorico / state.fisico locales
+    var teo = typeof teorico !== 'undefined' ? teorico[id] : null;
+    var fis = typeof fisico  !== 'undefined' ? fisico[id]  : undefined;
+    var hamiltonEstado = rcdgEstadoHamilton(teo, fis);
+    // Estado WMS
+    var wmsKey = String(id).trim().toUpperCase();
+    var wmsInfo = wmsLookup[wmsKey];
+    // Fecha: usar c.fecha o c.fechaCreacion
+    var fecha = c.fechaCreacion || c.fecha || null;
     todos.push({
       id: id, fuente: 'clasico',
       tipo: c.tipo || 'CDG',
       lineas: items.length, unidades: unidades, costo: costo,
       estado: c.bloqueado ? 'cerrado' : 'borrador',
       autor: c.autor || '—',
-      fecha: c.fechaCreacion || null,
-      wms: 'n/a'
+      fecha: fecha,
+      wmsInfo: wmsInfo || null,
+      hamiltonEstado: hamiltonEstado
     });
   });
 
   // v2: licencias de /api/cdg/v2/listar con agregados del modo histórico
   v2.forEach(function(l){
+    var teo2 = typeof teorico !== 'undefined' ? teorico[l.id] : null;
+    var fis2 = typeof fisico  !== 'undefined' ? fisico[l.id]  : undefined;
+    var hamiltonEstado2 = rcdgEstadoHamilton(teo2, fis2);
+    var wmsKey2 = String(l.id).trim().toUpperCase();
+    var wmsInfo2 = wmsLookup[wmsKey2];
+    // Fecha: preferir fechaCreacion, luego fechaCierre como fallback
+    var fecha2 = l.fechaCreacion || l.fechaCierre || null;
     todos.push({
       id: l.id, fuente: 'colaborativo',
       tipo: l.tipo || 'CDG',
       lineas: l.totalLineas || 0,
-      // totalUnidades y costoTotal vienen del server en modo histórico (cdg_lineas)
       unidades: (l.totalUnidades !== null && l.totalUnidades !== undefined) ? l.totalUnidades : null,
       costo:    (l.costoTotal    !== null && l.costoTotal    !== undefined) ? l.costoTotal    : null,
       estado: l.estado,
       autor: l.finalizador || l.creadoPor || '—',
-      fecha: l.fechaCreacion || null,
-      wms: 'pendiente'
+      fecha: fecha2,
+      wmsInfo: wmsInfo2 || null,
+      hamiltonEstado: hamiltonEstado2
     });
   });
 
-  // Aplicar filtros
+  // Aplicar filtros (tipo, fuente, fechas)
+  var rcdgFechaDesde = document.getElementById('rcdg-filtro-fecha-desde') ?
+    document.getElementById('rcdg-filtro-fecha-desde').value : '';
+  var rcdgFechaHasta = document.getElementById('rcdg-filtro-fecha-hasta') ?
+    document.getElementById('rcdg-filtro-fecha-hasta').value : '';
+
   var filtrados = todos.filter(function(c){
     var okTipo   = rcdgFiltroTipo   === 'todos' || c.tipo === rcdgFiltroTipo
                    || (rcdgFiltroTipo === 'otro' && c.tipo !== 'CDG' && c.tipo !== 'KTM');
     var okFuente = rcdgFiltroFuente === 'todos' || c.fuente === rcdgFiltroFuente;
-    return okTipo && okFuente;
+    var okFecha  = true;
+    if((rcdgFechaDesde || rcdgFechaHasta) && c.fecha) {
+      var fStr = '';
+      try { fStr = new Date(c.fecha).toISOString().slice(0,10); } catch(e){}
+      if(rcdgFechaDesde && fStr && fStr < rcdgFechaDesde) okFecha = false;
+      if(rcdgFechaHasta && fStr && fStr > rcdgFechaHasta) okFecha = false;
+    } else if((rcdgFechaDesde || rcdgFechaHasta) && !c.fecha) {
+      okFecha = false; // sin fecha → excluir cuando hay filtro activo
+    }
+    return okTipo && okFuente && okFecha;
   });
 
   // KPIs
@@ -7562,7 +7635,8 @@ function rcdgRenderResumen() {
   var h = '<table><thead><tr>'
     +'<th>Fuente</th><th>Licencia U25</th><th>Tipo</th>'
     +'<th class="tc">Líneas</th><th class="tc">Unidades</th><th class="tc">Costo Q</th>'
-    +'<th>Estado</th><th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
+    +'<th>Estado</th><th>WMS</th><th>Hamilton</th>'
+    +'<th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
     +'</tr></thead><tbody>';
 
   filtrados.forEach(function(c){
@@ -7594,6 +7668,19 @@ function rcdgRenderResumen() {
     }
     acciones += '</div>';
 
+    // WMS badge
+    var wmsBadge = c.wmsInfo
+      ? '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:2px 6px;border-radius:8px;white-space:nowrap">✅ Cargado</span>'
+      : '<span style="background:#f5f5f3;color:#aaa;font-size:.7rem;padding:2px 6px;border-radius:8px;white-space:nowrap">Sin WMS</span>';
+    // Hamilton badge
+    var hamMap = {
+      'no_creado':  '<span style="background:#f5f5f3;color:#aaa;font-size:.7rem;padding:2px 6px;border-radius:8px">—</span>',
+      'creado':     '<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:2px 6px;border-radius:8px">Creado</span>',
+      'en_proceso': '<span style="background:#fff3e0;color:#e65100;font-size:.7rem;padding:2px 6px;border-radius:8px">En proceso</span>',
+      'contado':    '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:2px 6px;border-radius:8px">Contado</span>'
+    };
+    var hamBadge = hamMap[c.hamiltonEstado] || hamMap['no_creado'];
+
     h += '<tr>'
       +'<td>'+fuenteBadge+'</td>'
       +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(c.id)+'</td>'
@@ -7602,6 +7689,8 @@ function rcdgRenderResumen() {
       +'<td class="tc" style="font-size:.82rem">'+unidStr+'</td>'
       +'<td class="tc" style="font-size:.82rem;white-space:nowrap">'+costoStr+'</td>'
       +'<td>'+estadoBadge+'</td>'
+      +'<td>'+wmsBadge+'</td>'
+      +'<td>'+hamBadge+'</td>'
       +'<td style="font-size:.78rem;color:#666;white-space:nowrap">'+escH(c.autor)+'</td>'
       +'<td style="font-size:.78rem;color:#888;white-space:nowrap">'+fechaStr+'</td>'
       +'<td>'+acciones+'</td>'
@@ -7687,6 +7776,64 @@ function rcdgRenderResumen() {
     });
     var btnRefresh = document.getElementById('rcdg-btn-refresh');
     if(btnRefresh) btnRefresh.addEventListener('click', function(){ rcdgDatos=null; rcdgCargarDatos(); });
+
+    // OBJ 3: filtros de fecha
+    var inputDesde = document.getElementById('rcdg-filtro-fecha-desde');
+    var inputHasta = document.getElementById('rcdg-filtro-fecha-hasta');
+    var btnHoy     = document.getElementById('rcdg-btn-hoy');
+    var btnFechaClear = document.getElementById('rcdg-btn-fecha-clear');
+    if(inputDesde) inputDesde.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
+    if(inputHasta) inputHasta.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
+    if(btnHoy) btnHoy.addEventListener('click', function(){
+      var hoy = new Date().toISOString().slice(0,10);
+      if(inputDesde) inputDesde.value = hoy;
+      if(inputHasta) inputHasta.value = hoy;
+      if(rcdgDatos) rcdgRenderResumen();
+    });
+    if(btnFechaClear) btnFechaClear.addEventListener('click', function(){
+      if(inputDesde) inputDesde.value = '';
+      if(inputHasta) inputHasta.value = '';
+      if(rcdgDatos) rcdgRenderResumen();
+    });
+
+    // OBJ 1 UI: bulk WMS upload
+    var bulkInput = document.getElementById('rcdg-bulk-wms-file');
+    if(bulkInput) bulkInput.addEventListener('change', function(){
+      if(!this.files || !this.files[0]) return;
+      if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
+      var file  = this.files[0];
+      var msgEl = document.getElementById('rcdg-bulk-wms-msg');
+      var inp   = this;
+      msgEl.innerHTML = '<span style="color:#888">⏳ Procesando archivo WMS masivo…</span>';
+      var fd = new FormData();
+      fd.append('file', file);
+      fd.append('usuario', currentUser.name);
+      fetch('/api/cdg/wms/bulk', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          inp.value = '';
+          if(!d.ok){
+            msgEl.innerHTML = '<span style="color:#c0392b">❌ ' + escH(d.error||'Error') + '</span>';
+            return;
+          }
+          var txt = '✅ WMS masivo cargado: '
+            + d.licenciasActualizadas.length + ' licencias · '
+            + d.totalSkus + ' SKUs';
+          if(d.licenciasSinConteoCDG && d.licenciasSinConteoCDG.length)
+            txt += ' · ' + d.licenciasSinConteoCDG.length + ' sin conteo CDG (OK, solo WMS)';
+          if(d.errores && d.errores.length)
+            txt += ' · ⚠️ ' + d.errores.length + ' errores';
+          if(d.advertencias) txt += ' · ⚠️ ' + escH(d.advertencias.join('; '));
+          msgEl.innerHTML = '<span style="color:#1e7e34">' + txt + '</span>';
+          // Recargar para reflejar el nuevo WMS en el tablero
+          rcdgDatos = null;
+          rcdgCargarDatos();
+        })
+        .catch(function(){
+          inp.value = '';
+          msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
+        });
+    });
   }
   // Defer para asegurar que el DOM existe
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireFiltros);
@@ -9258,12 +9405,11 @@ document.getElementById('btn-cdgv2-hallazgo').addEventListener('click', function
   window._cdgV2LicenciaId = cdgv2LicenciaActual.id; // marcar para que el save lo sepa
 });
 
-// btn-cdgv2-hallazgo-panel: botón dentro del panel de hallazgos.
-// FIX (lun 1-jun-2026, v5.2.29): mismo comportamiento que btn-cdgv2-hallazgo.
-// Permite crear hallazgo desde el panel sin tener que usar el botón de acciones.
-document.getElementById('btn-cdgv2-hallazgo-panel').addEventListener('click', function(){
-  document.getElementById('btn-cdgv2-hallazgo').click();
-});
+// btn-cdgv2-hallazgo-panel: eliminado del DOM (quitado como duplicado).
+// Handler protegido con guarda por si queda alguna referencia residual.
+(function(){ var el = document.getElementById('btn-cdgv2-hallazgo-panel');
+  if(el) el.addEventListener('click', function(){ document.getElementById('btn-cdgv2-hallazgo').click(); });
+})();
 
 document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
   if(!currentUser || !cdgv2LicenciaActual) return;
