@@ -727,7 +727,8 @@ textarea.field-inp{resize:vertical;min-height:72px}
            Evita que un fallo anterior en el script deje los botones sin respuesta. -->
       <div class="tab-pills" style="margin-bottom:.75rem">
         <button class="tab-pill on"  id="rcdg-tab-resumen">📊 Resumen</button>
-        <button class="tab-pill"     id="rcdg-tab-historial">📋 Historial</button>
+        <!-- FIX (lun 1-jun-2026, v5.2.29): pestaña Historial oculta. Resumen cubre la misma función con KPIs y filtros. showCDGHist/showCDGHistEn intactos (CDG Clásico los usa). -->
+        <button class="tab-pill" id="rcdg-tab-historial" style="display:none">📋 Historial</button>
         <button class="tab-pill"     id="rcdg-tab-hallazgos">⚠️ Hallazgos</button>
       </div>
 
@@ -754,7 +755,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
       </div>
 
       <!-- ── PESTAÑA: HISTORIAL ──────────────────────────────────── -->
-      <div id="rcdg-panel-historial" style="display:none">
+      <div id="rcdg-panel-historial" style="display:none" aria-hidden="true">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
           <span style="font-size:.78rem;color:#666;font-weight:600">Tipo:</span>
           <button class="btn btn-sm rcdg-hist-tipo on" data-tipo="todos" style="font-size:.75rem">Todos</button>
@@ -1113,7 +1114,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     </div>
     <div class="tbl-wrap">
           <table>
-            <thead><tr>
+            <thead id="thead-conteo"><tr id="thead-conteo-row">
               <th>SKU</th><th>Nombre / Descripción</th>
               <th class="tc">Teórico</th>
               <th class="tc">Físico</th>
@@ -1879,6 +1880,39 @@ function renderConteo(){
   current=document.getElementById('sel-cont').value;
   if(!current||!teorico[current]){document.getElementById('tbody-conteo').innerHTML='<tr><td colspan="7" class="empty">Selecciona un contenedor.</td></tr>';return;}
   var items=teorico[current].items||[],saved=fisico[current],html='',now=Date.now();
+
+  // FIX (lun 1-jun-2026, v5.2.29): detectar si el contenedor es CDG (fromCDG=true).
+  // Si es CDG, el encabezado y la lógica de columnas cambian:
+  //   - Columna "Teórico" se renombra a "Teórico s/WMS" (fuente: cdg_wms si existe)
+  //   - Se agrega columna "Validado CDG" (qty = lo que se contó en CDG)
+  //   - Diferencia = Total físico − Teórico s/WMS (o −Validado CDG si no hay WMS)
+  //   - Embarques y Traslados normales NO CDG: sin cambios.
+  var esCDG = !!(teorico[current].fromCDG || teorico[current].cdgValidado);
+
+  // Actualizar thead según tipo de contenedor (solo si existe el elemento con ID)
+  var theadRow = document.getElementById('thead-conteo-row');
+  if(theadRow) {
+    if(esCDG) {
+      theadRow.innerHTML =
+        '<th>SKU</th><th>Nombre / Descripción</th>'
+        +'<th class="tc" title="Teórico según WMS cargado en CDG / Manifiesto">Teórico s/WMS</th>'
+        +'<th class="tc" title="Conteo validado en CDG">Validado CDG</th>'
+        +'<th class="tc">Físico</th>'
+        +'<th class="tc">Dañado</th>'
+        +'<th class="tc">Total físico</th>'
+        +'<th class="tc">Diferencia</th>';
+      // Cobertura no tiene th propio porque el select ya ocupa la celda
+    } else {
+      theadRow.innerHTML =
+        '<th>SKU</th><th>Nombre / Descripción</th>'
+        +'<th class="tc">Teórico</th>'
+        +'<th class="tc">Físico</th>'
+        +'<th class="tc">Dañado</th>'
+        +'<th class="tc">Total físico</th>'
+        +'<th class="tc">Diferencia</th>';
+    }
+  }
+
   for(var i=0;i<items.length;i++){
     var it=items[i],sv=saved?saved[i]:null;
     // Treat null/undefined as empty (not 0). Only show actual numbers entered by the user.
@@ -1891,9 +1925,7 @@ function renderConteo(){
     // físico. Total Físico = Físico. Diferencia = Físico - Teórico. Dañado
     // solo aparece como columna informativa y en el export para auditoría.
     var total=fval!==''?Number(fval):'';
-    var diff=total!==''?total-it.qty:null;
-    var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
-    var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
+
     var quien=sv&&sv.quien?sv.quien:'';
     var ts=sv&&sv.ts?sv.ts:'';
     var hint=quien?'<div class="trace-hint">✏️ '+escH(quien)+(ts?' · '+escH(ts):'')+'</div>':'';
@@ -1905,18 +1937,59 @@ function renderConteo(){
     var lockLabel=isLocked?'<div class="lock-label">🔒 '+escH(lock.quien)+' lo está editando</div>':'';
     var disabled=isLocked?'disabled':'';
 
-    html+='<tr>'
-      +'<td>'+escH(it.sku||'—')+'</td>'
-      +'<td>'+escH(it.desc||'—')+'</td>'
-      +'<td class="tc">'+it.qty+'</td>'
-      +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
-      +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
-      +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
-      +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
-      +'<td class="tc"><select class="cob-sel" data-i="'+i+'" '+disabled+' style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'+(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'+((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'+(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'+(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>'
-      +'</tr>';
+    var cobSel='<td class="tc"><select class="cob-sel" data-i="'+i+'" '+disabled
+      +' style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'
+      +(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'
+      +((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'
+      +(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'
+      +(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>';
+
+    if(esCDG) {
+      // ── Modo CDG: Teórico s/WMS | Validado CDG | Físico | Dañado | Total | Dif ──
+      // it.qty = Validado CDG (lo que se contó en CDG).
+      // it.teoricoWMS = teórico del WMS si fue enriquecido al cerrar.
+      var validadoCDG = it.qty;
+      var hasWMS = (it.teoricoWMS !== undefined && it.teoricoWMS !== null);
+      var teorWMS = hasWMS ? it.teoricoWMS : null;
+      // Diferencia: Total físico − Teórico WMS (o −Validado CDG como fallback)
+      var baseRef = hasWMS ? teorWMS : validadoCDG;
+      var diff = total !== '' ? total - baseRef : null;
+      var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
+      var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
+      // Teórico s/WMS display
+      var teorWMSCell = hasWMS
+        ? '<td class="tc">'+teorWMS+'</td>'
+        : '<td class="tc" style="color:#bbb" title="Sin WMS cargado para esta licencia">—</td>';
+      html+='<tr>'
+        +'<td>'+escH(it.sku||'—')+'</td>'
+        +'<td>'+escH(it.desc||'—')+'</td>'
+        +teorWMSCell
+        +'<td class="tc" style="font-weight:600">'+validadoCDG+'</td>'
+        +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
+        +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
+        +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
+        +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
+        +cobSel
+        +'</tr>';
+    } else {
+      // ── Modo normal: Teórico | Físico | Dañado | Total | Dif ──
+      var diff=total!==''?total-it.qty:null;
+      var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
+      var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
+      html+='<tr>'
+        +'<td>'+escH(it.sku||'—')+'</td>'
+        +'<td>'+escH(it.desc||'—')+'</td>'
+        +'<td class="tc">'+it.qty+'</td>'
+        +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
+        +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
+        +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
+        +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
+        +cobSel
+        +'</tr>';
+    }
   }
-  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="8" class="empty">Sin items</td></tr>';
+  var cols = esCDG ? 9 : 8;
+  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="'+cols+'" class="empty">Sin items</td></tr>';
   updateProg();
   updateSelfAssignBtn();
 
@@ -2455,10 +2528,18 @@ function updateTotDiff(idx){
   var fv=parseFloat((document.getElementById('fi'+idx)||{}).value);
   var dv=parseFloat((document.getElementById('da'+idx)||{}).value)||0;
   var totEl=document.getElementById('tot'+idx),difEl=document.getElementById('d'+idx);
-  var qty=teorico[current]?teorico[current].items[idx].qty:0;
+  var item=teorico[current]?teorico[current].items[idx]:null;
+  if(!item){if(totEl)totEl.innerHTML='&mdash;';if(difEl){difEl.className='tc gray';difEl.innerHTML='&mdash;';}return;}
+  // FIX (lun 1-jun-2026, v5.2.29): para CDG con WMS, la diferencia usa teoricoWMS.
+  // Para CDG sin WMS: usa qty (Validado CDG) como fallback.
+  // Para Embarques/Traslados normales: usa qty (teórico WMS subido por Hamilton).
+  var esCDG = !!(teorico[current].fromCDG || teorico[current].cdgValidado);
+  var ref = esCDG && (item.teoricoWMS !== undefined && item.teoricoWMS !== null)
+    ? item.teoricoWMS
+    : item.qty;
   if(isNaN(fv)){if(totEl)totEl.innerHTML='&mdash;';if(difEl){difEl.className='tc gray';difEl.innerHTML='&mdash;';}return;}
   var total=fv;  // Dañado es solo informativo, NO se suma al total
-  var diff=total-qty;
+  var diff=total-ref;
   if(totEl)totEl.textContent=total;
   if(difEl){difEl.className='tc '+(diff>0?'blue':diff<0?'red':'green');difEl.textContent=(diff>0?'+':'')+diff;}
 
