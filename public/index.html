@@ -709,44 +709,83 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <!-- FIX (lun 1-jun-2026, v5.2.28): página nueva — solo botones que invocan
          showCDGHist() existente. No mueve ni reescribe nada del historial real. -->
     <div id="pg-cdg-historial" class="page">
-      <!-- FIX (lun 1-jun-2026, v5.2.28 rev): selector de tipo + panel propio.
-           showCDGHistEn() renderiza aquí en lugar de en cdg-hist-panel (pg-cdg).
-           Los botones originales de pg-cdg siguen usando showCDGHist() sin cambios. -->
+      <!--
+        FIX (lun 1-jun-2026, v5.2.29): Reportes / Historial CDG reestructurado.
+        3 pestañas internas: Resumen/Tablero · Historial · Hallazgos.
+        - showCDGHist() original (pg-cdg, CDG clásico) NO se toca.
+        - showCDGHistEn() sigue disponible por compatibilidad pero ya no es la vista principal.
+        - Los IDs cdg-historial-page-panel/title/content se mantienen en el DOM
+          por si algún código los referencia, pero están ocultos (las pestañas los reemplazan).
+        NOTA TÉCNICA (migración futura):
+          Cuando el reporte unificado esté validado operativamente, se podrá
+          implementar una fase posterior para convertir conteos v1 (state.cdg) a
+          la estructura v2 (cdg_lineas + cdg_meta_*). Por ahora es read-only unificado.
+      -->
 
-      <!-- Selector de tipos (visible cuando no hay historial abierto) -->
-      <div id="cdg-historial-tipos" style="margin-bottom:.5rem">
-        <p style="font-size:.9rem;color:#666;margin-bottom:1rem">Seleccioná el tipo de bodega.</p>
-        <div class="submenu-list">
-          <div class="submenu-item" id="sm-cdg-hist-cdg">
-            <div class="si-icon">📋</div>
-            <div class="si-text">
-              <div class="si-title">Historial CDG</div>
-              <div class="si-sub">Conteos de bodega CDG</div>
-            </div>
-          </div>
-          <div class="submenu-item" id="sm-cdg-hist-ktm">
-            <div class="si-icon">📋</div>
-            <div class="si-text">
-              <div class="si-title">Historial KTM</div>
-              <div class="si-sub">Conteos de bodega KTM</div>
-            </div>
-          </div>
-          <div class="submenu-item" id="sm-cdg-hist-otros">
-            <div class="si-icon">📋</div>
-            <div class="si-text">
-              <div class="si-title">Historial Otros</div>
-              <div class="si-sub">Otros tipos de bodega</div>
-            </div>
-          </div>
+      <!-- Pestañas internas -->
+      <div class="tab-pills" style="margin-bottom:.75rem">
+        <button class="tab-pill on"  id="rcdg-tab-resumen"   onclick="rcdgSwitchTab('resumen')">📊 Resumen</button>
+        <button class="tab-pill"     id="rcdg-tab-historial" onclick="rcdgSwitchTab('historial')">📋 Historial</button>
+        <button class="tab-pill"     id="rcdg-tab-hallazgos" onclick="rcdgSwitchTab('hallazgos')">⚠️ Hallazgos</button>
+      </div>
+
+      <!-- ── PESTAÑA: RESUMEN / TABLERO ──────────────────────────── -->
+      <div id="rcdg-panel-resumen">
+        <!-- KPIs -->
+        <div id="rcdg-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:1rem"></div>
+        <!-- Filtro rápido por tipo -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
+          <span style="font-size:.78rem;color:#666;font-weight:600">Tipo:</span>
+          <button class="btn btn-sm rcdg-filtro-tipo on" data-tipo="todos"  style="font-size:.75rem">Todos</button>
+          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="CDG"    style="font-size:.75rem">CDG</button>
+          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="KTM"    style="font-size:.75rem">KTM</button>
+          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="otro"   style="font-size:.75rem">Otros</button>
+          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="todos"       style="font-size:.75rem;margin-left:6px">Fuente: Todos</button>
+          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="colaborativo" style="font-size:.75rem">Colaborativo</button>
+          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="clasico"      style="font-size:.75rem">Clásico</button>
+          <button class="btn btn-sm" id="rcdg-btn-refresh" style="margin-left:auto;font-size:.75rem">🔄 Actualizar</button>
+        </div>
+        <!-- Tabla resumen -->
+        <div class="tbl-wrap" id="rcdg-tabla-resumen-wrap">
+          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
         </div>
       </div>
 
-      <!-- Panel de resultados — se llena con showCDGHistEn() -->
-      <div id="cdg-historial-page-panel" style="display:none">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
-          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-historial-page-title">Historial</h3>
-          <button class="btn btn-sm" id="btn-cdg-historial-page-close">← Volver</button>
+      <!-- ── PESTAÑA: HISTORIAL ──────────────────────────────────── -->
+      <div id="rcdg-panel-historial" style="display:none">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
+          <span style="font-size:.78rem;color:#666;font-weight:600">Tipo:</span>
+          <button class="btn btn-sm rcdg-hist-tipo on" data-tipo="todos" style="font-size:.75rem">Todos</button>
+          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="CDG"   style="font-size:.75rem">CDG</button>
+          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="KTM"   style="font-size:.75rem">KTM</button>
+          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="otro"  style="font-size:.75rem">Otros</button>
         </div>
+        <div class="tbl-wrap" id="rcdg-tabla-historial-wrap">
+          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
+        </div>
+      </div>
+
+      <!-- ── PESTAÑA: HALLAZGOS ──────────────────────────────────── -->
+      <div id="rcdg-panel-hallazgos" style="display:none">
+        <!-- Filtros -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
+          <span style="font-size:.78rem;color:#666;font-weight:600">Fuente:</span>
+          <button class="btn btn-sm rcdg-hall-fuente on" data-fuente="todos"       style="font-size:.75rem">Todos</button>
+          <button class="btn btn-sm rcdg-hall-fuente"    data-fuente="colaborativo" style="font-size:.75rem">Colaborativo</button>
+          <button class="btn btn-sm rcdg-hall-fuente"    data-fuente="clasico"      style="font-size:.75rem">Clásico</button>
+          <select id="rcdg-hall-filtro-lic" class="field-inp" style="font-size:.78rem;max-width:160px;padding:4px 8px">
+            <option value="">Todas las licencias</option>
+          </select>
+        </div>
+        <div id="rcdg-hallazgos-content">
+          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
+        </div>
+      </div>
+
+      <!-- IDs legacy mantenidos por compatibilidad con showCDGHistEn() -->
+      <div id="cdg-historial-tipos"       style="display:none"></div>
+      <div id="cdg-historial-page-panel"  style="display:none">
+        <div id="cdg-historial-page-title"></div>
         <div id="cdg-historial-page-content"></div>
       </div>
     </div>
@@ -7248,6 +7287,535 @@ var CDGV2_LISTA_POLL_MS = 5000;   // 5s entre polls de la lista (descubrir licen
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
 // FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
+
+/* ══════════════════════════════════════════════════════════════════════════
+   REPORTES / HISTORIAL CDG — Tablero unificado v1 + v2
+   FIX (lun 1-jun-2026, v5.2.29)
+   - Pestaña Resumen/Tablero: KPIs + tabla por licencia (v1 y v2 unificados)
+   - Pestaña Historial: tabla unificada con badge Clásico/Colaborativo
+   - Pestaña Hallazgos: hallazgos CDG separados por fuente, filtros
+   No toca: Hamilton, CDG clásico, Captura v2, Manifiesto/WMS.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+// Estado interno del tablero (resetear al entrar)
+var rcdgDatos          = null;  // { v1: {}, v2: [] } — cargado una vez por sesión
+var rcdgFiltroTipo     = 'todos';
+var rcdgFiltroFuente   = 'todos';
+var rcdgHistFiltroTipo = 'todos';
+var rcdgHallFuente     = 'todos';
+var rcdgTabActiva      = 'resumen';
+
+// ── Navegación al entrar a pg-cdg-historial ──────────────────────────────
+// El handler sm-cdg-historial ya existe y llama navTo. Añadimos la carga aquí.
+(function(){
+  var origHandler = null;
+  var smHist = document.getElementById('sm-cdg-historial');
+  if(smHist) {
+    smHist.addEventListener('click', function(){
+      // Reset pestañas al entrar
+      rcdgTabActiva = 'resumen';
+      rcdgSwitchTab('resumen');
+      rcdgCargarDatos();
+    });
+  }
+})();
+
+// Cambiar pestaña interna de Reportes CDG
+function rcdgSwitchTab(tab) {
+  rcdgTabActiva = tab;
+  ['resumen','historial','hallazgos'].forEach(function(t){
+    var btn = document.getElementById('rcdg-tab-'+t);
+    var panel = document.getElementById('rcdg-panel-'+t);
+    if(btn)   btn.classList.toggle('on', t === tab);
+    if(panel) panel.style.display = (t === tab) ? '' : 'none';
+  });
+  if(tab === 'hallazgos' && rcdgDatos) rcdgRenderHallazgos();
+  if(tab === 'historial'  && rcdgDatos) rcdgRenderHistorial();
+}
+
+// ── Carga de datos: v1 (state.cdg) + v2 (/api/cdg/v2/listar) ─────────────
+function rcdgCargarDatos() {
+  document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
+    '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando datos…</div>';
+
+  // v1: mismo fetch que showCDGHistEn (Render + Supabase)
+  var p1render = fetch('/api/cdg').then(function(r){ return r.ok ? r.json() : {}; }).catch(function(){ return {}; });
+  var p1supa   = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  }).then(function(r){ return r.json(); }).then(function(rows){
+    if(rows && rows.length > 0) { try { return JSON.parse(rows[0].value).cdg || {}; } catch(e){ return {}; } }
+    return {};
+  }).catch(function(){ return {}; });
+
+  // v2: listar licencias con modo histórico (incluye cerradas antiguas) para Reportes.
+  // Captura colaborativa y Manifiesto siguen usando /api/cdg/v2/listar sin parámetro.
+  var p2 = fetch('/api/cdg/v2/listar?historico=true').then(function(r){ return r.json(); }).catch(function(){ return { ok:false, licencias:[] }; });
+
+  Promise.all([p1render, p1supa, p2]).then(function(res){
+    var renderData = res[0] || {};
+    var supaData   = res[1] || {};
+    // Merge v1 igual que showCDGHistEn
+    var v1 = {};
+    Object.keys(supaData).forEach(function(k){ v1[k] = supaData[k]; });
+    Object.keys(renderData).forEach(function(k){
+      var r = renderData[k], s = supaData[k];
+      if(!s){ v1[k] = r; return; }
+      v1[k] = ((r.items||[]).length >= (s.items||[]).length) ? r : s;
+    });
+
+    var v2list = (res[2].licencias || []);
+
+    rcdgDatos = { v1: v1, v2: v2list };
+    rcdgRenderResumen();
+    if(rcdgTabActiva === 'historial')  rcdgRenderHistorial();
+    if(rcdgTabActiva === 'hallazgos')  rcdgRenderHallazgos();
+  }).catch(function(e){
+    document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
+      '<div style="text-align:center;padding:1.5rem;color:#c0392b;font-size:.85rem">Error al cargar: '+escH(e.message||'sin conexión')+'</div>';
+  });
+}
+
+// ── RESUMEN / TABLERO ─────────────────────────────────────────────────────
+function rcdgRenderResumen() {
+  if(!rcdgDatos) return;
+  var { v1, v2 } = rcdgDatos;
+
+  // Construir lista unificada de conteos
+  var todos = [];
+
+  // v1: state.cdg entries
+  Object.keys(v1).forEach(function(id){
+    var c = v1[id];
+    var items = c.items || [];
+    var unidades = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
+    var costo    = items.reduce(function(a,it){
+      var cu = Number(it.costo) || (typeof getCosto==='function' ? getCosto(it.sku)||0 : 0);
+      return a + cu * (Number(it.qty)||0);
+    }, 0);
+    todos.push({
+      id: id, fuente: 'clasico',
+      tipo: c.tipo || 'CDG',
+      lineas: items.length, unidades: unidades, costo: costo,
+      estado: c.bloqueado ? 'cerrado' : 'borrador',
+      autor: c.autor || '—',
+      fecha: c.fechaCreacion || null,
+      wms: 'n/a'
+    });
+  });
+
+  // v2: licencias de /api/cdg/v2/listar con agregados del modo histórico
+  v2.forEach(function(l){
+    todos.push({
+      id: l.id, fuente: 'colaborativo',
+      tipo: l.tipo || 'CDG',
+      lineas: l.totalLineas || 0,
+      // totalUnidades y costoTotal vienen del server en modo histórico (cdg_lineas)
+      unidades: (l.totalUnidades !== null && l.totalUnidades !== undefined) ? l.totalUnidades : null,
+      costo:    (l.costoTotal    !== null && l.costoTotal    !== undefined) ? l.costoTotal    : null,
+      estado: l.estado,
+      autor: l.finalizador || l.creadoPor || '—',
+      fecha: l.fechaCreacion || null,
+      wms: 'pendiente'
+    });
+  });
+
+  // Aplicar filtros
+  var filtrados = todos.filter(function(c){
+    var okTipo   = rcdgFiltroTipo   === 'todos' || c.tipo === rcdgFiltroTipo
+                   || (rcdgFiltroTipo === 'otro' && c.tipo !== 'CDG' && c.tipo !== 'KTM');
+    var okFuente = rcdgFiltroFuente === 'todos' || c.fuente === rcdgFiltroFuente;
+    return okTipo && okFuente;
+  });
+
+  // KPIs
+  var nTotal     = filtrados.length;
+  var nCerrado   = filtrados.filter(function(c){ return c.estado==='cerrado'; }).length;
+  var nBorrador  = filtrados.filter(function(c){ return c.estado!=='cerrado'; }).length;
+  var totLineas  = filtrados.reduce(function(a,c){ return a+(c.lineas||0); }, 0);
+  var totUnid    = filtrados.filter(function(c){ return c.unidades!=null; })
+                             .reduce(function(a,c){ return a+(c.unidades||0); }, 0);
+  var totCosto   = filtrados.filter(function(c){ return c.costo!=null; })
+                             .reduce(function(a,c){ return a+(c.costo||0); }, 0);
+  var nColaborativo = filtrados.filter(function(c){ return c.fuente==='colaborativo'; }).length;
+  var nClasico      = filtrados.filter(function(c){ return c.fuente==='clasico'; }).length;
+
+  var kpiEl = document.getElementById('rcdg-kpis');
+  var kpiData = [
+    { label:'Total conteos', val: nTotal,     bg:'#f5f5f3', col:'#333' },
+    { label:'Finalizados',   val: nCerrado,   bg:'#e8f5e9', col:'#2e7d32' },
+    { label:'Borradores',    val: nBorrador,  bg:'#fff8e1', col:'#f57c00' },
+    { label:'Colaborativo',  val: nColaborativo, bg:'#e3f2fd', col:'#1565c0' },
+    { label:'Clásico',       val: nClasico,   bg:'#f3e5f5', col:'#6a1b9a' },
+    { label:'Líneas totales',val: totLineas.toLocaleString('es-GT'), bg:'#fafaf8', col:'#333' },
+    { label:'Unidades totales', val: totUnid.toLocaleString('es-GT'),   bg:'#fafaf8', col:'#555', title:'v1 clásico (items) + v2 colaborativo (cdg_lineas)' },
+    { label:'Costo total Q', val: 'Q '+Math.round(totCosto).toLocaleString('es-GT'), bg:'#fafaf8', col:'#1b5e20', title:'v1 clásico (costos SAP) + v2 colaborativo (costo_unit por línea)' },
+  ];
+  kpiEl.innerHTML = kpiData.map(function(k){
+    return '<div title="'+(k.title||'')+'" style="background:'+k.bg+';border-radius:10px;padding:.65rem .85rem;text-align:center">'
+      +'<div style="font-weight:700;font-size:1.05rem;color:'+k.col+'">'+k.val+'</div>'
+      +'<div style="font-size:.72rem;color:#888;margin-top:2px">'+k.label+'</div>'
+      +'</div>';
+  }).join('');
+
+  // Tabla
+  if(!filtrados.length){
+    document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
+      '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin conteos para el filtro seleccionado.</div>';
+    return;
+  }
+
+  var esSup = typeof isSup === 'function' && isSup();
+  var h = '<table><thead><tr>'
+    +'<th>Fuente</th><th>Licencia U25</th><th>Tipo</th>'
+    +'<th class="tc">Líneas</th><th class="tc">Unidades</th><th class="tc">Costo Q</th>'
+    +'<th>Estado</th><th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
+    +'</tr></thead><tbody>';
+
+  filtrados.forEach(function(c){
+    var fuenteBadge = c.fuente === 'colaborativo'
+      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap">👥 Colaborativo</span>'
+      : '<span style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap">🏢 Clásico</span>';
+    var estadoBadge = c.estado === 'cerrado'
+      ? '<span style="background:#fdecea;color:#c0392b;font-size:.72rem;padding:2px 7px;border-radius:10px">🔒 Finalizado</span>'
+      : (c.estado === 'activo'
+        ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.72rem;padding:2px 7px;border-radius:10px">● Activo</span>'
+        : '<span style="background:#fff8e1;color:#f57c00;font-size:.72rem;padding:2px 7px;border-radius:10px">📝 Borrador</span>');
+    var fechaStr = c.fecha ? (function(){
+      try { return new Date(c.fecha).toLocaleDateString('es-GT',{day:'2-digit',month:'2-digit',year:'2-digit'}); } catch(e){ return c.fecha; }
+    })() : '—';
+    var unidStr = c.unidades != null ? c.unidades.toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
+    var costoStr = c.costo != null ? 'Q'+Math.round(c.costo).toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
+
+    // Acciones
+    var acciones = '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center">';
+    acciones += '<button class="btn btn-xs rcdg-ver-btn" data-id="'+escH(c.id)+'" data-fuente="'+c.fuente+'"'
+      +' style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
+    if(c.fuente === 'colaborativo' && c.estado === 'cerrado' && esSup) {
+      acciones += '<button class="btn btn-xs rcdg-unlock-v2-btn" data-id="'+escH(c.id)+'"'
+        +' title="Desbloquear licencia (supervisor)" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
+    }
+    if(c.fuente === 'clasico' && c.estado === 'cerrado' && esSup) {
+      acciones += '<button class="btn btn-xs rcdg-unlock-v1-btn" data-id="'+escH(c.id)+'"'
+        +' title="Desbloquear conteo clásico (supervisor)" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
+    }
+    acciones += '</div>';
+
+    h += '<tr>'
+      +'<td>'+fuenteBadge+'</td>'
+      +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(c.id)+'</td>'
+      +'<td style="font-size:.82rem">'+escH(c.tipo)+'</td>'
+      +'<td class="tc">'+c.lineas+'</td>'
+      +'<td class="tc" style="font-size:.82rem">'+unidStr+'</td>'
+      +'<td class="tc" style="font-size:.82rem;white-space:nowrap">'+costoStr+'</td>'
+      +'<td>'+estadoBadge+'</td>'
+      +'<td style="font-size:.78rem;color:#666;white-space:nowrap">'+escH(c.autor)+'</td>'
+      +'<td style="font-size:.78rem;color:#888;white-space:nowrap">'+fechaStr+'</td>'
+      +'<td>'+acciones+'</td>'
+      +'</tr>';
+  });
+  h += '</tbody></table>';
+  var wrap = document.getElementById('rcdg-tabla-resumen-wrap');
+  wrap.innerHTML = h;
+
+  // Wire acciones
+  wrap.querySelectorAll('.rcdg-ver-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.dataset.id, fuente = btn.dataset.fuente;
+      if(fuente === 'colaborativo') {
+        // Navegar a Captura v2 y abrir esa licencia
+        if(typeof cdgv2AbrirLicencia === 'function') cdgv2AbrirLicencia(id);
+      } else {
+        // Abrir historial v1 con showCDGHist (en pg-cdg original) — sin tocar nada
+        navTo('pg-cdg','🏢 Conteos CDG');
+        setTimeout(function(){
+          var tipo = (rcdgDatos.v1[id]||{}).tipo || 'CDG';
+          var tipoArg = (tipo!=='CDG'&&tipo!=='KTM') ? 'otro' : tipo;
+          if(typeof showCDGHist === 'function') showCDGHist(tipoArg);
+        }, 150);
+      }
+    });
+  });
+
+  // Desbloquear v2 (supervisor)
+  wrap.querySelectorAll('.rcdg-unlock-v2-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.dataset.id;
+      if(!currentUser) return;
+      if(!confirm('¿Desbloquear licencia v2 '+id+'?\nEl equipo podrá volver a editarla.')) return;
+      fetch('/api/cdg/v2/'+encodeURIComponent(id)+'/accion', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ usuario: currentUser.name, tipo:'desbloquear', supervisor:true })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.ok){ rcdgCargarDatos(); }
+        else alert(d.error||'Error al desbloquear');
+      }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+
+  // Desbloquear v1 (supervisor) — usa endpoint existente de CDG clásico
+  wrap.querySelectorAll('.rcdg-unlock-v1-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.dataset.id;
+      if(!currentUser) return;
+      if(!confirm('¿Desbloquear conteo clásico '+id+'?\nPodrá volver a editarse desde CDG Clásico.')) return;
+      fetch('/api/cdg/unlock', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ contId:id, usuario: currentUser.name })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.ok){ lastVersion=-1; pollNow(); rcdgCargarDatos(); }
+        else alert(d.error||'Error al desbloquear');
+      }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+}
+
+// Filtros de tipo y fuente en Resumen
+(function(){
+  function wireFiltros(){
+    document.getElementById('rcdg-panel-resumen').addEventListener('click', function(e){
+      var bt = e.target.closest('.rcdg-filtro-tipo');
+      if(bt){
+        document.querySelectorAll('.rcdg-filtro-tipo').forEach(function(b){ b.classList.remove('on'); });
+        bt.classList.add('on');
+        rcdgFiltroTipo = bt.dataset.tipo;
+        if(rcdgDatos) rcdgRenderResumen();
+        return;
+      }
+      var bf = e.target.closest('.rcdg-filtro-fuente');
+      if(bf){
+        document.querySelectorAll('.rcdg-filtro-fuente').forEach(function(b){ b.classList.remove('on'); });
+        bf.classList.add('on');
+        rcdgFiltroFuente = bf.dataset.fuente;
+        if(rcdgDatos) rcdgRenderResumen();
+      }
+    });
+    var btnRefresh = document.getElementById('rcdg-btn-refresh');
+    if(btnRefresh) btnRefresh.addEventListener('click', function(){ rcdgDatos=null; rcdgCargarDatos(); });
+  }
+  // Defer para asegurar que el DOM existe
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireFiltros);
+  else wireFiltros();
+})();
+
+// ── PESTAÑA HISTORIAL ─────────────────────────────────────────────────────
+function rcdgRenderHistorial() {
+  if(!rcdgDatos) return;
+  var { v1, v2 } = rcdgDatos;
+  var todos = [];
+
+  Object.keys(v1).forEach(function(id){
+    var c = v1[id];
+    var items = c.items||[];
+    todos.push({
+      id:id, fuente:'clasico', tipo:c.tipo||'CDG',
+      lineas:items.length,
+      estado: c.bloqueado ? 'cerrado' : 'borrador',
+      autor: c.autor||'—', fecha: c.fechaCreacion||null
+    });
+  });
+  v2.forEach(function(l){
+    todos.push({
+      id:l.id, fuente:'colaborativo', tipo:l.tipo||'CDG',
+      lineas:l.totalLineas||0,
+      estado:l.estado,
+      autor:l.finalizador||l.creadoPor||'—', fecha:l.fechaCreacion||null
+    });
+  });
+
+  var filtrados = todos.filter(function(c){
+    if(rcdgHistFiltroTipo === 'todos') return true;
+    if(rcdgHistFiltroTipo === 'otro') return c.tipo!=='CDG'&&c.tipo!=='KTM';
+    return c.tipo === rcdgHistFiltroTipo;
+  });
+
+  var esSup = typeof isSup === 'function' && isSup();
+  var wrap  = document.getElementById('rcdg-tabla-historial-wrap');
+  if(!filtrados.length){
+    wrap.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin conteos.</div>';
+    return;
+  }
+
+  var h = '<table><thead><tr>'
+    +'<th>Fuente</th><th>Licencia U25</th><th>Tipo</th>'
+    +'<th class="tc">Líneas</th><th>Estado</th>'
+    +'<th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
+    +'</tr></thead><tbody>';
+
+  filtrados.forEach(function(c){
+    var fuenteBadge = c.fuente==='colaborativo'
+      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:2px 6px;border-radius:10px;font-weight:600">👥 Colaborativo</span>'
+      : '<span style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem;padding:2px 6px;border-radius:10px;font-weight:600">🏢 Clásico</span>';
+    var estadoBadge = c.estado==='cerrado'
+      ? '<span style="background:#fdecea;color:#c0392b;font-size:.7rem;padding:2px 6px;border-radius:10px">🔒</span>'
+      : (c.estado==='activo'
+        ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.7rem;padding:2px 6px;border-radius:10px">●</span>'
+        : '<span style="background:#fff8e1;color:#f57c00;font-size:.7rem;padding:2px 6px;border-radius:10px">📝</span>');
+    var fechaStr = c.fecha ? (function(){ try { return new Date(c.fecha).toLocaleDateString('es-GT',{day:'2-digit',month:'2-digit',year:'2-digit'}); } catch(e){ return c.fecha; } })() : '—';
+
+    var acciones = '<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:center">';
+    acciones += '<button class="btn btn-xs rcdg-hist-ver" data-id="'+escH(c.id)+'" data-fuente="'+c.fuente+'"'
+      +' style="background:#e8f4ff;color:#0066cc;font-weight:600">👁</button>';
+    if(c.fuente==='colaborativo' && c.estado==='cerrado' && esSup)
+      acciones += '<button class="btn btn-xs rcdg-hist-unlock-v2" data-id="'+escH(c.id)+'" title="Desbloquear" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
+    if(c.fuente==='clasico' && c.estado==='cerrado' && esSup)
+      acciones += '<button class="btn btn-xs rcdg-hist-unlock-v1" data-id="'+escH(c.id)+'" title="Desbloquear clásico" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
+    acciones += '</div>';
+
+    h += '<tr><td>'+fuenteBadge+'</td>'
+      +'<td style="font-weight:700;font-size:.83rem">'+escH(c.id)+'</td>'
+      +'<td style="font-size:.8rem">'+escH(c.tipo)+'</td>'
+      +'<td class="tc">'+c.lineas+'</td>'
+      +'<td>'+estadoBadge+'</td>'
+      +'<td style="font-size:.77rem;color:#666">'+escH(c.autor)+'</td>'
+      +'<td style="font-size:.77rem;color:#888">'+fechaStr+'</td>'
+      +'<td>'+acciones+'</td></tr>';
+  });
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+
+  // Wire ver
+  wrap.querySelectorAll('.rcdg-hist-ver').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(btn.dataset.fuente==='colaborativo'){
+        if(typeof cdgv2AbrirLicencia==='function') cdgv2AbrirLicencia(btn.dataset.id);
+      } else {
+        navTo('pg-cdg','🏢 Conteos CDG');
+        setTimeout(function(){ if(typeof showCDGHist==='function') showCDGHist((rcdgDatos.v1[btn.dataset.id]||{}).tipo==='KTM'?'KTM':'CDG'); },150);
+      }
+    });
+  });
+  // Wire desbloquear v2
+  wrap.querySelectorAll('.rcdg-hist-unlock-v2').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(!currentUser||!confirm('¿Desbloquear '+btn.dataset.id+'?')) return;
+      fetch('/api/cdg/v2/'+encodeURIComponent(btn.dataset.id)+'/accion',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({usuario:currentUser.name,tipo:'desbloquear',supervisor:true})
+      }).then(function(r){return r.json();}).then(function(d){
+        if(d.ok) rcdgCargarDatos(); else alert(d.error||'Error');
+      }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+  // Wire desbloquear v1
+  wrap.querySelectorAll('.rcdg-hist-unlock-v1').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(!currentUser||!confirm('¿Desbloquear '+btn.dataset.id+'?')) return;
+      fetch('/api/cdg/unlock',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({contId:btn.dataset.id,usuario:currentUser.name})
+      }).then(function(r){return r.json();}).then(function(d){
+        if(d.ok){lastVersion=-1;pollNow();rcdgCargarDatos();}else alert(d.error||'Error');
+      }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+}
+
+// Filtros pestaña Historial
+(function(){
+  function wireHistFiltros(){
+    var panel = document.getElementById('rcdg-panel-historial');
+    if(!panel) return;
+    panel.addEventListener('click', function(e){
+      var bt = e.target.closest('.rcdg-hist-tipo');
+      if(!bt) return;
+      panel.querySelectorAll('.rcdg-hist-tipo').forEach(function(b){ b.classList.remove('on'); });
+      bt.classList.add('on');
+      rcdgHistFiltroTipo = bt.dataset.tipo;
+      if(rcdgDatos) rcdgRenderHistorial();
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireHistFiltros);
+  else wireHistFiltros();
+})();
+
+// ── PESTAÑA HALLAZGOS ─────────────────────────────────────────────────────
+function rcdgRenderHallazgos() {
+  var hall = typeof hallazgos !== 'undefined' ? hallazgos : [];
+  // Solo hallazgos CDG (v1 y v2)
+  var cdgHall = hall.filter(function(h){ return h.tipo === 'CDG'; });
+
+  // Poblar selector de licencias
+  var sel = document.getElementById('rcdg-hall-filtro-lic');
+  if(sel) {
+    var lics = {};
+    cdgHall.forEach(function(h){ var l=h.cdgV2Licencia||h.cont||h.u25||''; if(l) lics[l]=true; });
+    var curVal = sel.value;
+    sel.innerHTML = '<option value="">Todas las licencias</option>'
+      + Object.keys(lics).sort().map(function(l){ return '<option value="'+escH(l)+'">'+escH(l)+'</option>'; }).join('');
+    sel.value = curVal;
+  }
+
+  var filtroLic = sel ? sel.value : '';
+  var filtrados = cdgHall.filter(function(h){
+    var esV2 = h.cdgVersion === 2;
+    var okFuente = rcdgHallFuente==='todos' ||
+      (rcdgHallFuente==='colaborativo' && esV2) ||
+      (rcdgHallFuente==='clasico' && !esV2);
+    var licH = h.cdgV2Licencia||h.cont||h.u25||'';
+    var okLic = !filtroLic || licH === filtroLic;
+    return okFuente && okLic;
+  });
+
+  var contenido = document.getElementById('rcdg-hallazgos-content');
+  if(!filtrados.length){
+    contenido.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin hallazgos para el filtro seleccionado.</div>';
+    return;
+  }
+
+  // Separar por fuente para no mezclar visualmente
+  var v2hall = filtrados.filter(function(h){ return h.cdgVersion===2; });
+  var v1hall = filtrados.filter(function(h){ return h.cdgVersion!==2; });
+
+  function renderGrupo(lista, titulo, color){
+    if(!lista.length) return '';
+    var h = '<div style="margin-bottom:1rem">'
+      +'<div style="font-size:.78rem;font-weight:700;color:'+color+';text-transform:uppercase;'
+      +'letter-spacing:.4px;margin-bottom:.4rem;padding:.3rem .6rem;background:'+color+'1a;border-radius:6px">'
+      +titulo+' ('+lista.length+')</div>';
+    lista.forEach(function(hh){
+      var licH = hh.cdgV2Licencia||hh.cont||hh.u25||'—';
+      h += '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;'
+        +'padding:.5rem .75rem;margin-bottom:.4rem;font-size:.82rem">'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+        +(hh.tipoHallazgo?'<span style="font-weight:600;color:#6d4c41">'+escH(hh.tipoHallazgo)+'</span>':'')
+        +'<span style="font-size:.75rem;background:#f5f5f3;padding:1px 6px;border-radius:8px">'+escH(licH)+'</span>'
+        +'<span style="color:#888;font-size:.75rem;margin-left:auto">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
+        +'</div>'
+        +(hh.desc?'<div style="color:#555;margin-top:3px">'+escH(hh.desc)+'</div>':'')
+        +'</div>';
+    });
+    return h + '</div>';
+  }
+
+  var html = '';
+  if(rcdgHallFuente==='todos' || rcdgHallFuente==='colaborativo')
+    html += renderGrupo(v2hall, '👥 Colaborativo CDG v2', '#1565c0');
+  if(rcdgHallFuente==='todos' || rcdgHallFuente==='clasico')
+    html += renderGrupo(v1hall, '🏢 Clásico CDG', '#6a1b9a');
+
+  contenido.innerHTML = html || '<div style="text-align:center;padding:1rem;color:#aaa;font-size:.85rem">Sin resultados.</div>';
+}
+
+// Filtros pestaña Hallazgos
+(function(){
+  function wireHallFiltros(){
+    var panel = document.getElementById('rcdg-panel-hallazgos');
+    if(!panel) return;
+    panel.addEventListener('click', function(e){
+      var bf = e.target.closest('.rcdg-hall-fuente');
+      if(bf){
+        panel.querySelectorAll('.rcdg-hall-fuente').forEach(function(b){ b.classList.remove('on'); });
+        bf.classList.add('on');
+        rcdgHallFuente = bf.dataset.fuente;
+        rcdgRenderHallazgos();
+      }
+    });
+    var selLic = document.getElementById('rcdg-hall-filtro-lic');
+    if(selLic) selLic.addEventListener('change', function(){ rcdgRenderHallazgos(); });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireHallFiltros);
+  else wireHallFiltros();
+})();
 
 // ── showCDGHistEn: igual que showCDGHist pero renderiza en IDs indicados ──────────────
 // Propósito: pg-cdg-historial tiene sus propios IDs de panel/título/contenido.
