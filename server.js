@@ -2911,12 +2911,15 @@ app.post('/api/cdg/wms/bulk', upload.single('file'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
 // CDG WMS SINCRONIZAR HAMILTON — POST /api/cdg/wms/sincronizar-hamilton
-// FIX (mar 2-jun-2026, server v20 rev):
-//   - snapshot/rollback real de teorico+version+historial antes de mutar.
-//   - Busca traslado Hamilton por licId directo Y por fallback cdgRef.
-//   - Recalcula siempre (reemplaza teoricoWMS aunque ya exista, usa WMS vigente).
-//   - Preserva fisico existente (nunca lo toca).
-//   - Agrega SKUs solo-WMS con qty=0.
+// FIX (mar 2-jun-2026, server v20 rev2):
+//   - Consolida por SKU antes de cruzar con WMS (fix bug líneas repetidas).
+//     CDG clásico puede tener N filas del mismo SKU; Hamilton necesita una sola.
+//   - Fuente de consolidación: (1) cdg_lineas v2, (2) state.cdg[lic].items v1,
+//     (3) teo.items existente como fallback.
+//   - Remapea fisico existente al nuevo alineamiento por SKU consolidado.
+//   - snapshot/rollback de teorico+fisico+version+historial.
+//   - Busca por licId directo y por fallback cdgRef.
+//   - Recalcula siempre con el WMS vigente.
 //   - No crea conteos nuevos. No toca cdg_lineas. No toca Hamilton general.
 // ══════════════════════════════════════════════════════════════════════════
 app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
@@ -2932,11 +2935,13 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
 
     // ── Snapshot ANTES de mutar — para rollback si el save falla ──────────
     var snapTeorico   = state.teorico ? JSON.parse(JSON.stringify(state.teorico)) : {};
+    var snapFisico    = state.fisico   ? JSON.parse(JSON.stringify(state.fisico))  : {};
     var snapVersion   = state.version;
     var snapHistorial = state.historial ? state.historial.length : 0;
 
     var actualizadas   = [];
     var sinConteo      = [];
+    var advertencias   = [];
 
     for(var wi = 0; wi < wmsAllRows.length; wi++) {
       var wmsRow = wmsAllRows[wi];
@@ -2949,7 +2954,6 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
          (state.teorico[lic].fromCDG || state.teorico[lic].cdgValidado)) {
         teoKey = lic;
       } else {
-        // Fallback: buscar cualquier key con cdgRef === lic
         var keys = state.teorico ? Object.keys(state.teorico) : [];
         for(var ki = 0; ki < keys.length; ki++) {
           var k = keys[ki];
@@ -2970,7 +2974,7 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
       } catch(e) { skusWMS = []; }
       if(!skusWMS.length) continue;
 
-      // Construir mapa WMS
+      // Mapa WMS: SKU_UPPER → { cantidad, descripcion }
       var wmsMap = {};
       var wmsDescMap = {};
       skusWMS.forEach(function(s){
@@ -2979,27 +2983,131 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
         if(!wmsDescMap[sk] && s.descripcion) wmsDescMap[sk] = s.descripcion;
       });
 
-      // Recalcular siempre (reemplaza teoricoWMS anterior si existe).
-      // Preservar todos los campos del item original (incluido fisico si hubiera).
-      // Quitar _soloWMS de ítems CDG previos que ahora están en el WMS vigente.
-      var itemsBase = (Array.isArray(teo.items) ? teo.items : [])
-        .filter(function(it){ return !it._soloWMS; }); // quitar solo-WMS viejos
+      // ── Construir base consolidada por SKU ─────────────────────────────
+      // Prioridad:
+      //   1. CDG v2: leer cdg_lineas vigentes y agrupar por SKU.
+      //   2. CDG v1: leer state.cdg[lic].items y agrupar por SKU.
+      //   3. Fallback: items existentes en teo (también agrupar — puede tener dupes).
+      // En todos los casos: UNA fila por SKU en la base consolidada.
+      // { skUpper: { sku, desc, qty, costo, orden } }
+      var cdgConsolidado = {};  // SK_UPPER → { sku, desc, qty, costo, orden }
+      var ordenSku = [];        // orden de primera aparición
 
-      var skusCDG = {};
-      var nuevosItems = itemsBase.map(function(item){
-        var sk = String(item.sku || '').trim().toUpperCase();
-        skusCDG[sk] = true;
-        if(wmsMap[sk] !== undefined) {
-          // Preservar todos los campos; solo actualizar/agregar teoricoWMS
-          return Object.assign({}, item, { teoricoWMS: wmsMap[sk] });
+      // Intento 1: CDG v2 desde cdg_lineas
+      var metaV2 = null;
+      try { metaV2 = await cdgGetMeta(lic); } catch(e) {}
+      if(metaV2) {
+        var lineasV2 = await cdgGetLineas(lic, null); // carga completa, solo activas
+        if(Array.isArray(lineasV2) && lineasV2.length) {
+          lineasV2.forEach(function(l){
+            var sk = String(l.sku || '').trim().toUpperCase();
+            if(!sk) return;
+            var qty = Number(l.cantidad) || 0;
+            if(cdgConsolidado[sk]) {
+              cdgConsolidado[sk].qty += qty;
+              if(!cdgConsolidado[sk].desc && l.descripcion) cdgConsolidado[sk].desc = l.descripcion;
+              if(cdgConsolidado[sk].costo == null && l.costo_unit != null) cdgConsolidado[sk].costo = l.costo_unit;
+            } else {
+              cdgConsolidado[sk] = { sku: l.sku, desc: l.descripcion||'', qty: qty, costo: l.costo_unit||null, orden: ordenSku.length };
+              ordenSku.push(sk);
+            }
+          });
         }
-        // SKU CDG sin WMS: quitar teoricoWMS si lo tenía de una sync anterior
-        var copia = Object.assign({}, item);
-        delete copia.teoricoWMS;
-        return copia;
+      }
+
+      // Intento 2: CDG v1 desde state.cdg
+      if(!ordenSku.length && state.cdg && state.cdg[lic]) {
+        var itemsV1 = state.cdg[lic].items || [];
+        itemsV1.forEach(function(it){
+          var sk = String(it.sku || '').trim().toUpperCase();
+          if(!sk) return;
+          var qty = Number(it.qty) || Number(it.cantidad) || 0;
+          if(cdgConsolidado[sk]) {
+            cdgConsolidado[sk].qty += qty;
+            if(!cdgConsolidado[sk].desc && it.desc) cdgConsolidado[sk].desc = it.desc;
+            if(cdgConsolidado[sk].costo == null && it.costo != null) cdgConsolidado[sk].costo = it.costo;
+          } else {
+            cdgConsolidado[sk] = { sku: it.sku, desc: it.desc||'', qty: qty, costo: it.costo||null, orden: ordenSku.length };
+            ordenSku.push(sk);
+          }
+        });
+      }
+
+      // Fallback 3: items existentes en teo (sin _soloWMS), también consolidando
+      if(!ordenSku.length) {
+        var itemsFallback = (Array.isArray(teo.items) ? teo.items : [])
+          .filter(function(it){ return !it._soloWMS; });
+        itemsFallback.forEach(function(it){
+          var sk = String(it.sku || '').trim().toUpperCase();
+          if(!sk) return;
+          var qty = Number(it.qty) || Number(it.cantidad) || 0;
+          if(cdgConsolidado[sk]) {
+            cdgConsolidado[sk].qty += qty;
+            if(!cdgConsolidado[sk].desc && it.desc) cdgConsolidado[sk].desc = it.desc;
+          } else {
+            cdgConsolidado[sk] = { sku: it.sku, desc: it.desc||'', qty: qty, costo: null, orden: ordenSku.length };
+            ordenSku.push(sk);
+          }
+        });
+      }
+
+      // ── Remap fisico existente al nuevo índice consolidado por SKU ────────
+      // El fisico anterior puede estar alineado a N filas del mismo SKU.
+      // Consolidamos sumando fisico y dañado por SKU, usando el teo anterior para saber
+      // qué SKU correspondía a cada posición.
+      var viejoFisico = state.fisico && state.fisico[teoKey];
+      var viejoItems  = Array.isArray(teo.items) ? teo.items.filter(function(it){ return !it._soloWMS; }) : [];
+      // fisMapeado: SK_UPPER → { fisico, daniado, quien, ts, cobertura }
+      var fisMapeado = {};
+      if(Array.isArray(viejoFisico) && viejoFisico.length && viejoItems.length) {
+        viejoItems.forEach(function(it, idx){
+          var sv = viejoFisico[idx];
+          if(!sv || sv.fisico === null || sv.fisico === undefined) return;
+          var sk = String(it.sku || '').trim().toUpperCase();
+          var fv = Number(sv.fisico);
+          var dv = Number(sv.daniado || 0);
+          if(fisMapeado[sk]) {
+            fisMapeado[sk].fisico  += fv;
+            fisMapeado[sk].daniado += dv;
+            // Conservar último quien/ts no vacío
+            if(sv.quien) fisMapeado[sk].quien = sv.quien;
+            if(sv.ts)    fisMapeado[sk].ts    = sv.ts;
+          } else {
+            fisMapeado[sk] = {
+              fisico:   fv,
+              daniado:  dv,
+              quien:    sv.quien    || '',
+              ts:       sv.ts       || '',
+              cobertura: sv.cobertura || 'En revisión',
+              calcExpr: sv.calcExpr || null
+            };
+          }
+        });
+      }
+
+      // ── Cruzar consolidado con WMS ────────────────────────────────────────
+      var skusCDG = {};
+      var nuevosItems = ordenSku.map(function(sk){
+        skusCDG[sk] = true;
+        var base = cdgConsolidado[sk];
+        var desc = base.desc || wmsDescMap[sk] || '';
+        var item = {
+          sku:  base.sku,
+          desc: desc,
+          qty:  base.qty   // Validado CDG consolidado
+        };
+        if(base.costo != null) item.costo = base.costo;
+        if(wmsMap[sk] !== undefined) {
+          item.teoricoWMS = wmsMap[sk];
+        }
+        if(base.sku && base.sku.trim().toUpperCase() !== sk) {
+          // Normalizar sku al original del CDG
+        }
+        item.raw = { origen: 'CDG', status: 'CDG Validado' };
+        return item;
       });
 
-      // SKUs solo-WMS (no en CDG)
+      // SKUs solo-WMS (en WMS pero no en CDG)
       Object.keys(wmsMap).forEach(function(sk){
         if(skusCDG[sk]) return;
         nuevosItems.push({
@@ -3010,10 +3118,34 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
         });
       });
 
-      // Fisico: nunca se toca (la asignación de items no lo afecta porque
-      // fisico está en state.fisico[teoKey], separado de state.teorico[teoKey].items)
+      // ── Actualizar teorico ────────────────────────────────────────────────
       teo.items = nuevosItems;
-      actualizadas.push(lic + (teoKey !== lic ? '→'+teoKey : ''));
+
+      // ── Actualizar fisico si hay remap disponible ─────────────────────────
+      var tieneFisicoRemap = Object.keys(fisMapeado).length > 0;
+      if(tieneFisicoRemap) {
+        // Construir nuevo array fisico alineado a nuevosItems (excluye _soloWMS)
+        var nuevoFisico = nuevosItems.map(function(item){
+          if(item._soloWMS) return null; // SKU solo-WMS: sin físico
+          var sk = String(item.sku || '').trim().toUpperCase();
+          var fm = fisMapeado[sk];
+          if(!fm) return null; // sin físico registrado para este SKU
+          return {
+            fisico:    fm.fisico,
+            daniado:   fm.daniado,
+            quien:     fm.quien,
+            ts:        fm.ts,
+            cobertura: fm.cobertura,
+            calcExpr:  fm.calcExpr,
+            lastAt:    Date.now()
+          };
+        });
+        state.fisico[teoKey] = nuevoFisico;
+      }
+      // Si no hay fisico previo con datos: no tocar state.fisico[teoKey]
+
+      actualizadas.push(lic + (teoKey !== lic ? '→'+teoKey : '')
+        + ' (' + nuevosItems.filter(function(i){ return !i._soloWMS; }).length + ' SKUs consolidados)');
     }
 
     // ── Persistir ────────────────────────────────────────────────────────
@@ -3026,8 +3158,9 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
         );
         console.log('CDG WMS sincronizar-hamilton OK:', actualizadas.length, 'licencias,', usuario);
       } catch(saveErr) {
-        // Rollback completo: restaurar teorico, version e historial
+        // Rollback completo: restaurar teorico, fisico, version e historial
         state.teorico = snapTeorico;
+        state.fisico  = snapFisico;
         state.version = snapVersion;
         if(state.historial) state.historial.length = snapHistorial;
         console.log('CDG WMS sincronizar-hamilton ROLLBACK:', saveErr.message);
@@ -3042,6 +3175,7 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
       ok:              true,
       actualizadas:    actualizadas,
       sinConteo:       sinConteo,
+      advertencias:    advertencias.length ? advertencias : undefined,
       totalProcesadas: wmsAllRows.length
     });
 
