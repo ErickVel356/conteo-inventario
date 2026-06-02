@@ -8499,16 +8499,17 @@ function wmsCargarEstado(licId){
     pLineas = fetch('/api/cdg/v2/' + encodeURIComponent(licId))
       .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,lineas:[]}; });
   } else if(fuente === 'clasico') {
-    // Leer de state.cdg local (ya disponible por el polling de Hamilton)
+    // FIX (mar 2-jun-2026, v5.2.29 rev): cdgEntry incluye cdg[licId] como fallback.
+    // Antes se calculaba cdgEntry pero se ignoraba, usando solo cdgLocal por separado.
+    // Si cdgLocal existía pero cdgEntry no, itemsCdgV1 quedaba vacío → Validado CDG = 0.
     var cdgEntry = (typeof window !== 'undefined' && window._cdgState && window._cdgState[licId])
       || (typeof state !== 'undefined' && state.cdg && state.cdg[licId])
+      || (typeof cdg !== 'undefined' && cdg[licId])
       || null;
-    // El cliente lo tiene en la variable global "cdg" si existe (expuesta por publicState)
-    var cdgLocal = (typeof cdg !== 'undefined' && cdg[licId]) ? cdg[licId] : null;
-    var itemsCdgV1 = cdgLocal ? (cdgLocal.items || []) : [];
+    var itemsCdgV1 = cdgEntry ? (cdgEntry.items || []) : [];
     // Convertir al formato que espera wmsCompararSkus (igual que líneas v2)
     var lineasV1 = itemsCdgV1.map(function(it){
-      return { sku: it.sku, cantidad: it.qty, descripcion: it.desc || '', eliminada: false };
+      return { sku: it.sku, cantidad: Number(it.qty || it.cantidad || 0), descripcion: it.desc || it.descripcion || '', eliminada: false };
     });
     pLineas = Promise.resolve({ ok: true, lineas: lineasV1 });
   } else {
