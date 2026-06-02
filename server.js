@@ -354,6 +354,88 @@ app.post('/api/cdg/unlock', (req, res) => {
   res.json({ ok:true });
 });
 
+
+// ── cdgEnriquecerItemsWMS ──────────────────────────────────────────────────
+// FIX (lun 1-jun-2026, server v20 rev): devuelve la UNIÓN de items CDG + SKUs WMS.
+//
+// CORRECCIÓN vs versión anterior (solo hacía map sobre items CDG):
+//   La versión anterior agregaba teoricoWMS a SKUs que CDG sí contó, pero dejaba
+//   invisible cualquier SKU que existiera en WMS y CDG no hubiera contado.
+//   Un SKU WMS con 50 unidades y qty CDG = 0 quedaba fuera de Hamilton → faltante
+//   invisible. Esto era bloqueante.
+//
+// Comportamiento correcto:
+//   1. SKU en CDG y WMS → qty = Validado CDG, teoricoWMS = cantidad WMS.
+//   2. SKU en CDG, NO en WMS → item sin cambios (sin teoricoWMS). Fallback legacy OK.
+//   3. SKU en WMS, NO en CDG → nueva línea: qty=0, teoricoWMS=cantidad WMS.
+//      Aparece en Hamilton: Teórico s/WMS=N, Validado CDG=0.
+//
+// DEUDA TÉCNICA (no resuelta en este fix):
+//   Los exports de Traslados CDG y updateSummaryCard usan item.qty para calcular
+//   diferencias. Con los nuevos items WMS-only (qty=0), el resumen Hamilton puede
+//   contar más faltantes de lo que muestra la tabla si no se actualiza esa lógica.
+//   Fix pendiente: ajustar buildReporte / exportCDG para leer teoricoWMS como base
+//   de diferencia cuando esCDG, igual que renderConteo ya hace.
+//
+// Si no hay WMS o falla la consulta → devuelve items sin cambios (backward-compatible).
+// Se usa en /api/cdg/finalizar (v1) y en el cierre CDG v2.
+async function cdgEnriquecerItemsWMS(licenciaId, items) {
+  if(!SUPABASE_URL || !SUPABASE_KEY || !licenciaId) return items || [];
+  try {
+    var wmsRows = await supabase('GET', 'cdg_wms', null,
+      '?licencia_id=eq.' + encodeURIComponent(cdgNormId(licenciaId)) + '&limit=1');
+    if(!Array.isArray(wmsRows) || !wmsRows.length) return items || []; // sin WMS — OK
+    var wmsRow = wmsRows[0];
+    var skusWMS = typeof wmsRow.skus === 'string' ? JSON.parse(wmsRow.skus) : (wmsRow.skus || []);
+
+    // Mapa WMS: SKU_NORMALIZADO → { cantidad, descripcion }
+    var wmsMap = {};
+    skusWMS.forEach(function(s){
+      var sk = String(s.sku || '').trim().toUpperCase();
+      if(!wmsMap[sk]) {
+        wmsMap[sk] = { cantidad: 0, descripcion: s.descripcion || '' };
+      }
+      wmsMap[sk].cantidad += (Number(s.cantidad) || 0);
+      // Preferir descripción no vacía si la anterior era vacía
+      if(!wmsMap[sk].descripcion && s.descripcion) wmsMap[sk].descripcion = s.descripcion;
+    });
+
+    // Conjunto de SKUs ya cubiertos por CDG (para detectar solo-WMS al final)
+    var itemsCdg = Array.isArray(items) ? items : [];
+    var skusCDG = {};
+    var resultado = itemsCdg.map(function(item) {
+      var sk = String(item.sku || '').trim().toUpperCase();
+      skusCDG[sk] = true;
+      if(wmsMap[sk] !== undefined) {
+        // SKU en CDG y en WMS → agregar teoricoWMS
+        return Object.assign({}, item, { teoricoWMS: wmsMap[sk].cantidad });
+      }
+      // SKU en CDG pero no en WMS → sin teoricoWMS (fallback legacy)
+      return item;
+    });
+
+    // SKUs en WMS que CDG NO contó → agregar como líneas con qty=0
+    var tipoEfectivo = 'CDG'; // valor por defecto; el llamador lo conoce pero no se pasa aquí
+    Object.keys(wmsMap).forEach(function(sk){
+      if(skusCDG[sk]) return; // ya cubierto por CDG
+      var entrada = wmsMap[sk];
+      resultado.push({
+        sku:         sk,
+        desc:        entrada.descripcion || '',
+        qty:         0,           // Validado CDG = 0 (no fue contado)
+        teoricoWMS:  entrada.cantidad,
+        raw:         { origen: tipoEfectivo, status: tipoEfectivo + ' Validado' },
+        _soloWMS:    true         // marca interna para diagnóstico; no afecta renderConteo
+      });
+    });
+
+    return resultado;
+  } catch(e) {
+    console.log('cdgEnriquecerItemsWMS warn (non-fatal):', e.message);
+    return items || []; // fallo silencioso — no romper el cierre CDG
+  }
+}
+
 app.post('/api/cdg/finalizar', async (req, res) => {
   const { contId, items, usuario, traslado, tipo, fotoGral, fotos, bloqueado } = req.body;
   if(!contId) return res.status(400).json({ ok:false });
@@ -376,6 +458,14 @@ app.post('/api/cdg/finalizar', async (req, res) => {
     // esta sección, incluyendo los KTM. Erick + Ever confirmaron 23-may que KTM
     // debe verse como categoría distinta en el export.
     var tipoEfectivo = tipo || 'CDG';
+    // FIX (lun 1-jun-2026, server v20): enriquecer items con teoricoWMS desde cdg_wms.
+    // qty = Validado CDG (el conteo físico CDG). teoricoWMS = teórico del WMS si existe.
+    var itemsEnriquecidos = await cdgEnriquecerItemsWMS(num, items.map(i => ({
+      sku:  i.sku,
+      desc: i.desc,
+      qty:  i.qty,
+      raw:  { origen:tipoEfectivo, status:tipoEfectivo+' Validado', fecha:new Date().toLocaleDateString('es') }
+    })));
     state.teorico[num] = {
       type:         'Traslados',
       fromCDG:      true,
@@ -383,12 +473,7 @@ app.post('/api/cdg/finalizar', async (req, res) => {
       cdgValidado:  true,
       cdgBloqueado: true,
       cdgTipo:      tipoEfectivo,
-      items: items.map(i => ({
-        sku:  i.sku,
-        desc: i.desc,
-        qty:  i.qty,
-        raw:  { origen:tipoEfectivo, status:tipoEfectivo+' Validado', fecha:new Date().toLocaleDateString('es') }
-      }))
+      items: itemsEnriquecidos
     };
     state.fisico[num] = null;
   } else {
@@ -2483,11 +2568,14 @@ app.post('/api/cdg/v2/:id/accion', async (req, res) => {
       };
       if(!state.teorico) state.teorico = {};
       if(!state.teorico[licenciaId]) {
+        // FIX (lun 1-jun-2026, server v20): enriquecer items v2 con teoricoWMS.
+        var itemsV2base = itemsV2.map(function(s) {
+          return { sku: s.sku, desc: s.desc, qty: s.qty,
+            raw: { origen: 'CDG', status: 'CDG Validado', tipo: meta.tipo || 'CDG' } };
+        });
+        var itemsV2enc = await cdgEnriquecerItemsWMS(licenciaId, itemsV2base);
         state.teorico[licenciaId] = {
-          items: itemsV2.map(function(s) {
-            return { sku: s.sku, desc: s.desc, qty: s.qty,
-              raw: { origen: 'CDG', status: 'CDG Validado', tipo: meta.tipo || 'CDG' } };
-          }),
+          items: itemsV2enc,
           type:        meta.tipo || 'CDG',
           fromCDG:     true,
           cdgRef:      licenciaId,
