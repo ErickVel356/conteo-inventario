@@ -2726,276 +2726,9 @@ function cdgNormHdr(h) {
     .replace(/[^a-z0-9]/g, '');                        // solo alfanumérico
 }
 
-// ── cdgCargarWmsDesdeExcel ────────────────────────────────────────────────
-// Helper que encapsula todo el parseo y guardado del WMS desde Excel.
-// FIX (mar 2-jun-2026, server v20): extraído para reutilizar en el endpoint
-// general POST /api/cdg/wms/:id (sin cdg_meta) y en POST /api/cdg/v2/:id/wms.
-// Parámetros:
-//   licenciaId: ya normalizado con cdgNormId
-//   req: request de Express (req.file, req.body.usuario)
-//   meta: cdg_meta ya cargado (o null si no existe)
-//   res: response de Express
-async function cdgCargarWmsDesdeExcel(licenciaId, req, meta, res) {
-  var usuario = String(req.body && req.body.usuario ? req.body.usuario : '').trim();
-  if(!usuario)  return res.status(400).json({ ok: false, error: 'falta usuario' });
-  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
-
-  try {
-    // ── Parsear Excel ────────────────────────────────────────────────────
-    var wb;
-    try {
-      wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false, cellDates: true });
-    } catch(e) {
-      return res.status(400).json({ ok: false, error: 'El archivo no es un Excel válido. (' + e.message + ')' });
-    }
-
-    var advertencia = null;
-    var sheetName = wb.SheetNames.find(function(n) { return n.trim().toLowerCase() === 'traslados'; });
-    if(!sheetName) {
-      sheetName = wb.SheetNames[0];
-      advertencia = 'Hoja "Traslados" no encontrada. Se usó la primera hoja: "' + sheetName + '". Verificá que estás cargando el archivo WMS correcto.';
-    }
-    var ws   = wb.Sheets[sheetName];
-    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-    if(rows.length < 2) return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
-
-    // ── Detectar columnas ────────────────────────────────────────────────
-    var hdr     = rows[0].map(cdgNormHdr);
-    var cNum    = hdr.indexOf('numero');
-    var cSku    = hdr.indexOf('sku');
-    var cNombre = hdr.indexOf('nombre');
-    if(cNombre < 0) cNombre = hdr.indexOf('descripcion');
-    var cCant   = hdr.indexOf('cant');
-    var cUnis   = hdr.indexOf('unidades');
-    var cFecha  = hdr.indexOf('fecha');
-    var cOrigen = hdr.indexOf('origen');
-    var cDest   = hdr.indexOf('destino');
-    var cTipo   = hdr.indexOf('tipo');
-    var cStatus = hdr.indexOf('status');
-    var cLineas = hdr.indexOf('lineas');
-
-    var faltantes = [];
-    if(cNum  < 0) faltantes.push('"Número"');
-    if(cSku  < 0) faltantes.push('"SKU"');
-    if(cCant < 0 && cUnis < 0) faltantes.push('"Cant." o "Unidades"');
-    if(faltantes.length > 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'Columnas requeridas no encontradas: ' + faltantes.join(', ') + '. '
-             + 'Encabezados detectados: ' + rows[0].join(', ') + '. '
-             + 'Verificá que estás cargando el archivo WMS correcto (hoja "Traslados" del export WMS).'
-      });
-    }
-
-    // ── Filtrar por licencia ─────────────────────────────────────────────
-    var licNorm = cdgNormLicWMS(licenciaId);
-    var filasFiltradas = rows.slice(1).filter(function(r) {
-      return cdgNormLicWMS(r[cNum]) === licNorm;
-    });
-    if(filasFiltradas.length === 0) {
-      var licEncontradas = [];
-      var vistas = {};
-      for(var i = 1; i < rows.length && licEncontradas.length < 10; i++) {
-        var v = cdgNormLicWMS(rows[i][cNum]);
-        if(v && !vistas[v]) { licEncontradas.push(v); vistas[v] = true; }
-      }
-      return res.status(400).json({
-        ok: false,
-        error: 'El archivo no contiene filas para la licencia "' + licenciaId + '". '
-             + 'Licencias encontradas: ' + licEncontradas.join(', ')
-             + (licEncontradas.length === 10 ? ' (y más…)' : '') + '.'
-      });
-    }
-
-    // ── Extraer encabezado ───────────────────────────────────────────────
-    var f0 = filasFiltradas[0];
-    var encabezado = {
-      fecha:     f0[cFecha]  || null,
-      origen:    cOrigen  >= 0 ? (f0[cOrigen]  || null) : null,
-      destino:   cDest    >= 0 ? (f0[cDest]    || null) : null,
-      tipo:      cTipo    >= 0 ? (f0[cTipo]    || null) : null,
-      status:    cStatus  >= 0 ? (f0[cStatus]  || null) : null,
-      lineasWMS: cLineas  >= 0 ? Number(f0[cLineas] || 0) : 0
-    };
-
-    // ── Procesar filas: parsear + deduplicar ─────────────────────────────
-    var skuMap = {}, skuOrder = [];
-    filasFiltradas.forEach(function(r) {
-      var sku = String(r[cSku] || '').trim();
-      if(!sku) return;
-      var qty = cdgParseQty(cCant >= 0 ? r[cCant] : null);
-      if(qty === null) qty = cdgParseQty(cUnis >= 0 ? r[cUnis] : null);
-      if(qty === null) return;
-      var desc = String(cNombre >= 0 ? (r[cNombre] || '') : '').trim();
-      if(skuMap[sku]) {
-        skuMap[sku].cantidad += qty;
-        if(!skuMap[sku].descripcion && desc) skuMap[sku].descripcion = desc;
-      } else {
-        skuMap[sku] = { descripcion: desc, cantidad: qty };
-        skuOrder.push(sku);
-      }
-    });
-
-    // ── Enriquecer descripciones vacías desde sku_catalog ────────────────
-    var skusSinDesc = skuOrder.filter(function(s) { return !skuMap[s].descripcion; });
-    if(skusSinDesc.length > 0 && SUPABASE_URL && SUPABASE_KEY) {
-      var enrichWarnings = [];
-      for(var ci = 0; ci < skusSinDesc.length; ci += 200) {
-        var chunk = skusSinDesc.slice(ci, ci + 200);
-        try {
-          var catalogRows = await supabase('GET', 'sku_catalog', null,
-            '?sku=in.(' + chunk.map(function(s){ return encodeURIComponent(s); }).join(',') + ')&select=sku,descripcion');
-          if(Array.isArray(catalogRows)) {
-            catalogRows.forEach(function(row) {
-              if(skuMap[row.sku] && !skuMap[row.sku].descripcion && row.descripcion)
-                skuMap[row.sku].descripcion = row.descripcion;
-            });
-          }
-        } catch(enrichErr) {
-          enrichWarnings.push('sku_catalog chunk ' + ci + ': ' + enrichErr.message);
-        }
-      }
-      if(enrichWarnings.length) advertencia = (advertencia ? advertencia + ' | ' : '') + enrichWarnings.join(' | ');
-    }
-
-    // ── Construir array final + UPSERT ───────────────────────────────────
-    var skusArray = skuOrder.map(function(sku) {
-      return { sku: sku, descripcion: skuMap[sku].descripcion || '', cantidad: skuMap[sku].cantidad };
-    });
-    var totalSkus     = skusArray.length;
-    var totalUnidades = skusArray.reduce(function(a, s){ return a + s.cantidad; }, 0);
-    var now           = new Date().toISOString();
-    var nombreArchivo = req.file.originalname || 'archivo.xlsx';
-
-    await withTimeout(cdgUpsertWms(licenciaId, {
-      licencia_id:    licenciaId,
-      skus:           JSON.stringify(skusArray),
-      encabezado:     JSON.stringify(encabezado),
-      cargado_por:    usuario,
-      ts_carga:       now,
-      nombre_archivo: nombreArchivo,
-      total_skus:     totalSkus,
-      total_unidades: totalUnidades
-    }), 15000, 'CDG WMS upsert');
-
-    // ── Actualizar meta.wms si existe cdg_meta ────────────────────────────
-    // Si meta es null (v1 o solo-WMS), no intentar cdgSaveMeta.
-    var metaWarning = null;
-    if(meta) {
-      meta.wms = { cargadoPor: usuario, tsCarga: now, nombreArchivo, totalSkus, totalUnidades };
-      cdgBitacora(meta, usuario, 'wms_cargado', nombreArchivo + ' — ' + totalSkus + ' SKUs, ' + totalUnidades + ' unidades');
-      try {
-        await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG WMS meta save');
-      } catch(metaErr) {
-        try {
-          await withTimeout(cdgSaveMeta(licenciaId, meta), 10000, 'CDG WMS meta save retry');
-        } catch(retryErr) {
-          metaWarning = 'WMS guardado. No se pudo actualizar caché de metadata (' + retryErr.message + '). El WMS estará disponible igual.';
-          console.log('CDG WMS meta save FAILED after retry:', retryErr.message);
-        }
-      }
-    }
-
-    var respAdvertencia = [advertencia, metaWarning].filter(Boolean).join(' | ') || undefined;
-    console.log('CDG WMS cargado:', licenciaId, 'por', usuario, '—', totalSkus, 'SKUs,', totalUnidades, 'unidades');
-    res.json({
-      ok: true, totalSkus, totalUnidades, tsCarga: now,
-      ...(respAdvertencia ? { advertencia: respAdvertencia } : {})
-    });
-
-  } catch(e) {
-    console.log('CDG WMS upload FAILED:', e.message);
-    res.status(500).json({ ok: false, error: 'Error al procesar WMS: ' + e.message });
-  }
-}
-
-// ── POST /api/cdg/wms/:id ─────────────────────────────────────────────────
-// Endpoint general WMS: NO exige cdg_meta v2.
-// FIX (mar 2-jun-2026, server v20): permite cargar WMS para v1, v2 y solo-WMS.
-// Si existe cdg_meta y estado === 'cerrado' → rechaza.
-// Si existe cdg_meta abierta → guarda WMS + actualiza meta.wms.
-// Si NO existe cdg_meta → guarda solo en cdg_wms (sin meta).
-app.post('/api/cdg/wms/:id', upload.single('file'), async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  try {
-    var meta = null;
-    try { meta = await cdgGetMeta(licenciaId); } catch(e) { /* no existe como v2 */ }
-    if(meta && meta.estado === 'cerrado') {
-      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
-    }
-    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
-  } catch(e) {
-    console.log('CDG WMS POST general FAILED:', e.message);
-    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── POST /api/cdg/v2/:id/wms ─────────────────────────────────────────────
-// Mantiene compatibilidad con el cliente existente de captura v2.
-// Ahora delega a cdgCargarWmsDesdeExcel (misma lógica, sin código duplicado).
-// FIX (mar 2-jun-2026, server v20): ya no duplica la lógica de parseo.
-app.post('/api/cdg/v2/:id/wms', upload.single('file'), async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  try {
-    var meta = await cdgGetMeta(licenciaId);
-    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia v2 no encontrada: ' + licenciaId });
-    if(meta.estado === 'cerrado') {
-      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
-    }
-    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
-  } catch(e) {
-    console.log('CDG v2 WMS upload FAILED:', e.message);
-    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── cdgResponderWms: helper compartido para devolver WMS de cdg_wms ─────────
-// No exige cdg_meta v2. Funciona para v1, v2 y licencias solo-WMS.
-async function cdgResponderWms(licenciaId, res) {
-  var wms = await cdgGetWms(licenciaId);
-  if(!wms) return res.json({ ok: true, skus: [], wmsMeta: null, encabezado: null });
-  var skus      = typeof wms.skus       === 'string' ? JSON.parse(wms.skus)       : (wms.skus       || []);
-  var encabezado = typeof wms.encabezado === 'string' ? JSON.parse(wms.encabezado) : (wms.encabezado || null);
-  res.json({
-    ok: true, skus: skus, encabezado: encabezado,
-    wmsMeta: {
-      cargadoPor:    wms.cargado_por,
-      tsCarga:       wms.ts_carga,
-      nombreArchivo: wms.nombre_archivo,
-      totalSkus:     wms.total_skus,
-      totalUnidades: wms.total_unidades
-    }
-  });
-}
-
-// ── GET /api/cdg/wms/:id ───────────────────────────────────────────────────
-// Endpoint general WMS: no exige cdg_meta v2.
-// Sirve para v1 clásico, v2 colaborativo y licencias "solo WMS".
-// FIX (mar 2-jun-2026, server v20): nuevo endpoint sin restricción de v2.
-app.get('/api/cdg/wms/:id', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  try {
-    await cdgResponderWms(licenciaId, res);
-  } catch(e) {
-    console.log('CDG WMS GET FAILED:', licenciaId, e.message);
-    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
-  }
-});
-
-// ── GET /api/cdg/v2/:id/wms ────────────────────────────────────────────────
-// Mantiene compatibilidad con el cliente existente de captura v2.
-// Delega a cdgResponderWms (ya no exige cdg_meta).
-// FIX (mar 2-jun-2026, server v20): eliminada la guardia de cdg_meta para
-// no bloquear v1/solo-WMS. Si el caller lo necesita solo para v2, funciona igual.
-app.get('/api/cdg/v2/:id/wms', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  try {
-    await cdgResponderWms(licenciaId, res);
-  } catch(e) {
-    console.log('CDG v2 WMS GET FAILED:', licenciaId, e.message);
-    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
-  }
-});
+// FIX (mar 2-jun-2026, server v20): rutas fijas /bulk y /sincronizar-hamilton
+// DEBEN ir ANTES de la ruta paramétrica /:id. Express hace match en orden.
+// Si /:id va primero, captura "bulk" como parámetro :id.
 
 // ══════════════════════════════════════════════════════════════════════════
 // CDG WMS BULK — POST /api/cdg/wms/bulk
@@ -3315,5 +3048,276 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
   } catch(e) {
     console.log('CDG WMS sincronizar-hamilton FAILED:', e.message);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── cdgCargarWmsDesdeExcel ────────────────────────────────────────────────
+// Helper que encapsula todo el parseo y guardado del WMS desde Excel.
+// FIX (mar 2-jun-2026, server v20): extraído para reutilizar en el endpoint
+// general POST /api/cdg/wms/:id (sin cdg_meta) y en POST /api/cdg/v2/:id/wms.
+// Parámetros:
+//   licenciaId: ya normalizado con cdgNormId
+//   req: request de Express (req.file, req.body.usuario)
+//   meta: cdg_meta ya cargado (o null si no existe)
+//   res: response de Express
+async function cdgCargarWmsDesdeExcel(licenciaId, req, meta, res) {
+  var usuario = String(req.body && req.body.usuario ? req.body.usuario : '').trim();
+  if(!usuario)  return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
+
+  try {
+    // ── Parsear Excel ────────────────────────────────────────────────────
+    var wb;
+    try {
+      wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false, cellDates: true });
+    } catch(e) {
+      return res.status(400).json({ ok: false, error: 'El archivo no es un Excel válido. (' + e.message + ')' });
+    }
+
+    var advertencia = null;
+    var sheetName = wb.SheetNames.find(function(n) { return n.trim().toLowerCase() === 'traslados'; });
+    if(!sheetName) {
+      sheetName = wb.SheetNames[0];
+      advertencia = 'Hoja "Traslados" no encontrada. Se usó la primera hoja: "' + sheetName + '". Verificá que estás cargando el archivo WMS correcto.';
+    }
+    var ws   = wb.Sheets[sheetName];
+    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    if(rows.length < 2) return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+
+    // ── Detectar columnas ────────────────────────────────────────────────
+    var hdr     = rows[0].map(cdgNormHdr);
+    var cNum    = hdr.indexOf('numero');
+    var cSku    = hdr.indexOf('sku');
+    var cNombre = hdr.indexOf('nombre');
+    if(cNombre < 0) cNombre = hdr.indexOf('descripcion');
+    var cCant   = hdr.indexOf('cant');
+    var cUnis   = hdr.indexOf('unidades');
+    var cFecha  = hdr.indexOf('fecha');
+    var cOrigen = hdr.indexOf('origen');
+    var cDest   = hdr.indexOf('destino');
+    var cTipo   = hdr.indexOf('tipo');
+    var cStatus = hdr.indexOf('status');
+    var cLineas = hdr.indexOf('lineas');
+
+    var faltantes = [];
+    if(cNum  < 0) faltantes.push('"Número"');
+    if(cSku  < 0) faltantes.push('"SKU"');
+    if(cCant < 0 && cUnis < 0) faltantes.push('"Cant." o "Unidades"');
+    if(faltantes.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Columnas requeridas no encontradas: ' + faltantes.join(', ') + '. '
+             + 'Encabezados detectados: ' + rows[0].join(', ') + '. '
+             + 'Verificá que estás cargando el archivo WMS correcto (hoja "Traslados" del export WMS).'
+      });
+    }
+
+    // ── Filtrar por licencia ─────────────────────────────────────────────
+    var licNorm = cdgNormLicWMS(licenciaId);
+    var filasFiltradas = rows.slice(1).filter(function(r) {
+      return cdgNormLicWMS(r[cNum]) === licNorm;
+    });
+    if(filasFiltradas.length === 0) {
+      var licEncontradas = [];
+      var vistas = {};
+      for(var i = 1; i < rows.length && licEncontradas.length < 10; i++) {
+        var v = cdgNormLicWMS(rows[i][cNum]);
+        if(v && !vistas[v]) { licEncontradas.push(v); vistas[v] = true; }
+      }
+      return res.status(400).json({
+        ok: false,
+        error: 'El archivo no contiene filas para la licencia "' + licenciaId + '". '
+             + 'Licencias encontradas: ' + licEncontradas.join(', ')
+             + (licEncontradas.length === 10 ? ' (y más…)' : '') + '.'
+      });
+    }
+
+    // ── Extraer encabezado ───────────────────────────────────────────────
+    var f0 = filasFiltradas[0];
+    var encabezado = {
+      fecha:     f0[cFecha]  || null,
+      origen:    cOrigen  >= 0 ? (f0[cOrigen]  || null) : null,
+      destino:   cDest    >= 0 ? (f0[cDest]    || null) : null,
+      tipo:      cTipo    >= 0 ? (f0[cTipo]    || null) : null,
+      status:    cStatus  >= 0 ? (f0[cStatus]  || null) : null,
+      lineasWMS: cLineas  >= 0 ? Number(f0[cLineas] || 0) : 0
+    };
+
+    // ── Procesar filas: parsear + deduplicar ─────────────────────────────
+    var skuMap = {}, skuOrder = [];
+    filasFiltradas.forEach(function(r) {
+      var sku = String(r[cSku] || '').trim();
+      if(!sku) return;
+      var qty = cdgParseQty(cCant >= 0 ? r[cCant] : null);
+      if(qty === null) qty = cdgParseQty(cUnis >= 0 ? r[cUnis] : null);
+      if(qty === null) return;
+      var desc = String(cNombre >= 0 ? (r[cNombre] || '') : '').trim();
+      if(skuMap[sku]) {
+        skuMap[sku].cantidad += qty;
+        if(!skuMap[sku].descripcion && desc) skuMap[sku].descripcion = desc;
+      } else {
+        skuMap[sku] = { descripcion: desc, cantidad: qty };
+        skuOrder.push(sku);
+      }
+    });
+
+    // ── Enriquecer descripciones vacías desde sku_catalog ────────────────
+    var skusSinDesc = skuOrder.filter(function(s) { return !skuMap[s].descripcion; });
+    if(skusSinDesc.length > 0 && SUPABASE_URL && SUPABASE_KEY) {
+      var enrichWarnings = [];
+      for(var ci = 0; ci < skusSinDesc.length; ci += 200) {
+        var chunk = skusSinDesc.slice(ci, ci + 200);
+        try {
+          var catalogRows = await supabase('GET', 'sku_catalog', null,
+            '?sku=in.(' + chunk.map(function(s){ return encodeURIComponent(s); }).join(',') + ')&select=sku,descripcion');
+          if(Array.isArray(catalogRows)) {
+            catalogRows.forEach(function(row) {
+              if(skuMap[row.sku] && !skuMap[row.sku].descripcion && row.descripcion)
+                skuMap[row.sku].descripcion = row.descripcion;
+            });
+          }
+        } catch(enrichErr) {
+          enrichWarnings.push('sku_catalog chunk ' + ci + ': ' + enrichErr.message);
+        }
+      }
+      if(enrichWarnings.length) advertencia = (advertencia ? advertencia + ' | ' : '') + enrichWarnings.join(' | ');
+    }
+
+    // ── Construir array final + UPSERT ───────────────────────────────────
+    var skusArray = skuOrder.map(function(sku) {
+      return { sku: sku, descripcion: skuMap[sku].descripcion || '', cantidad: skuMap[sku].cantidad };
+    });
+    var totalSkus     = skusArray.length;
+    var totalUnidades = skusArray.reduce(function(a, s){ return a + s.cantidad; }, 0);
+    var now           = new Date().toISOString();
+    var nombreArchivo = req.file.originalname || 'archivo.xlsx';
+
+    await withTimeout(cdgUpsertWms(licenciaId, {
+      licencia_id:    licenciaId,
+      skus:           JSON.stringify(skusArray),
+      encabezado:     JSON.stringify(encabezado),
+      cargado_por:    usuario,
+      ts_carga:       now,
+      nombre_archivo: nombreArchivo,
+      total_skus:     totalSkus,
+      total_unidades: totalUnidades
+    }), 15000, 'CDG WMS upsert');
+
+    // ── Actualizar meta.wms si existe cdg_meta ────────────────────────────
+    // Si meta es null (v1 o solo-WMS), no intentar cdgSaveMeta.
+    var metaWarning = null;
+    if(meta) {
+      meta.wms = { cargadoPor: usuario, tsCarga: now, nombreArchivo, totalSkus, totalUnidades };
+      cdgBitacora(meta, usuario, 'wms_cargado', nombreArchivo + ' — ' + totalSkus + ' SKUs, ' + totalUnidades + ' unidades');
+      try {
+        await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG WMS meta save');
+      } catch(metaErr) {
+        try {
+          await withTimeout(cdgSaveMeta(licenciaId, meta), 10000, 'CDG WMS meta save retry');
+        } catch(retryErr) {
+          metaWarning = 'WMS guardado. No se pudo actualizar caché de metadata (' + retryErr.message + '). El WMS estará disponible igual.';
+          console.log('CDG WMS meta save FAILED after retry:', retryErr.message);
+        }
+      }
+    }
+
+    var respAdvertencia = [advertencia, metaWarning].filter(Boolean).join(' | ') || undefined;
+    console.log('CDG WMS cargado:', licenciaId, 'por', usuario, '—', totalSkus, 'SKUs,', totalUnidades, 'unidades');
+    res.json({
+      ok: true, totalSkus, totalUnidades, tsCarga: now,
+      ...(respAdvertencia ? { advertencia: respAdvertencia } : {})
+    });
+
+  } catch(e) {
+    console.log('CDG WMS upload FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'Error al procesar WMS: ' + e.message });
+  }
+}
+
+// ── POST /api/cdg/wms/:id ─────────────────────────────────────────────────
+// Endpoint general WMS: NO exige cdg_meta v2.
+// FIX (mar 2-jun-2026, server v20): permite cargar WMS para v1, v2 y solo-WMS.
+// Si existe cdg_meta y estado === 'cerrado' → rechaza.
+// Si existe cdg_meta abierta → guarda WMS + actualiza meta.wms.
+// Si NO existe cdg_meta → guarda solo en cdg_wms (sin meta).
+app.post('/api/cdg/wms/:id', upload.single('file'), async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    var meta = null;
+    try { meta = await cdgGetMeta(licenciaId); } catch(e) { /* no existe como v2 */ }
+    if(meta && meta.estado === 'cerrado') {
+      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
+    }
+    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
+  } catch(e) {
+    console.log('CDG WMS POST general FAILED:', e.message);
+    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/wms ─────────────────────────────────────────────
+// Mantiene compatibilidad con el cliente existente de captura v2.
+// Ahora delega a cdgCargarWmsDesdeExcel (misma lógica, sin código duplicado).
+// FIX (mar 2-jun-2026, server v20): ya no duplica la lógica de parseo.
+app.post('/api/cdg/v2/:id/wms', upload.single('file'), async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia v2 no encontrada: ' + licenciaId });
+    if(meta.estado === 'cerrado') {
+      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
+    }
+    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
+  } catch(e) {
+    console.log('CDG v2 WMS upload FAILED:', e.message);
+    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── cdgResponderWms: helper compartido para devolver WMS de cdg_wms ─────────
+// No exige cdg_meta v2. Funciona para v1, v2 y licencias solo-WMS.
+async function cdgResponderWms(licenciaId, res) {
+  var wms = await cdgGetWms(licenciaId);
+  if(!wms) return res.json({ ok: true, skus: [], wmsMeta: null, encabezado: null });
+  var skus      = typeof wms.skus       === 'string' ? JSON.parse(wms.skus)       : (wms.skus       || []);
+  var encabezado = typeof wms.encabezado === 'string' ? JSON.parse(wms.encabezado) : (wms.encabezado || null);
+  res.json({
+    ok: true, skus: skus, encabezado: encabezado,
+    wmsMeta: {
+      cargadoPor:    wms.cargado_por,
+      tsCarga:       wms.ts_carga,
+      nombreArchivo: wms.nombre_archivo,
+      totalSkus:     wms.total_skus,
+      totalUnidades: wms.total_unidades
+    }
+  });
+}
+
+// ── GET /api/cdg/wms/:id ───────────────────────────────────────────────────
+// Endpoint general WMS: no exige cdg_meta v2.
+// Sirve para v1 clásico, v2 colaborativo y licencias "solo WMS".
+// FIX (mar 2-jun-2026, server v20): nuevo endpoint sin restricción de v2.
+app.get('/api/cdg/wms/:id', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    await cdgResponderWms(licenciaId, res);
+  } catch(e) {
+    console.log('CDG WMS GET FAILED:', licenciaId, e.message);
+    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
+  }
+});
+
+// ── GET /api/cdg/v2/:id/wms ────────────────────────────────────────────────
+// Mantiene compatibilidad con el cliente existente de captura v2.
+// Delega a cdgResponderWms (ya no exige cdg_meta).
+// FIX (mar 2-jun-2026, server v20): eliminada la guardia de cdg_meta para
+// no bloquear v1/solo-WMS. Si el caller lo necesita solo para v2, funciona igual.
+app.get('/api/cdg/v2/:id/wms', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    await cdgResponderWms(licenciaId, res);
+  } catch(e) {
+    console.log('CDG v2 WMS GET FAILED:', licenciaId, e.message);
+    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
   }
 });
