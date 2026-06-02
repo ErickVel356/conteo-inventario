@@ -884,6 +884,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
             <span id="cdgv2-lic-estado-badge" style="font-size:.75rem;padding:3px 10px;border-radius:10px;font-weight:600"></span>
+            <!-- btn-cdgv2-desbloquear: fijo en HTML, visible solo para supervisores cuando cerrada.
+                 FIX (lun 1-jun-2026, v5.2.29): declarado aquí para evitar duplicación al re-renderizar. -->
+            <button id="btn-cdgv2-desbloquear" class="btn btn-sm"
+              style="display:none;background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:.78rem">
+              🔓 Desbloquear
+            </button>
             <span style="font-size:.78rem;color:#888" id="cdgv2-lic-poll-ts"></span>
           </div>
         </div>
@@ -943,9 +949,13 @@ textarea.field-inp{resize:vertical;min-height:72px}
       </div>
       <div id="cdgv2-lic-msg" style="font-size:.82rem;margin-top:.5rem"></div>
 
-      <!-- Panel de hallazgos de esta licencia CDG v2 -->
-      <div id="cdgv2-hallazgos-panel" style="margin-top:.75rem;display:none">
-        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">⚠ Hallazgos de esta licencia</div>
+      <!-- Panel de hallazgos de esta licencia CDG v2.
+           FIX (lun 1-jun-2026, v5.2.29): siempre visible, incluye botón Crear hallazgo. -->
+      <div id="cdgv2-hallazgos-panel" style="margin-top:.75rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem">
+          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">⚠ Hallazgos de esta licencia</div>
+          <button class="btn btn-sm btn-warn" id="btn-cdgv2-hallazgo-panel" style="font-size:.75rem;padding:3px 10px">⚠ Crear hallazgo</button>
+        </div>
         <div id="cdgv2-hallazgos-list"></div>
       </div>
     </div>
@@ -8023,39 +8033,40 @@ function renderCdgv2Header(meta){
   if(meta.estado === 'activo' && !puedeFinalizarUI && currentUser) {
     msgFin.innerHTML = '<span style="color:#888;font-size:.8rem">Solo usuarios activos de la licencia pueden finalizarla. Uníte primero agregando una línea.</span>';
   }
-  // Botón desbloquear: solo supervisores, solo si cerrada
+  // Botón desbloquear: visible solo para supervisores cuando la licencia está cerrada.
+  // FIX (lun 1-jun-2026, v5.2.29): el botón está declarado en el HTML fijo (no dinámico).
+  // renderCdgv2Header solo controla display y registra el handler una vez.
   var btnDesbloquear = document.getElementById('btn-cdgv2-desbloquear');
-  if(!btnDesbloquear) {
-    // Crear el botón si no existe aún
-    btnDesbloquear = document.createElement('button');
-    btnDesbloquear.id = 'btn-cdgv2-desbloquear';
-    btnDesbloquear.className = 'btn btn-sm';
-    btnDesbloquear.style.cssText = 'background:#fff3cd;color:#856404;border:1px solid #ffc107;margin-left:6px';
-    btnDesbloquear.textContent = '🔓 Desbloquear (supervisor)';
-    btnDesbloquear.addEventListener('click', function(){
-      if(!currentUser || !cdgv2LicenciaActual) return;
-      if(!confirm('¿Desbloquear la licencia '+cdgv2LicenciaActual.id+'? El equipo podrá volver a editarla.')) return;
-      var msgEl = document.getElementById('cdgv2-lic-msg');
-      msgEl.innerHTML = '<span style="color:#888">Desbloqueando…</span>';
-      cdgv2Fetch('POST', '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/accion',
-        { usuario: currentUser.name, tipo: 'desbloquear', supervisor: true })
-        .then(function(d){
-          if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-          msgEl.innerHTML = '<span style="color:#1e7e34">✓ Licencia desbloqueada.</span>';
-          cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
-          // FIX (lun 1-jun-2026, v5.2.28): actualizar lista para que al volver refleje estado activo
-          cdgv2CargarLista();
-        }).catch(function(){ msgEl.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
-    });
-    // Insertarlo junto al badge de estado
-    var badgeEl = document.getElementById('cdgv2-lic-estado-badge');
-    if(badgeEl && badgeEl.parentNode) badgeEl.parentNode.appendChild(btnDesbloquear);
+  if(btnDesbloquear) {
+    btnDesbloquear.style.display = (meta.estado === 'cerrado' && esSup) ? '' : 'none';
+    // Registrar handler solo si no fue registrado antes (evitar duplicación)
+    if(!btnDesbloquear._handlerOk) {
+      btnDesbloquear._handlerOk = true;
+      btnDesbloquear.addEventListener('click', function(){
+        if(!currentUser || !cdgv2LicenciaActual) return;
+        if(!confirm('¿Desbloquear la licencia '+cdgv2LicenciaActual.id+'?\nEl equipo podrá volver a editarla.')) return;
+        var msgEl = document.getElementById('cdgv2-lic-msg');
+        msgEl.innerHTML = '<span style="color:#888">Desbloqueando…</span>';
+        cdgv2Fetch('POST', '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/accion',
+          { usuario: currentUser.name, tipo: 'desbloquear', supervisor: true })
+          .then(function(d){
+            if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+            msgEl.innerHTML = '<span style="color:#1e7e34">✓ Licencia desbloqueada.</span>';
+            cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
+            cdgv2CargarLista();
+          }).catch(function(){ msgEl.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
+      });
+    }
   }
-  btnDesbloquear.style.display = (meta.estado === 'cerrado' && esSup) ? '' : 'none';
   // Form agregar: ocultar si cerrada
   document.getElementById('cdgv2-add-form').style.display = meta.estado === 'activo' ? '' : 'none';
 }
 
+// FIX (lun 1-jun-2026, v5.2.29): renderCdgv2Lineas reescrita en formato tabla.
+// Columnas: SKU | Descripción | Cant. | Costo Q | Evidencia | Usuario/Hora | Acción.
+// Los handlers de borrar y fotos son idénticos a la versión anterior — no se tocó
+// la lógica de permisos, compresión, PATCH ni polling.
+// TODO (Fase futura): integrar tablero CDG tipo Hamilton y carga WMS masiva aquí.
 function renderCdgv2Lineas(){
   var el = document.getElementById('cdgv2-lineas-container');
   if(!cdgv2Lineas.length){
@@ -8063,48 +8074,72 @@ function renderCdgv2Lineas(){
     return;
   }
   var cerrada = cdgv2LicenciaActual && cdgv2LicenciaActual.estado === 'cerrado';
-  el.innerHTML = '<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Líneas ('+cdgv2Lineas.length+')</div>'
-    + cdgv2Lineas.map(function(l){
-      var esMia    = currentUser && l.autor === currentUser.name;
-      var costoFmt = l.costo_unit != null ? 'Q '+Math.round(Number(l.costo_unit)).toLocaleString('es-GT') : '—';
-      var tsShort  = l.ts_creacion ? l.ts_creacion.substring(11,16) : '';
-      var rowBg    = esMia ? '#fff' : '#f9f9f7';
-      // Fotos de la línea (máx 3) — miniaturas
-      var fotosLinea = Array.isArray(l.fotos) ? l.fotos : [];
-      var fotosHtml = fotosLinea.map(function(url, fi){
-        return '<a href="'+escH(url)+'" target="_blank">'
-          +'<img src="'+escH(url)+'" data-linea-id="'+escH(l.id)+'" data-foto-idx="'+fi+'"'
-          +' style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:pointer"'
-          +' loading="lazy"></a>';
-      }).join('');
-      // Botón agregar foto (solo líneas propias, activas, < 3 fotos)
-      var btnFoto = (!cerrada && esMia && fotosLinea.length < 3)
-        ? '<button class="cdgv2-add-foto-btn" data-linea-id="'+escH(l.id)+'" data-sku="'+escH(l.sku)+'" data-fotos-count="'+fotosLinea.length+'"'
-          +' style="background:#f5f5f3;border:1px dashed #bbb;border-radius:6px;padding:3px 7px;font-size:.75rem;cursor:pointer;color:#555;white-space:nowrap">📷+'
-          +(3-fotosLinea.length)+'</button>'
-        : '';
-      var btnDel = (!cerrada && esMia)
-        ? '<button class="cdgv2-del-btn" data-id="'+escH(l.id)+'"'
-          +' style="background:#c0392b;color:#fff;font-size:.72rem;padding:3px 9px;border-radius:6px;border:none;cursor:pointer">🗑</button>'
-        : '';
-      return '<div style="background:'+rowBg+';border:1px solid #e8e8e8;border-radius:8px;padding:.6rem .8rem;margin-bottom:.4rem">'
-        // Fila principal: SKU, desc, cantidad, costo, autor
-        +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
-        +'<span style="font-weight:700;min-width:70px;font-size:.88rem">'+escH(l.sku)+'</span>'
-        +'<span style="flex:1;min-width:120px;font-size:.85rem;color:#333">'+escH(l.descripcion||'—')+'</span>'
-        +'<span style="min-width:60px;text-align:right;font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</span>'
-        +'<span style="min-width:80px;text-align:right;font-size:.8rem;color:#666">'+costoFmt+'</span>'
-        +'<span style="font-size:.75rem;color:#aaa;white-space:nowrap">'+escH(l.autor)+' '+tsShort+'</span>'
-        +btnDel
-        +'</div>'
-        // Fila de fotos
-        +(fotosHtml || btnFoto
-          ? '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:.4rem">'+fotosHtml+btnFoto+'</div>'
-          : '')
-        +'</div>';
-    }).join('');
+  // Título con contador
+  var h = '<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;'
+    +'text-transform:uppercase;letter-spacing:.3px">Líneas ('+cdgv2Lineas.length+')</div>'
+    +'<div class="tbl-wrap"><table>'
+    +'<thead><tr>'
+    +'<th style="min-width:70px">SKU</th>'
+    +'<th>Descripción</th>'
+    +'<th class="tc" style="min-width:60px">Cant.</th>'
+    +'<th class="tc" style="min-width:72px">Costo Q</th>'
+    +'<th class="tc" style="min-width:80px">Evidencia</th>'
+    +'<th style="min-width:110px">Usuario / Hora</th>'
+    +'<th class="tc" style="min-width:44px">Acción</th>'
+    +'</tr></thead><tbody>';
 
-  // Handler borrar línea
+  cdgv2Lineas.forEach(function(l){
+    var esMia      = currentUser && l.autor === currentUser.name;
+    var esSup      = typeof isSup === 'function' && isSup();
+    var puedeAct   = !cerrada && (esMia || esSup); // borrar: propio o sup
+    var costoFmt   = l.costo_unit != null
+      ? 'Q '+Math.round(Number(l.costo_unit)).toLocaleString('es-GT') : '—';
+    var tsShort    = l.ts_creacion ? l.ts_creacion.substring(11,16) : '';
+    var rowCls     = esMia ? '' : ' style="background:#f9f9f7"';
+    var fotosLinea = Array.isArray(l.fotos) ? l.fotos : [];
+
+    // Columna Evidencia: miniaturas + botón agregar (máx 3)
+    var fotosHtml = fotosLinea.map(function(url){
+      return '<a href="'+escH(url)+'" target="_blank">'
+        +'<img src="'+escH(url)+'" loading="lazy"'
+        +' style="width:36px;height:36px;object-fit:cover;border-radius:5px;border:1px solid #ddd;cursor:pointer;display:inline-block;vertical-align:middle">'
+        +'</a>';
+    }).join(' ');
+    var btnFoto = (!cerrada && esMia && fotosLinea.length < 3)
+      ? '<button class="cdgv2-add-foto-btn"'
+        +' data-linea-id="'+escH(l.id)+'"'
+        +' data-sku="'+escH(l.sku)+'"'
+        +' data-fotos-count="'+fotosLinea.length+'"'
+        +' style="background:#f5f5f3;border:1px dashed #bbb;border-radius:5px;'
+        +'padding:2px 5px;font-size:.72rem;cursor:pointer;color:#555;vertical-align:middle">'
+        +'📷+'+(3-fotosLinea.length)+'</button>'
+      : '';
+    var evidenciaCell = fotosHtml + (fotosLinea.length > 0 && btnFoto ? ' ' : '') + btnFoto;
+
+    // Columna Acción: borrar (solo si tiene permiso)
+    var btnDel = puedeAct
+      ? '<button class="cdgv2-del-btn" data-id="'+escH(l.id)+'"'
+        +' style="background:#fdecea;color:#c0392b;font-size:.72rem;'
+        +'padding:3px 7px;border-radius:5px;border:1px solid #f5c6cb;cursor:pointer"'
+        +' title="Eliminar línea">🗑</button>'
+      : '';
+
+    h += '<tr'+rowCls+'>'
+      +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(l.sku)+'</td>'
+      +'<td style="font-size:.82rem;color:#333">'+escH(l.descripcion||'—')+'</td>'
+      +'<td class="tc" style="font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</td>'
+      +'<td class="tc" style="font-size:.8rem;color:#555;white-space:nowrap">'+costoFmt+'</td>'
+      +'<td class="tc" style="white-space:nowrap">'+evidenciaCell+'</td>'
+      +'<td style="font-size:.74rem;color:#888;white-space:nowrap">'
+        +escH(l.autor)+'<br><span style="font-size:.7rem;color:#bbb">'+tsShort+'</span></td>'
+      +'<td class="tc">'+btnDel+'</td>'
+      +'</tr>';
+  });
+
+  h += '</tbody></table></div>';
+  el.innerHTML = h;
+
+  // Handler borrar línea — idéntico al anterior
   el.querySelectorAll('.cdgv2-del-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(!confirm('¿Eliminás esta línea?')) return;
@@ -8119,7 +8154,7 @@ function renderCdgv2Lineas(){
     });
   });
 
-  // Handler agregar foto por línea
+  // Handler agregar foto por línea — idéntico al anterior
   el.querySelectorAll('.cdgv2-add-foto-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(!currentUser || !cdgv2LicenciaActual) return;
@@ -8128,18 +8163,16 @@ function renderCdgv2Lineas(){
       var fotosCount = parseInt(btn.dataset.fotosCount)||0;
       if(fotosCount >= 3){ alert('Máximo 3 fotos por línea.'); return; }
       var inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*'; 
+      inp.type = 'file'; inp.accept = 'image/*';
       inp.onchange = function(){
         if(!inp.files[0]) return;
         btn.textContent = 'Subiendo…'; btn.disabled = true;
-        // Comprimir primero (igual que fotos de hallazgo y CDG encabezado)
         window.compressImage(inp.files[0])
           .then(function(blob){
             return window.uploadFotoAndGetUrl(blob, 'cdg-sku',
               cdgv2SafeRefId(cdgv2LicenciaActual.id), sku, null);
           })
           .then(function(fotoUrl){
-            // PATCH para agregar la URL a las fotos existentes de la línea
             var linea = cdgv2Lineas.find(function(x){ return x.id === lineaId; });
             var fotasActuales = Array.isArray(linea && linea.fotos) ? linea.fotos.slice() : [];
             fotasActuales.push(fotoUrl);
@@ -8226,24 +8259,37 @@ function renderCdgv2Fotos(meta){
 }
 
 /* ── HALLAZGOS CDG v2 ───────────────────────────────────────────── */
+// FIX (lun 1-jun-2026, v5.2.29): panel de hallazgos siempre visible en CDG v2.
+// Antes se ocultaba si no había hallazgos — ahora muestra el panel con botón
+// "Crear hallazgo" visible siempre, y la lista de hallazgos existentes debajo.
+// El filtro por licencia v2 no cambió: solo muestra hallazgos con
+// tipo==='CDG' && cdgVersion===2 && cdgV2Licencia===licId.
+// No mezcla con hallazgos globales de v1.
+// No toca export/historial existente.
 function renderCdgv2Hallazgos(){
   var panel = document.getElementById('cdgv2-hallazgos-panel');
   var list  = document.getElementById('cdgv2-hallazgos-list');
   if(!panel || !list || !cdgv2LicenciaActual) return;
-  var licId = cdgv2LicenciaActual.id;
+  var licId  = cdgv2LicenciaActual.id;
+  var cerrada = cdgv2LicenciaActual.estado === 'cerrado';
   // Filtrar hallazgos de esta licencia v2 — no contamina CDG v1
   var hall2 = (typeof hallazgos !== 'undefined' ? hallazgos : []).filter(function(h){
     return h.tipo === 'CDG' && h.cdgVersion === 2 && h.cdgV2Licencia === licId;
   });
-  if(!hall2.length){ panel.style.display = 'none'; return; }
+  // Panel siempre visible (antes solo aparecía si había hallazgos)
   panel.style.display = '';
-  list.innerHTML = hall2.map(function(h){
-    return '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.5rem .75rem;margin-bottom:.4rem;font-size:.83rem">'
-      +'<span style="font-weight:600">'+escH(h.tipoHallazgo||'Hallazgo')+'</span>'
-      +' — '+escH(h.desc||'')
-      +'<span style="color:#888;margin-left:.5rem">'+escH(h.autor)+' · '+escH(h.ts)+'</span>'
-      +'</div>';
-  }).join('');
+  if(!hall2.length){
+    list.innerHTML = '<div style="color:#aaa;font-size:.82rem;padding:.25rem 0">Sin hallazgos en esta licencia.</div>';
+  } else {
+    list.innerHTML = hall2.map(function(h){
+      return '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;'
+        +'padding:.5rem .75rem;margin-bottom:.4rem;font-size:.83rem">'
+        +'<span style="font-weight:600">'+escH(h.tipoHallazgo||'Hallazgo')+'</span>'
+        +' — '+escH(h.desc||'')
+        +'<span style="color:#888;margin-left:.5rem">'+escH(h.autor)+' · '+escH(h.ts)+'</span>'
+        +'</div>';
+    }).join('');
+  }
 }
 
 /* ── AGREGAR LÍNEA ──────────────────────────────────────────────── */
@@ -8538,6 +8584,13 @@ document.getElementById('btn-cdgv2-hallazgo').addEventListener('click', function
   if(prev) prev.style.display='none';
   modal.classList.add('open'); // FIX: mismo mecanismo que CDG v1 para que el close funcione
   window._cdgV2LicenciaId = cdgv2LicenciaActual.id; // marcar para que el save lo sepa
+});
+
+// btn-cdgv2-hallazgo-panel: botón dentro del panel de hallazgos.
+// FIX (lun 1-jun-2026, v5.2.29): mismo comportamiento que btn-cdgv2-hallazgo.
+// Permite crear hallazgo desde el panel sin tener que usar el botón de acciones.
+document.getElementById('btn-cdgv2-hallazgo-panel').addEventListener('click', function(){
+  document.getElementById('btn-cdgv2-hallazgo').click();
 });
 
 document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
