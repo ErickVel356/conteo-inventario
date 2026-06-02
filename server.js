@@ -1692,38 +1692,97 @@ function cdgAceptaLineas(meta) {
 }
 
 // ── GET /api/cdg/v2/listar ─────────────────────────────────────────────────
-// Lista todas las licencias CDG activas o recientes (últimas 7 días).
-// Para que el usuario pueda unirse a una existente.
+// Lista licencias CDG v2.
+// Sin parámetros: activas, pausadas y cerradas en últimas 48h (para captura/manifiesto).
+// ?historico=true: todas las licencias cerradas sin límite de fecha (para Reportes).
+//   En modo histórico, enriquece cada licencia con totalUnidades y costoTotal
+//   calculados desde cdg_lineas vigentes (eliminada=false).
+// FIX (lun 1-jun-2026, server v20): modo histórico para Reportes/Historial CDG.
 app.get('/api/cdg/v2/listar', async (req, res) => {
   try {
     if(!SUPABASE_URL || !SUPABASE_KEY) {
       return res.json({ ok: true, licencias: [] });
     }
+
+    var historico = req.query.historico === 'true';
+
     // Busca claves que empiecen con "cdg_meta_" en app_state
     var query = '?key=like.cdg_meta_*&order=key.asc&select=key,value';
     var rows = await supabase('GET', 'app_state', null, query);
     if(!Array.isArray(rows)) return res.json({ ok: true, licencias: [] });
+
     var licencias = [];
+    var hace48h = new Date(Date.now() - 48*60*60*1000).toISOString();
+
     rows.forEach(function(row) {
       try {
         var meta = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-        // Incluir activas, pausadas, y cerradas recientes (últimas 48h)
-        var hace48h = new Date(Date.now() - 48*60*60*1000).toISOString();
-        if(meta && (meta.estado === 'activo' || meta.estado === 'pausado' ||
-            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace48h))) {
+        if(!meta) return;
+        var incluir;
+        if(historico) {
+          // Modo histórico: incluir todas (activas, pausadas, cerradas sin límite de fecha)
+          incluir = true;
+        } else {
+          // Modo operativo: activas, pausadas, cerradas recientes (últimas 48h)
+          incluir = meta.estado === 'activo' || meta.estado === 'pausado' ||
+            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace48h);
+        }
+        if(incluir) {
           licencias.push({
-            id:          meta.id,
-            tipo:        meta.tipo,
-            estado:      meta.estado,
-            creadoPor:   meta.creadoPor,
-            finalizador: meta.finalizador,
+            id:            meta.id,
+            tipo:          meta.tipo,
+            estado:        meta.estado,
+            creadoPor:     meta.creadoPor,
+            finalizador:   meta.finalizador,
             fechaCreacion: meta.fechaCreacion,
-            totalLineas: meta.totalLineas || 0,
-            usuarios:    Object.keys(meta.usuarios || {})
+            fechaCierre:   meta.fechaCierre || null,
+            totalLineas:   meta.totalLineas || 0,
+            usuarios:      Object.keys(meta.usuarios || {}),
+            // Agregados: se llenan en modo histórico; null en modo operativo
+            totalUnidades: null,
+            costoTotal:    null
           });
         }
       } catch(e) { /* skip malformed */ }
     });
+
+    // Modo histórico: enriquecer con agregados desde cdg_lineas
+    if(historico && licencias.length > 0) {
+      try {
+        // Una sola query: todas las líneas vigentes de todas las licencias encontradas
+        var ids = licencias.map(function(l){ return encodeURIComponent(l.id); }).join(',');
+        var lineasQuery = '?licencia_id=in.(' + ids + ')&eliminada=eq.false&select=licencia_id,cantidad,costo_unit';
+        var lineasRows = await supabase('GET', 'cdg_lineas', null, lineasQuery);
+
+        if(Array.isArray(lineasRows)) {
+          // Acumular por licencia_id
+          var agregados = {};
+          lineasRows.forEach(function(l){
+            var lid = l.licencia_id;
+            if(!agregados[lid]) agregados[lid] = { unidades: 0, costo: 0 };
+            var qty  = Number(l.cantidad) || 0;
+            var cost = (l.costo_unit !== null && l.costo_unit !== undefined) ? Number(l.costo_unit) : 0;
+            agregados[lid].unidades += qty;
+            agregados[lid].costo    += qty * (isNaN(cost) ? 0 : cost);
+          });
+          // Pegar los agregados en cada licencia
+          licencias.forEach(function(l){
+            var ag = agregados[l.id];
+            if(ag) {
+              l.totalUnidades = ag.unidades;
+              l.costoTotal    = ag.costo;
+            } else {
+              l.totalUnidades = 0;
+              l.costoTotal    = 0;
+            }
+          });
+        }
+      } catch(aggErr) {
+        // Si falla el enriquecimiento, devolver licencias sin agregados (no bloqueante)
+        console.log('CDG v2 listar agregados WARN:', aggErr.message);
+      }
+    }
+
     res.json({ ok: true, licencias: licencias });
   } catch(e) {
     console.log('CDG v2 listar error:', e.message);
