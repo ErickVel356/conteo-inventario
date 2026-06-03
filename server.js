@@ -3459,3 +3459,310 @@ app.get('/api/cdg/v2/:id/wms', async (req, res) => {
     res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD MODULE START — Bodega CDG / Armado de Tarimas — Fase 1
+// FIX (mar 2-jun-2026, server v20): módulo completamente aislado.
+// Flag: BOD_ENABLED=true en variables de entorno de Render para activar.
+// Con BOD_ENABLED=false (default), todos los endpoints responden 503.
+// No toca: Hamilton, CDG, app_state, cdg_lineas, cdg_wms, sku_catalog,
+//          teorico, fisico, endpoints /api/cdg/*, /api/state.
+// ══════════════════════════════════════════════════════════════════════════
+
+var BOD_ENABLED = process.env.BOD_ENABLED === 'true';
+
+// Middleware guard — aplica a todos los endpoints /api/bod/*
+function bodGuard(req, res, next) {
+  if(!BOD_ENABLED) return res.status(503).json({ ok: false, error: 'Módulo bodega no habilitado.' });
+  next();
+}
+
+// Helper: normalizar nombre de tarima → "A1", "B12", etc.
+// "a 1" → "A1", "A-1" → "A1", "a1" → "A1"
+function bodNormTarima(v) {
+  if(!v) return '';
+  return String(v).trim().toUpperCase().replace(/[\s\-_]+/g, '');
+}
+
+// Helper: leer bdg_barra_sku desde Supabase
+async function bodGetBarra(barra) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var rows = await supabase('GET', 'bod_barra_sku', null,
+    '?barra=eq.' + encodeURIComponent(String(barra).trim()) + '&limit=1');
+  return (Array.isArray(rows) && rows.length) ? rows[0] : null;
+}
+
+// ── GET /api/bod/status ────────────────────────────────────────────────────
+// Permite al cliente saber si el módulo está habilitado.
+app.get('/api/bod/status', function(req, res) {
+  res.json({ ok: true, enabled: BOD_ENABLED });
+});
+
+// ── POST /api/bod/sesion ───────────────────────────────────────────────────
+// Crear o devolver sesión existente (idempotente por licencia_id+fecha+tipo).
+app.post('/api/bod/sesion', bodGuard, async (req, res) => {
+  try {
+    var { licencia_id, fecha_trabajo, tipo, creado_por, notas } = req.body || {};
+    licencia_id  = String(licencia_id  || '').trim().toUpperCase();
+    fecha_trabajo = String(fecha_trabajo || '').trim();
+    tipo          = String(tipo          || 'recoleccion').trim();
+    creado_por    = String(creado_por    || '').trim();
+    if(!licencia_id)   return res.status(400).json({ ok:false, error:'falta licencia_id' });
+    if(!fecha_trabajo) return res.status(400).json({ ok:false, error:'falta fecha_trabajo (YYYY-MM-DD)' });
+    if(!creado_por)    return res.status(400).json({ ok:false, error:'falta creado_por' });
+
+    // Buscar existente
+    var existing = await supabase('GET', 'bod_sesiones', null,
+      '?licencia_id=eq.' + encodeURIComponent(licencia_id)
+      + '&fecha_trabajo=eq.' + encodeURIComponent(fecha_trabajo)
+      + '&tipo=eq.'          + encodeURIComponent(tipo)
+      + '&limit=1');
+    if(Array.isArray(existing) && existing.length) {
+      return res.json({ ok:true, sesion: existing[0], created: false });
+    }
+
+    // Crear nueva
+    var newId = 'bod-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    var sesion = {
+      id: newId, licencia_id, tipo, estado: 'abierta',
+      creado_por, modificado_por: creado_por,
+      fecha_trabajo, ts_creacion: new Date().toISOString(),
+      notas: notas || null
+    };
+    var created = await supabase('POST', 'bod_sesiones', sesion, '');
+    var row = Array.isArray(created) ? created[0] : sesion;
+    res.json({ ok:true, sesion: row, created: true });
+  } catch(e) {
+    console.log('BOD sesion POST FAILED:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id ────────────────────────────────────────────────
+// Devolver sesión + líneas vigentes + resumen por tarima.
+app.get('/api/bod/sesion/:id', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(rows) || !rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = rows[0];
+    var lineas = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.' + encodeURIComponent(sesId) + '&eliminada=eq.false&order=ts_captura.asc');
+    var lineArr = Array.isArray(lineas) ? lineas : [];
+    // Resumen por tarima
+    var porTarima = {};
+    lineArr.forEach(function(l) {
+      var t = l.tarima || '?';
+      if(!porTarima[t]) porTarima[t] = { tarima:t, lineas:0, unidades:0 };
+      porTarima[t].lineas++;
+      porTarima[t].unidades += Number(l.cantidad)||0;
+    });
+    res.json({ ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/linea ─────────────────────────────────────────
+app.post('/api/bod/sesion/:id/linea', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var { tarima, barra, sku, descripcion, cantidad, operador } = req.body || {};
+    tarima     = bodNormTarima(tarima);
+    barra      = String(barra      || '').trim() || null;
+    sku        = String(sku        || '').trim();
+    descripcion = String(descripcion || '').trim();
+    cantidad   = Number(cantidad);
+    operador   = String(operador   || '').trim();
+    if(!tarima)   return res.status(400).json({ ok:false, error:'falta tarima' });
+    if(!sku)      return res.status(400).json({ ok:false, error:'falta sku' });
+    if(!operador) return res.status(400).json({ ok:false, error:'falta operador' });
+    if(!(cantidad > 0)) return res.status(400).json({ ok:false, error:'cantidad debe ser mayor a 0' });
+
+    // Verificar sesión existe y está abierta
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    if(sesRows[0].estado === 'cerrada') return res.status(400).json({ ok:false, error:'La sesión está cerrada.' });
+
+    // Completar descripción desde sku_catalog si vacía
+    var advertencia = null;
+    if(!descripcion && SUPABASE_URL && SUPABASE_KEY) {
+      try {
+        var catRows = await supabase('GET', 'sku_catalog', null,
+          '?sku=eq.' + encodeURIComponent(sku) + '&select=sku,descripcion&limit=1');
+        if(Array.isArray(catRows) && catRows.length && catRows[0].descripcion)
+          descripcion = catRows[0].descripcion;
+      } catch(e) { advertencia = 'No se pudo completar descripción desde catálogo.'; }
+    }
+
+    var now   = new Date().toISOString();
+    var linId = 'bl-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    var linea = {
+      id: linId, sesion_id: sesId, licencia_id: sesRows[0].licencia_id,
+      tarima, barra, sku, descripcion, cantidad, operador,
+      ts_captura: now, ts_modif: now, eliminada: false,
+      auditado: false, auditado_por: null, ts_auditado: null, cantidad_audit: null
+    };
+    var created = await supabase('POST', 'bod_lineas', linea, '');
+    var row = Array.isArray(created) ? created[0] : linea;
+    res.json({ ok:true, linea: row, ...(advertencia ? { advertencia } : {}) });
+  } catch(e) {
+    console.log('BOD linea POST FAILED:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── PATCH /api/bod/linea/:lineaId ─────────────────────────────────────────
+app.patch('/api/bod/linea/:lineaId', bodGuard, async (req, res) => {
+  try {
+    var linId   = String(req.params.lineaId).trim();
+    var { cantidad, sku, descripcion, tarima, usuario } = req.body || {};
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var lin = rows[0];
+    // Permisos: mismo operador o supervisor (caller indica con supervisor:true)
+    var esSup = req.body && req.body.supervisor === true;
+    if(lin.operador !== usuario && !esSup)
+      return res.status(403).json({ ok:false, error:'Solo el operador original o supervisor puede editar.' });
+    var patch = { ts_modif: new Date().toISOString() };
+    if(cantidad !== undefined) {
+      if(!(Number(cantidad) > 0)) return res.status(400).json({ ok:false, error:'cantidad debe ser mayor a 0' });
+      patch.cantidad = Number(cantidad);
+    }
+    if(sku         !== undefined) patch.sku         = String(sku).trim();
+    if(descripcion !== undefined) patch.descripcion = String(descripcion).trim();
+    if(tarima      !== undefined) patch.tarima      = bodNormTarima(tarima);
+    await supabase('PATCH', 'bod_lineas', patch, '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true, patch });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── DELETE /api/bod/linea/:lineaId ────────────────────────────────────────
+app.delete('/api/bod/linea/:lineaId', bodGuard, async (req, res) => {
+  try {
+    var linId   = String(req.params.lineaId).trim();
+    var { usuario, supervisor } = req.body || {};
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var lin = rows[0];
+    var esSup = supervisor === true;
+    if(lin.operador !== usuario && !esSup)
+      return res.status(403).json({ ok:false, error:'Solo el operador original o supervisor puede eliminar.' });
+    await supabase('PATCH', 'bod_lineas', { eliminada:true, ts_modif:new Date().toISOString() },
+      '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/lineas ────────────────────────────────────────
+app.get('/api/bod/sesion/:id/lineas', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var desde  = req.query.desde || null;
+    var inclEl = req.query.incluir_eliminadas === 'true';
+    var q = '?sesion_id=eq.' + encodeURIComponent(sesId) + '&order=ts_captura.asc';
+    if(!inclEl) q += '&eliminada=eq.false';
+    if(desde)   q += '&ts_modif=gte.' + encodeURIComponent(desde);
+    var lineas = await supabase('GET', 'bod_lineas', null, q);
+    res.json({ ok:true, lineas: Array.isArray(lineas) ? lineas : [] });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/barra/:barra ────────────────────────────────────────────
+app.get('/api/bod/barra/:barra', bodGuard, async (req, res) => {
+  try {
+    var barra = String(req.params.barra).trim();
+    var row   = await bodGetBarra(barra);
+    if(!row) return res.json({ ok:true, encontrado:false });
+    // Completar descripción desde sku_catalog si vacía
+    if(!row.descripcion && SUPABASE_URL && SUPABASE_KEY) {
+      try {
+        var cat = await supabase('GET', 'sku_catalog', null,
+          '?sku=eq.' + encodeURIComponent(row.sku) + '&select=sku,descripcion&limit=1');
+        if(Array.isArray(cat) && cat.length && cat[0].descripcion)
+          row = Object.assign({}, row, { descripcion: cat[0].descripcion });
+      } catch(e) { /* no bloquear */ }
+    }
+    res.json({ ok:true, encontrado:true, barra: row.barra, sku: row.sku, descripcion: row.descripcion || '' });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/barra-sku/upload ────────────────────────────────────────
+app.post('/api/bod/barra-sku/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
+    var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    if(rows.length < 2) return res.status(400).json({ ok:false, error:'Archivo vacío o solo encabezado.' });
+    var hdr  = rows[0].map(function(h){ return String(h).trim().toLowerCase(); });
+    var cBarra = hdr.findIndex(function(h){ return h.includes('barra') || h.includes('codigo') || h.includes('barcode'); });
+    var cSku   = hdr.findIndex(function(h){ return h === 'sku' || h.includes('articulo') || h.includes('artículo'); });
+    var cDesc  = hdr.findIndex(function(h){ return h.includes('desc') || h.includes('nombre'); });
+    if(cBarra < 0 || cSku < 0) return res.status(400).json({ ok:false, error:'No se encontraron columnas Barra y SKU. Encabezados: '+rows[0].join(', ') });
+    var now = new Date().toISOString();
+    var procesadas = 0, errores = [];
+    for(var ri = 1; ri < rows.length; ri++) {
+      var r    = rows[ri];
+      var bar  = String(r[cBarra]||'').trim();
+      var sku  = String(r[cSku]  ||'').trim();
+      var desc = cDesc >= 0 ? String(r[cDesc]||'').trim() : '';
+      if(!bar || !sku) continue;
+      try {
+        await supabase('POST', 'bod_barra_sku', { barra:bar, sku, descripcion:desc, ts_actualizacion:now },
+          '?on_conflict=barra');
+        procesadas++;
+      } catch(e) { errores.push({ barra:bar, error:e.message }); }
+    }
+    res.json({ ok:true, procesadas, errores: errores.length ? errores : undefined });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/linea/:lineaId/auditar ─────────────────────────────────
+app.post('/api/bod/linea/:lineaId/auditar', bodGuard, async (req, res) => {
+  try {
+    var linId = String(req.params.lineaId).trim();
+    var { usuario, supervisor, cantidad_audit } = req.body || {};
+    if(!supervisor) return res.status(403).json({ ok:false, error:'Solo supervisores pueden auditar.' });
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var now = new Date().toISOString();
+    var patch = { auditado:true, auditado_por:usuario, ts_auditado:now, ts_modif:now };
+    if(cantidad_audit !== undefined && Number(cantidad_audit) > 0) patch.cantidad_audit = Number(cantidad_audit);
+    await supabase('PATCH', 'bod_lineas', patch, '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/cerrar ──────────────────────────────────────
+app.post('/api/bod/sesion/:id/cerrar', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var { usuario, supervisor } = req.body || {};
+    if(!supervisor) return res.status(403).json({ ok:false, error:'Solo supervisores pueden cerrar sesiones.' });
+    var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    await supabase('PATCH', 'bod_sesiones',
+      { estado:'cerrada', ts_cierre:new Date().toISOString(), modificado_por:usuario },
+      '?id=eq.' + encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD MODULE END
+// ══════════════════════════════════════════════════════════════════════════
