@@ -587,8 +587,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">ID de Sesión</label>
-            <input type="text" class="field-inp" id="bod-aud-sesion-id" placeholder="bod-XXXX">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia</label>
+            <input type="text" class="field-inp" id="bod-aud-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
+          </div>
+          <div style="min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha</label>
+            <input type="date" class="field-inp" id="bod-aud-fecha">
           </div>
           <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Cargar</button>
         </div>
@@ -10082,11 +10086,15 @@ function bodRenderTabla() {
 var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
 if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
   if(!BOD_ENABLED_CLIENT) return;
-  var sesId = (document.getElementById('bod-aud-sesion-id').value||'').trim();
-  var msgEl = document.getElementById('bod-aud-msg');
-  if(!sesId){ msgEl.innerHTML='<span style="color:#c0392b">Ingresá el ID de sesión.</span>'; return; }
+  var licEl   = document.getElementById('bod-aud-licencia');
+  var fechaEl = document.getElementById('bod-aud-fecha');
+  var lic     = (licEl   ? licEl.value   : '').trim().toUpperCase();
+  var fecha   = (fechaEl ? fechaEl.value : '').trim();
+  var msgEl   = document.getElementById('bod-aud-msg');
+  if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';  return; }
+  if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>';  return; }
   msgEl.innerHTML='<span style="color:#888">Cargando…</span>';
-  fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+  fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
