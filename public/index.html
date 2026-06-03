@@ -11027,6 +11027,79 @@ function bodRenderWmsVsApp() {
       });
   });
 
+  // ── Sección carga licencia hija/salida TR999 ─────────────────────────────
+  vistaEl.insertAdjacentHTML('beforeend',
+    '<div style="margin-top:1rem;padding-top:.75rem;border-top:1px solid #e0e0e0">'
+    +'<div style="font-size:.78rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.4rem">Cargar licencia hija / salida TR999</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:.4rem">'
+    +'<div><label style="font-size:.73rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
+    +'<input type="text" id="bod-hija-licencia" class="field-inp" placeholder="Ej: U25-162300" autocomplete="off"'
+    +' style="width:140px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
+    +'<div><label style="font-size:.73rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
+    +'<select id="bod-hija-furgon" class="field-inp" style="font-size:.82rem;padding:4px 8px;min-width:80px">'
+    +'<option value="">— Elegir —</option>'
+    +'</select></div>'
+    +'<label class="btn btn-sm" style="cursor:pointer;background:#fff3e0;color:#e65100;font-size:.75rem">'
+    +'📂 Excel licencia hija'
+    +'<input type="file" id="bod-hija-upload-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
+    +'</label></div>'
+    +'<span id="bod-hija-upload-msg" style="font-size:.78rem;display:block;min-height:1.2em"></span>'
+    +'</div>'
+  );
+
+  // Cargar furgones disponibles de la sesión
+  var selFurgon = document.getElementById('bod-hija-furgon');
+  if(sesId && selFurgon) {
+    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok || !d.asignaciones || !d.asignaciones.length) {
+          var opt = document.createElement('option');
+          opt.value = ''; opt.disabled = true;
+          opt.textContent = 'No hay furgones asignados todavía';
+          selFurgon.appendChild(opt);
+          return;
+        }
+        // Extraer furgones únicos
+        var furgones = [];
+        d.asignaciones.forEach(function(a){ if(a.furgon && !furgones.includes(a.furgon)) furgones.push(a.furgon); });
+        furgones.sort(function(a,b){ return String(a).localeCompare(String(b), undefined, {numeric:true}); });
+        furgones.forEach(function(f){ var opt=document.createElement('option'); opt.value=f; opt.textContent='Furgón '+f; selFurgon.appendChild(opt); });
+      }).catch(function(){});
+  }
+
+  // Wire upload licencia hija
+  var inpHija = document.getElementById('bod-hija-upload-inp');
+  if(inpHija) inpHija.addEventListener('change', function(){
+    if(!this.files||!this.files[0]) return;
+    var archivo = this.files[0];
+    var nombreArchivo = archivo.name;
+    var msgElH = document.getElementById('bod-hija-upload-msg');
+    var licHija   = (document.getElementById('bod-hija-licencia').value||'').trim().toUpperCase();
+    var furgHija  = (document.getElementById('bod-hija-furgon').value||'').trim();
+    if(!licHija)  { msgElH.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
+    if(!furgHija) { msgElH.innerHTML='<span style="color:#c0392b">Seleccioná el furgón.</span>'; return; }
+    msgElH.innerHTML = '<span style="color:#888">⏳ Subiendo <strong>'+escH(nombreArchivo)+'</strong>…</span>';
+    this.value = '';
+    var fd = new FormData();
+    fd.append('file', archivo);
+    fd.append('usuario', usuario);
+    fd.append('licencia_id', licHija);
+    fd.append('licencia_padre', licId);
+    fd.append('furgon_relacionado', furgHija);
+    fd.append('tipo_licencia', 'hija_salida');
+    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok){ msgElH.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
+        var col = d.advertencia ? '#e65100' : '#1e7e34';
+        var txt = '✅ '+d.procesadas+' filas · Salidas TR999: '+((d.salidas_tr999)||0);
+        if(d.advertencia) txt += ' <br><span style="font-size:.73rem">⚠ '+escH(d.advertencia)+'</span>';
+        msgElH.innerHTML = '<span style="color:'+col+'">'+txt+'</span>';
+        bodCargarWmsVsApp(licId, sesId);
+      }).catch(function(){ msgElH.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
+  });
+
   if(licId) bodCargarWmsVsApp(licId, sesId);
 }
 
@@ -11075,7 +11148,7 @@ function bodRenderFlujoBolson() {
       if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
       var html = '<div class="tbl-wrap"><table><thead><tr>'
         +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
-        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. salida/hija</th><th>Destino TR999</th>'
+        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th><th>Destino TR999</th>'
         +'</tr></thead><tbody>';
       d.movimientos.forEach(function(m){
         var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
@@ -11085,7 +11158,8 @@ function bodRenderFlujoBolson() {
           +'<td class="tc">'+m.salidas_tr999+'</td>'
           +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
           +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_salida||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(m.furgon||'—')+'</td>'
           +'<td style="font-size:.75rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
           +'</tr>';
       });
