@@ -1802,6 +1802,7 @@ document.getElementById('gate-pass').addEventListener('keydown', function(e){ if
 document.getElementById('btn-login-enter').addEventListener('click',function(){
   var n=document.getElementById('login-name-sel').value;
   if(!n){var e=document.getElementById('login-err');e.textContent='Selecciona tu nombre.';e.style.display='block';return;}
+  if(typeof window.bodCleanup === 'function') window.bodCleanup();
   var sup=SUPERVISORES.indexOf(n)>=0;
   var bod=typeof BODEGA_LIST!=='undefined'&&BODEGA_LIST.indexOf(n)>=0;
   currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
@@ -1820,6 +1821,7 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   // Las variables cdgv2* están en el IIFE — se acceden via window.cdgv2Cleanup
   // para evitar ReferenceError en strict mode por cross-scope.
   if(typeof window.cdgv2Cleanup === 'function') window.cdgv2Cleanup();
+  if(typeof window.bodCleanup === 'function') window.bodCleanup();
   lastVersion = -1;
   window.serverLocks = {};
   currentUser=null;
@@ -1855,6 +1857,7 @@ function afterLogin(){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
           navTo('pg-bod-menu','📦 Bodega CDG');
+          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
           // mostrar opción auditoria si es supervisor (no aplica para bodega puro)
         } else {
           // Módulo no habilitado: mostrar mensaje y volver al login
@@ -9951,10 +9954,16 @@ function bodTarimaPrefix(nombre) {
 
 // Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
 function bodMostrarMenuPrincipal() {
-  if(!BOD_ENABLED_CLIENT) return;
-  if(!window.currentUser) return;
+  if(!BOD_ENABLED_CLIENT) {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
+  if(!window.currentUser) {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
   var role = window.currentUser.role;
-  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') return;
+  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
   // Agregar tarjeta mc-bodega si no existe
   var mcBod = document.getElementById('mc-bodega');
   if(!mcBod) {
@@ -9992,6 +10001,23 @@ window.bodMostrarMenuPrincipal = function(){
   return bodMostrarMenuPrincipal();
 };
 window.bodAbrirMenu = bodAbrirMenu;
+
+window.bodCleanup = function(){
+  bodSesionActual = null;
+  bodLineas = [];
+  bodAuditoriaData = null;
+  bodFurgonAsignaciones = [];
+  var mcBod = document.getElementById('mc-bodega');
+  if(mcBod) mcBod.remove();
+  var captBtn = document.getElementById('sm-bod-captura');
+  var audBtn  = document.getElementById('sm-bod-auditoria');
+  var barraBtn = document.getElementById('sm-bod-barra-sku');
+  if(captBtn)  captBtn.style.display  = 'none';
+  if(audBtn)   audBtn.style.display   = 'none';
+  if(barraBtn) barraBtn.style.display = 'none';
+  var audCont = document.getElementById('bod-aud-contenido');
+  if(audCont) audCont.innerHTML = '';
+};
 
 // ── Helper fetch bodega ───────────────────────────────────────────────────
 function bodFetch(method, path, body) {
