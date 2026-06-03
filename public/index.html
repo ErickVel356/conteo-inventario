@@ -1739,8 +1739,45 @@ function markGatePassed(scope){
   } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
 }
 
+// Renderizar opciones del dropdown según el scope activo
+function renderLoginNameOptions(){
+  var sel = document.getElementById('login-name-sel');
+  if(!sel) return;
+  var html = '<option value="">— Selecciona tu nombre —</option>';
+  if(window.ACCESS_SCOPE === 'bodega'){
+    html += '<optgroup label="Bodega CDG">';
+    html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
+    html += '<option>Angie Suar</option><option>Duma Pérez</option>';
+    html += '<option>Edgar Soto</option>';
+    html += '</optgroup>';
+  } else {
+    html += '<optgroup label="Supervisores">';
+    html += '<option>Erick Vela</option><option>Steven Palencia</option>';
+    html += '<option>Edmar Guzman</option><option>Ever Garcia</option>';
+    html += '<option>Mario Hernandez</option><option>Oscar Ramirez</option>';
+    html += '<option>Vivi Gil</option><option>Carlos Andrino</option>';
+    html += '<option>Rodrigo Ruiz</option>';
+    html += '</optgroup>';
+    html += '<optgroup label="Contadores">';
+    html += '<option>Carlos Sandoval</option><option>Israel Gatica</option>';
+    html += '<option>Nelson Diaz</option><option>Julio Yoc</option>';
+    html += '<option>Ronald Gomez</option><option>William Garzona</option>';
+    html += '<option>Alexander Grijalva</option><option>Jaqueline Perez</option>';
+    html += '<option>Jeffry Telon</option><option>Bianca Montenegro</option>';
+    html += '</optgroup>';
+    html += '<optgroup label="Bodega CDG" id="login-optgroup-bodega">';
+    html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
+    html += '<option>Angie Suar</option><option>Duma Pérez</option>';
+    html += '<option>Edgar Soto</option>';
+    html += '</optgroup>';
+  }
+  sel.innerHTML = html;
+  sel.value = '';
+}
+
 // Mostrar el dropdown de nombres (pasar del gate al login normal)
 function showNameLogin(){
+  renderLoginNameOptions();
   var g = document.getElementById('pg-gate');
   if(g) g.style.display='none';
   document.getElementById('pg-login').style.display='flex';
@@ -1858,9 +1895,16 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   var tbAsignBtn = document.getElementById('tab-btn-asign');
   if(tbAsignBtn) tbAsignBtn.classList.remove('on');
   document.getElementById('main-wrap').style.display='none';
-  document.getElementById('pg-login').style.display='flex';
-  document.getElementById('login-name-sel').value='';
-  document.getElementById('login-err').style.display='none';
+  document.getElementById('pg-login').style.display='none';
+  var gate = document.getElementById('pg-gate');
+  if(gate) gate.style.display='flex';
+  var gp = document.getElementById('gate-pass');
+  if(gp) gp.value = '';
+  var ge = document.getElementById('gate-err');
+  if(ge) ge.style.display = 'none';
+  var le = document.getElementById('login-err');
+  if(le) le.style.display = 'none';
+  renderLoginNameOptions();
 });
 
 function afterLogin(){
