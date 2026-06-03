@@ -405,6 +405,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <option>Alexander Grijalva</option><option>Jaqueline Perez</option>
           <option>Jeffry Telon</option><option>Bianca Montenegro</option>
         </optgroup>
+        <!-- BOD: operadores de bodega — visible siempre, rol se asigna en JS -->
+        <optgroup label="Bodega CDG" id="login-optgroup-bodega">
+          <option>Huvaldo Pérez</option><option>Ader Chávez</option>
+          <option>Angie Suar</option><option>Duma Pérez</option>
+          <option>Edgar Soto</option>
+        </optgroup>
       </select>
     </div>
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
@@ -486,6 +492,109 @@ textarea.field-inp{resize:vertical;min-height:72px}
       <div style="margin-top:1.5rem;display:flex;gap:.75rem;flex-wrap:wrap">
         <button class="btn btn-sm" id="btn-reset">↺ Nuevo día</button>
       </div>
+    </div>
+
+    <!-- ── MÓDULO BODEGA CDG — BOD MODULE UI ───────────────────
+         Visible solo si BOD_ENABLED_CLIENT=true y usuario bodega/supervisor.
+         Fase 1: Captura tarima + Auditoría.
+    ──────────────────────────────────────────────────────── -->
+    <div id="pg-bod-menu" class="page" style="display:none">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
+      <div class="submenu-list">
+        <div class="submenu-item" id="sm-bod-captura">
+          <div class="si-icon">📦</div>
+          <div class="si-text">
+            <div class="si-title">Capturar tarima</div>
+            <div class="si-sub">Registrar ítems por tarima</div>
+          </div>
+        </div>
+        <div class="submenu-item" id="sm-bod-auditoria" style="display:none">
+          <div class="si-icon">🔍</div>
+          <div class="si-text">
+            <div class="si-title">Auditar sesión</div>
+            <div class="si-sub">Solo supervisores</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BODEGA: CAPTURA DE TARIMA ──────────────────────────── -->
+    <div id="pg-bod-captura" class="page" style="display:none">
+      <!-- Encabezado sesión -->
+      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia (Bolsón)</label>
+            <input type="text" class="field-inp" id="bod-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
+          </div>
+          <div style="min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha trabajo</label>
+            <input type="date" class="field-inp" id="bod-fecha">
+          </div>
+          <button class="btn btn-dark" id="btn-bod-abrir-sesion">Abrir sesión</button>
+        </div>
+        <div id="bod-sesion-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        <div id="bod-sesion-info" style="font-size:.78rem;color:#888;margin-top:3px"></div>
+      </div>
+
+      <!-- Formulario captura (oculto hasta tener sesión) -->
+      <div id="bod-form-captura" style="display:none">
+        <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div style="min-width:100px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Tarima</label>
+              <select class="field-inp" id="bod-sel-tarima" style="font-size:.85rem;padding:6px 8px">
+                <!-- Generado por JS: A1-A100 -->
+              </select>
+            </div>
+            <div style="min-width:130px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Barra (opcional)</label>
+              <input type="text" class="field-inp" id="bod-barra" placeholder="Escanear o escribir" autocomplete="off" inputmode="text">
+            </div>
+            <div style="min-width:80px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">SKU</label>
+              <input type="text" class="field-inp" id="bod-sku" placeholder="SKU" autocomplete="off" inputmode="numeric">
+            </div>
+            <div style="flex:2;min-width:130px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Descripción</label>
+              <input type="text" class="field-inp" id="bod-desc" placeholder="Autofill o manual">
+            </div>
+            <div style="min-width:70px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Cantidad</label>
+              <input type="number" class="field-inp" id="bod-cantidad" value="1" min="1" step="1" style="width:70px">
+            </div>
+            <button class="btn btn-dark" id="btn-bod-agregar">+ Agregar</button>
+          </div>
+          <div id="bod-captura-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        </div>
+
+        <!-- Tabla últimos 15 -->
+        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>Operador</th><th>Tarima</th><th>Barra</th>
+              <th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Hora</th>
+            </tr></thead>
+            <tbody id="bod-tabla-capturas"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BODEGA: AUDITORÍA ───────────────────────────────────── -->
+    <div id="pg-bod-auditoria" class="page" style="display:none">
+      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">ID de Sesión</label>
+            <input type="text" class="field-inp" id="bod-aud-sesion-id" placeholder="bod-XXXX">
+          </div>
+          <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Cargar</button>
+        </div>
+        <div id="bod-aud-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+      </div>
+      <div id="bod-aud-contenido"></div>
     </div>
 
     <!-- ── PÁGINA: SUBMENÚ HAMILTON ──────────────────────────── -->
@@ -1655,7 +1764,8 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
   var n=document.getElementById('login-name-sel').value;
   if(!n){var e=document.getElementById('login-err');e.textContent='Selecciona tu nombre.';e.style.display='block';return;}
   var sup=SUPERVISORES.indexOf(n)>=0;
-  currentUser={name:n,role:sup?'supervisor':'contador'};
+  var bod=typeof BODEGA_LIST!=='undefined'&&BODEGA_LIST.indexOf(n)>=0;
+  currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
   document.getElementById('pg-login').style.display='none';
   document.getElementById('main-wrap').style.display='';
   document.getElementById('user-badge').textContent=(sup?'🔑 ':'📋 ')+n;
@@ -1698,7 +1808,48 @@ function afterLogin(){
   updateOnlineBar();
   updateSubmenúCounts();
   _pageStack=[];
+  // BOD: usuario bodega — esperar /api/bod/status para evitar carrera de flag.
+  // BOD_ENABLED_CLIENT puede no estar listo aún si bodInit corrió antes que el login.
+  if(currentUser.role==='bodega'){
+    fetch('/api/bod/status').then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d && d.enabled){
+          window.BOD_ENABLED_CLIENT = true;
+          navTo('pg-bod-menu','📦 Bodega CDG');
+          // mostrar opción auditoria si es supervisor (no aplica para bodega puro)
+        } else {
+          // Módulo no habilitado: mostrar mensaje y volver al login
+          window.BOD_ENABLED_CLIENT = false;
+          currentUser = null;
+          document.getElementById('pg-gate') &&
+            (document.getElementById('pg-gate').style.display='');
+          var errEl = document.getElementById('login-err');
+          if(errEl){
+            errEl.textContent = 'Módulo bodega no habilitado. Contactá al supervisor.';
+            errEl.style.display = '';
+          }
+          // No navegar a pg-menu — el usuario bodega no debe ver Hamilton/CDG
+        }
+      }).catch(function(){
+        currentUser = null;
+        var errEl = document.getElementById('login-err');
+        if(errEl){ errEl.textContent = 'Error al verificar módulo. Reintentá.'; errEl.style.display = ''; }
+      });
+    return; // no continuar hasta que resuelva la promesa
+  }
   navTo('pg-menu','📦 Conteo de Inventario');
+  // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
+  if(currentUser && currentUser.role === 'supervisor') {
+    fetch('/api/bod/status').then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d && d.enabled){
+          window.BOD_ENABLED_CLIENT = true;
+          if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
+          var audBtn = document.getElementById('sm-bod-auditoria');
+          if(audBtn) audBtn.style.display = '';
+        }
+      }).catch(function(){});
+  }
   // Si ya hay teórico cargado, mostrar botones activos
   var tabAsignEl = document.getElementById('tab-btn-asign');
   var onlineBarEl = document.getElementById('online-bar');
@@ -5083,6 +5234,18 @@ function pollNow() {
         var wait = document.getElementById('pg-wait');
         if(wait && wait.classList.contains('active')) {
           navTo('pg-menu','📦 Conteo de Inventario');
+  // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
+  if(currentUser && currentUser.role === 'supervisor') {
+    fetch('/api/bod/status').then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d && d.enabled){
+          window.BOD_ENABLED_CLIENT = true;
+          if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
+          var audBtn = document.getElementById('sm-bod-auditoria');
+          if(audBtn) audBtn.style.display = '';
+        }
+      }).catch(function(){});
+  }
         }
         if(!typing) {
           // Re-render current conteo if visible
@@ -9698,3 +9861,309 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 
 </body>
 </html>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   BOD MODULE CLIENT — Bodega CDG / Armado de Tarimas — Fase 1
+   FIX (mar 2-jun-2026, v5.2.29): módulo completamente aislado en IIFE.
+   No toca: Hamilton, CDG, teorico, fisico, endpoints /api/cdg/*, /api/state.
+   Flag: BOD_ENABLED_CLIENT se inicializa en false y solo se activa
+         si el server responde enabled:true en /api/bod/status.
+════════════════════════════════════════════════════════════════════════════ */
+(function(){ 'use strict';
+
+// ── Constantes ──────────────────────────────────────────────────────────
+var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto'];
+window.BODEGA_LIST = BODEGA_LIST; // exponer para el login en script anterior
+
+var BOD_ENABLED_CLIENT = false;
+window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+
+// ── Estado interno (no toca variables globales del resto de la app) ──────
+var bodSesionActual  = null;  // objeto sesión abierta
+var bodLineas        = [];    // array de líneas de la sesión
+var bodPollTimer     = null;
+
+// ── Inicialización: consultar status al servidor ─────────────────────────
+function bodInit() {
+  fetch('/api/bod/status')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      BOD_ENABLED_CLIENT = !!(d && d.enabled);
+      window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+      if(BOD_ENABLED_CLIENT) {
+        // Mostrar botón bodega en menú si supervisor
+        bodMostrarMenuPrincipal();
+        // Mostrar opción auditoria a supervisores en pg-bod-menu
+        var audBtn = document.getElementById('sm-bod-auditoria');
+        if(audBtn && typeof isSup === 'function' && isSup()) audBtn.style.display = '';
+      }
+    })
+    .catch(function(){
+      BOD_ENABLED_CLIENT = false;
+      window.BOD_ENABLED_CLIENT = false;
+    });
+}
+
+// Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
+function bodMostrarMenuPrincipal() {
+  if(!BOD_ENABLED_CLIENT) return;
+  if(!window.currentUser) return;
+  var role = window.currentUser.role;
+  if(role !== 'bodega' && role !== 'supervisor') return;
+  // Agregar tarjeta mc-bodega si no existe
+  var mcBod = document.getElementById('mc-bodega');
+  if(!mcBod) {
+    var menuCards = document.querySelector('#pg-menu .menu-cards, #pg-menu .main-menu');
+    if(!menuCards) return;
+    var card = document.createElement('div');
+    card.className = 'menu-card';
+    card.id = 'mc-bodega';
+    card.innerHTML = '<div class="mc-icon">📦</div><div class="mc-title">Bodega CDG</div><div class="mc-sub">Armado de Tarimas</div>';
+    card.addEventListener('click', function(){
+      if(typeof navTo === 'function') navTo('pg-bod-menu','📦 Bodega CDG');
+      bodAbrirMenu();
+    });
+    menuCards.appendChild(card);
+  }
+}
+
+// ── Menú bodega ──────────────────────────────────────────────────────────
+function bodAbrirMenu() {
+  var audBtn = document.getElementById('sm-bod-auditoria');
+  if(audBtn) audBtn.style.display = (typeof isSup === 'function' && isSup()) ? '' : 'none';
+}
+
+// ── Helper fetch bodega ───────────────────────────────────────────────────
+function bodFetch(method, path, body) {
+  var opts = { method: method, headers: {'Content-Type':'application/json'} };
+  if(body) opts.body = JSON.stringify(body);
+  return fetch(path, opts).then(function(r){ return r.json(); });
+}
+
+// ── Captura: abrir sesión ────────────────────────────────────────────────
+var btnAbrirSesion = document.getElementById('btn-bod-abrir-sesion');
+if(btnAbrirSesion) btnAbrirSesion.addEventListener('click', function(){
+  if(!BOD_ENABLED_CLIENT) { alert('Módulo bodega no habilitado.'); return; }
+  var lic   = (document.getElementById('bod-licencia').value||'').trim().toUpperCase();
+  var fecha = (document.getElementById('bod-fecha').value||'').trim();
+  var msgEl = document.getElementById('bod-sesion-msg');
+  if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>'; return; }
+  if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>'; return; }
+  var usuario = window.currentUser ? window.currentUser.name : '';
+  if(!usuario){ msgEl.innerHTML='<span style="color:#c0392b">Seleccioná tu nombre.</span>'; return; }
+  msgEl.innerHTML='<span style="color:#888">Abriendo sesión…</span>';
+  bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, fecha_trabajo:fecha, tipo:'recoleccion', creado_por:usuario })
+    .then(function(d){
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      bodSesionActual = d.sesion;
+      msgEl.innerHTML='<span style="color:#1e7e34">'+(d.created?'✅ Sesión creada':'✅ Sesión existente cargada')+'</span>';
+      document.getElementById('bod-sesion-info').textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
+      document.getElementById('bod-form-captura').style.display='';
+      bodPoblarTarimas();
+      document.getElementById('bod-barra').focus();
+      bodCargarLineas(d.sesion.id);
+    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+});
+
+// Llenar selector tarimas A1-A100
+function bodPoblarTarimas() {
+  var sel = document.getElementById('bod-sel-tarima');
+  if(!sel || sel.options.length > 1) return;
+  sel.innerHTML = '';
+  // A1-A100 (100 tarimas en la misma letra A, números 1-100)
+  for(var n=1; n<=100; n++){
+    var opt=document.createElement('option');
+    opt.value='A'+n; opt.textContent='A'+n;
+    sel.appendChild(opt);
+  }
+}
+
+// Barra → autofill SKU/desc
+var barraInput = document.getElementById('bod-barra');
+var barraTimer = null;
+if(barraInput) barraInput.addEventListener('input', function(){
+  clearTimeout(barraTimer);
+  var val = this.value.trim();
+  if(!val) return;
+  barraTimer = setTimeout(function(){
+    fetch('/api/bod/barra/'+encodeURIComponent(val))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.encontrado){
+          var skuEl = document.getElementById('bod-sku');
+          var descEl = document.getElementById('bod-desc');
+          if(skuEl)  skuEl.value  = d.sku;
+          if(descEl) descEl.value = d.descripcion || '';
+          document.getElementById('bod-cantidad').focus();
+        }
+      }).catch(function(){});
+  }, 300);
+});
+
+// Agregar línea
+var btnAgregar = document.getElementById('btn-bod-agregar');
+if(btnAgregar) btnAgregar.addEventListener('click', function(){
+  if(!bodSesionActual){ alert('Abrí una sesión primero.'); return; }
+  if(bodSesionActual.estado==='cerrada'){ alert('La sesión está cerrada.'); return; }
+  var tarima   = (document.getElementById('bod-sel-tarima').value||'').trim();
+  var barra    = (document.getElementById('bod-barra').value||'').trim()||null;
+  var sku      = (document.getElementById('bod-sku').value||'').trim();
+  var desc     = (document.getElementById('bod-desc').value||'').trim();
+  var cantidad = Number(document.getElementById('bod-cantidad').value||1);
+  var msgEl    = document.getElementById('bod-captura-msg');
+  var usuario  = window.currentUser ? window.currentUser.name : '';
+  if(!sku){ msgEl.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+  if(!(cantidad>0)){ msgEl.innerHTML='<span style="color:#c0392b">Cantidad debe ser mayor a 0.</span>'; return; }
+  msgEl.innerHTML='<span style="color:#888">Guardando…</span>';
+  bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(bodSesionActual.id)+'/linea',
+    { tarima, barra, sku, descripcion:desc, cantidad, operador:usuario })
+    .then(function(d){
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      msgEl.innerHTML='';
+      // Reset campos rápidos
+      document.getElementById('bod-barra').value='';
+      document.getElementById('bod-sku').value='';
+      document.getElementById('bod-desc').value='';
+      document.getElementById('bod-cantidad').value='1';
+      document.getElementById('bod-barra').focus();
+      bodCargarLineas(bodSesionActual.id);
+    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+});
+
+// Cargar y renderizar las últimas 15 líneas
+function bodCargarLineas(sesId) {
+  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/lineas')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      bodLineas = Array.isArray(d.lineas) ? d.lineas : [];
+      bodRenderTabla();
+    }).catch(function(){});
+}
+
+function bodRenderTabla() {
+  var tbody = document.getElementById('bod-tabla-capturas');
+  if(!tbody) return;
+  var ultimas = bodLineas.slice(-15).reverse();
+  if(!ultimas.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Sin registros aún.</td></tr>'; return; }
+  tbody.innerHTML = ultimas.map(function(l){
+    var hora = l.ts_captura ? l.ts_captura.substring(11,16) : '';
+    return '<tr>'
+      +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
+      +'<td style="font-weight:600">'+escH(l.tarima||'')+'</td>'
+      +'<td style="font-size:.78rem;color:#888">'+escH(l.barra||'—')+'</td>'
+      +'<td style="font-weight:600">'+escH(l.sku||'')+'</td>'
+      +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
+      +'<td class="tc">'+Number(l.cantidad)+'</td>'
+      +'<td style="font-size:.75rem;color:#888">'+hora+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+// ── Auditoría ─────────────────────────────────────────────────────────────
+var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
+if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
+  if(!BOD_ENABLED_CLIENT) return;
+  var sesId = (document.getElementById('bod-aud-sesion-id').value||'').trim();
+  var msgEl = document.getElementById('bod-aud-msg');
+  if(!sesId){ msgEl.innerHTML='<span style="color:#c0392b">Ingresá el ID de sesión.</span>'; return; }
+  msgEl.innerHTML='<span style="color:#888">Cargando…</span>';
+  fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      msgEl.innerHTML='';
+      bodRenderAuditoria(d);
+    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+});
+
+function bodRenderAuditoria(data) {
+  var el = document.getElementById('bod-aud-contenido');
+  if(!el) return;
+  var lineas = data.lineas || [];
+  var sesion = data.sesion || {};
+  // Agrupar por tarima
+  var porTarima = {};
+  lineas.forEach(function(l){
+    var t = l.tarima||'?';
+    if(!porTarima[t]) porTarima[t] = [];
+    porTarima[t].push(l);
+  });
+  var usuario = window.currentUser ? window.currentUser.name : '';
+  var esSup   = typeof isSup === 'function' && isSup();
+  var html = '<div style="font-size:.8rem;color:#666;margin-bottom:.5rem">Sesión <strong>'+escH(sesion.id||'')+'</strong>'
+    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></div>';
+  Object.keys(porTarima).sort().forEach(function(t){
+    var items = porTarima[t];
+    html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
+    html += '<div class="tbl-wrap"><table><thead><tr>'
+      +'<th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Operador</th>'
+      +'<th>Auditado</th>'+(esSup?'<th class="tc">Acción</th>':'')
+      +'</tr></thead><tbody>';
+    items.forEach(function(l){
+      var audBadge = l.auditado
+        ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
+        : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
+      var accion = '';
+      if(esSup && !l.auditado) {
+        accion = '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
+          +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>';
+      } else if(esSup) {
+        accion = '<td class="tc"><span style="color:#aaa;font-size:.75rem">—</span></td>';
+      }
+      html += '<tr>'
+        +'<td style="font-weight:600">'+escH(l.sku||'')+'</td>'
+        +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
+        +'<td class="tc">'+Number(l.cantidad)+'</td>'
+        +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
+        +'<td>'+audBadge+'</td>'
+        +(esSup ? accion : '')
+        +'</tr>';
+    });
+    html += '</tbody></table></div>';
+  });
+  el.innerHTML = html;
+  // Wire botones auditar
+  el.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var linId = btn.dataset.id;
+      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
+        { usuario:usuario, supervisor:true })
+        .then(function(d){
+          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+          else alert(d.error||'Error');
+        }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+}
+
+// ── Navegación ─────────────────────────────────────────────────────────────
+var smBodCaptura = document.getElementById('sm-bod-captura');
+if(smBodCaptura) smBodCaptura.addEventListener('click', function(){
+  if(typeof navTo==='function') navTo('pg-bod-captura','📦 Capturar tarima');
+  // Set fecha hoy por defecto
+  var fechaEl = document.getElementById('bod-fecha');
+  if(fechaEl && !fechaEl.value) {
+    try { fechaEl.value = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}); }
+    catch(e) { fechaEl.value = new Date().toISOString().slice(0,10); }
+  }
+});
+
+var smBodAuditoria = document.getElementById('sm-bod-auditoria');
+if(smBodAuditoria) smBodAuditoria.addEventListener('click', function(){
+  if(typeof navTo==='function') navTo('pg-bod-auditoria','🔍 Auditar sesión');
+});
+
+// ── pg-bod-menu: mostrar páginas ──────────────────────────────────────────
+// Las páginas están en el DOM pero con display:none. Se muestran via navTo.
+// showPage ya maneja la visibilidad de pages.
+
+// ── Arrancar ──────────────────────────────────────────────────────────────
+// Inicializar después de que el DOM esté listo y el login funcione
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded', bodInit);
+} else {
+  bodInit();
+}
+
+})(); // FIN IIFE BOD MODULE
+</script>
