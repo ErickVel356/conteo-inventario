@@ -4078,3 +4078,208 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
     res.status(500).json({ ok:false, error: e.message });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD WMS / TRAZABILIDAD — POST /api/bod/wms/upload
+// Parsea Excel WMS con columnas: Número, Fecha, Status, SKU, Nombre,
+// Unidades, Origen, Destino. Clasifica movimientos y guarda en bod_wms_movimientos.
+// FIX (mar 2-jun-2026, server v20): módulo de trazabilidad BOD Fase 2.
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
+    var usuario = String((req.body && req.body.usuario) || '').trim();
+    if(!usuario) return res.status(400).json({ ok:false, error:'falta usuario' });
+    var licenciaId = String((req.body && req.body.licencia_id) || '').trim().toUpperCase();
+
+    var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'', raw:false });
+    if(rows.length < 2) return res.status(400).json({ ok:false, error:'Archivo vacío.' });
+
+    var hdr = rows[0].map(function(h){ return String(h).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); });
+    var cNum     = hdr.findIndex(function(h){ return h==='numero'||h.includes('numer'); });
+    var cFecha   = hdr.findIndex(function(h){ return h==='fecha'; });
+    var cStatus  = hdr.findIndex(function(h){ return h==='status'||h==='estado'; });
+    var cSku     = hdr.findIndex(function(h){ return h==='sku'||h==='codigo'; });
+    var cNombre  = hdr.findIndex(function(h){ return h.includes('nombre')||h.includes('descri'); });
+    var cUnis    = hdr.findIndex(function(h){ return h==='unidades'||h==='cantidad'||h==='cant'; });
+    var cOrigen  = hdr.findIndex(function(h){ return h==='origen'; });
+    var cDestino = hdr.findIndex(function(h){ return h==='destino'; });
+
+    if(cSku < 0 || cUnis < 0 || cOrigen < 0 || cDestino < 0) {
+      return res.status(400).json({ ok:false, error:'Faltan columnas: SKU, Unidades, Origen, Destino. Encontrados: '+rows[0].join(', ') });
+    }
+
+    var now = new Date().toISOString();
+    var nomArchivo = req.file.originalname || 'wms.xlsx';
+    var movimientos = [];
+    var procesadas = 0, omitidas = 0;
+
+    rows.slice(1).forEach(function(r){
+      var sku     = String(r[cSku]     || '').trim();
+      var origen  = String(cOrigen  >= 0 ? (r[cOrigen]  || '') : '').trim().toUpperCase();
+      var destino = String(cDestino >= 0 ? (r[cDestino] || '') : '').trim().toUpperCase();
+      if(!sku){ omitidas++; return; }
+      var unis = Number(r[cUnis]) || 0;
+      if(unis <= 0){ omitidas++; return; }
+
+      var tipo;
+      if(destino === '952.006.01')                        tipo = 'entrada_bolson';
+      else if(origen === '952.006.01' && /^TR999\./.test(destino)) tipo = 'salida_tr999';
+      else                                                tipo = 'otro';
+
+      var licId = licenciaId || (cNum >= 0 ? String(r[cNum]||'').trim().toUpperCase() : '');
+      movimientos.push({
+        id:            'bwm-'+Date.now()+'-'+procesadas,
+        licencia_id:   licId,
+        fecha:         cFecha  >= 0 ? String(r[cFecha]  || '').trim() : '',
+        status:        cStatus >= 0 ? String(r[cStatus] || '').trim() : '',
+        sku:           sku,
+        descripcion:   cNombre >= 0 ? String(r[cNombre] || '').trim() : '',
+        unidades:      unis,
+        origen:        origen,
+        destino:       destino,
+        tipo_movimiento: tipo,
+        archivo_origen:  nomArchivo,
+        cargado_por:     usuario,
+        ts_carga:        now
+      });
+      procesadas++;
+    });
+
+    if(!movimientos.length) return res.status(400).json({ ok:false, error:'Sin filas válidas.' });
+
+    // Insertar en chunks de 200
+    var errores = [];
+    for(var ci = 0; ci < movimientos.length; ci += 200) {
+      var chunk = movimientos.slice(ci, ci + 200);
+      try {
+        await supabase('POST', 'bod_wms_movimientos', chunk, '?on_conflict=id');
+      } catch(e) { errores.push({ desde:ci, error:e.message }); }
+    }
+    res.json({ ok:true, procesadas, omitidas, errores: errores.length ? errores : undefined });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── GET /api/bod/reportes/wms-vs-app ─────────────────────────────────────
+app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
+  try {
+    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
+    if(!licId) return res.status(400).json({ ok:false, error:'falta licencia_id' });
+
+    var [wmsRows, lineas] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null,
+        '?licencia_id=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.entrada_bolson'),
+      supabase('GET', 'bod_lineas', null,
+        '?licencia_id=eq.'+encodeURIComponent(licId)+'&eliminada=eq.false&select=sku,cantidad,descripcion')
+    ]);
+    wmsRows = Array.isArray(wmsRows) ? wmsRows : [];
+    lineas  = Array.isArray(lineas)  ? lineas  : [];
+
+    var wmsMap = {}, wmsDesc = {};
+    wmsRows.forEach(function(r){
+      wmsMap[r.sku]  = (wmsMap[r.sku]  || 0) + Number(r.unidades);
+      if(!wmsDesc[r.sku] && r.descripcion) wmsDesc[r.sku] = r.descripcion;
+    });
+    var appMap = {}, appDesc = {};
+    lineas.forEach(function(l){
+      appMap[l.sku]  = (appMap[l.sku]  || 0) + Number(l.cantidad);
+      if(!appDesc[l.sku] && l.descripcion) appDesc[l.sku] = l.descripcion;
+    });
+
+    var skus = Object.keys(Object.assign({}, wmsMap, appMap));
+    var result = skus.map(function(sku){
+      var wms = wmsMap[sku] || 0, app = appMap[sku] || 0;
+      var dif = app - wms;
+      var estado = wms > 0 && app === wms ? 'Cuadrado'
+        : wms > app && wms > 0           ? 'Pendiente de tarimar'
+        : wms < app && wms > 0           ? 'Diferencia'
+        :                                  'Sobrante en aplicación';
+      return { sku, descripcion: wmsDesc[sku]||appDesc[sku]||'', cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado };
+    });
+    res.json({ ok:true, licencia_id:licId, skus:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/flujo-bolson ───────────────────────────────────
+app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
+  try {
+    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
+    var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '?limit=5000';
+    var movs = await supabase('GET', 'bod_wms_movimientos', null, q);
+    movs = Array.isArray(movs) ? movs : [];
+
+    var entradasMap = {}, salidasMap = {}, descMap = {};
+    movs.forEach(function(m){
+      if(!descMap[m.sku] && m.descripcion) descMap[m.sku] = m.descripcion;
+      if(m.tipo_movimiento === 'entrada_bolson') entradasMap[m.sku] = (entradasMap[m.sku]||0) + Number(m.unidades);
+      if(m.tipo_movimiento === 'salida_tr999')   salidasMap[m.sku]  = (salidasMap[m.sku] ||0) + Number(m.unidades);
+    });
+    var skus = Object.keys(Object.assign({}, entradasMap, salidasMap));
+    var result = skus.map(function(sku){
+      var e = entradasMap[sku]||0, s = salidasMap[sku]||0;
+      return { sku, descripcion: descMap[sku]||'', entradas_952:e, salidas_tr999:s, remanente:e-s };
+    });
+    res.json({ ok:true, movimientos:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/remanentes ─────────────────────────────────────
+app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
+  try {
+    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
+    var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '?limit=5000';
+    var movs = await supabase('GET', 'bod_wms_movimientos', null, q);
+    movs = Array.isArray(movs) ? movs : [];
+
+    var hoy = new Date();
+    var skuData = {};
+    movs.forEach(function(m){
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas:0, salidas:0, fechas_entrada:[], ultima_fecha:null };
+      var d = skuData[m.sku];
+      if(m.tipo_movimiento === 'entrada_bolson'){ d.entradas += Number(m.unidades); if(m.fecha) d.fechas_entrada.push(m.fecha); }
+      if(m.tipo_movimiento === 'salida_tr999')  d.salidas += Number(m.unidades);
+      if(m.fecha && (!d.ultima_fecha || m.fecha > d.ultima_fecha)) d.ultima_fecha = m.fecha;
+    });
+    var result = Object.values(skuData).filter(function(d){ return (d.entradas - d.salidas) > 0; }).map(function(d){
+      var rem = d.entradas - d.salidas;
+      var fechaMin = d.fechas_entrada.sort()[0] || null;
+      var dias = fechaMin ? Math.floor((hoy - new Date(fechaMin)) / 86400000) : null;
+      var estado = dias === null ? 'Sin fecha' : dias === 0 ? 'Reciente' : dias <= 2 ? 'Pendiente normal' : 'Atrasado';
+      return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem, fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha, dias_en_bolson:dias, estado_remanente:estado };
+    });
+    res.json({ ok:true, remanentes:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/furgones ───────────────────────────────────────
+app.get('/api/bod/reportes/furgones', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.query.sesion_id || '').trim();
+    var q = sesId ? '?sesion_id=eq.'+encodeURIComponent(sesId) : '?limit=2000';
+    var [asig, lineas] = await Promise.all([
+      supabase('GET', 'bod_tarima_furgon', null, q+'&order=furgon.asc,tarima.asc'),
+      supabase('GET', 'bod_lineas', null, (sesId?'?sesion_id=eq.'+encodeURIComponent(sesId):'?limit=5000')+'&eliminada=eq.false')
+    ]);
+    asig   = Array.isArray(asig)   ? asig   : [];
+    lineas = Array.isArray(lineas) ? lineas : [];
+
+    var tarimaFurgon = {};
+    asig.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
+    var porFurgon = {};
+    lineas.forEach(function(l){
+      var f = tarimaFurgon[l.tarima]; if(!f) return;
+      if(!porFurgon[f]) porFurgon[f] = {};
+      if(!porFurgon[f][l.sku]) porFurgon[f][l.sku] = { sku:l.sku, descripcion:l.descripcion||'', cantidad:0, tarimas:new Set() };
+      porFurgon[f][l.sku].cantidad += Number(l.cantidad)||0;
+      porFurgon[f][l.sku].tarimas.add(l.tarima);
+    });
+    var result = Object.keys(porFurgon).sort().map(function(f){
+      return { furgon:f, skus: Object.values(porFurgon[f]).map(function(s){ return Object.assign({}, s, { tarimas_relacionadas: Array.from(s.tarimas) }); }) };
+    });
+    res.json({ ok:true, furgones:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
