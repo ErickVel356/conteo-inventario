@@ -3538,6 +3538,41 @@ app.post('/api/bod/sesion', bodGuard, async (req, res) => {
   }
 });
 
+// ── GET /api/bod/sesion?licencia_id=X&fecha=Y ─────────────────────────────
+// Buscar sesión por licencia + fecha en lugar del ID interno.
+// Devuelve el mismo formato que GET /api/bod/sesion/:id.
+app.get('/api/bod/sesion', bodGuard, async (req, res) => {
+  try {
+    var lic   = String(req.query.licencia_id || '').trim().toUpperCase();
+    var fecha = String(req.query.fecha       || '').trim();
+    var tipo  = String(req.query.tipo        || 'recoleccion').trim();
+    if(!lic || !fecha) return res.status(400).json({ ok:false, error:'falta licencia_id o fecha' });
+
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?licencia_id=eq.' + encodeURIComponent(lic)
+      + '&fecha_trabajo=eq.' + encodeURIComponent(fecha)
+      + '&tipo=eq.' + encodeURIComponent(tipo)
+      + '&order=ts_creacion.desc&limit=1');
+    if(!Array.isArray(sesRows) || !sesRows.length) {
+      return res.status(404).json({ ok:false, error:'No se encontró sesión para la licencia "'+lic+'" en la fecha '+fecha+'.' });
+    }
+    var sesion = sesRows[0];
+    var lineas = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.' + encodeURIComponent(sesion.id) + '&eliminada=eq.false&order=ts_captura.asc');
+    var lineArr = Array.isArray(lineas) ? lineas : [];
+    var porTarima = {};
+    lineArr.forEach(function(l) {
+      var t = l.tarima || '?';
+      if(!porTarima[t]) porTarima[t] = { tarima:t, lineas:0, unidades:0 };
+      porTarima[t].lineas++;
+      porTarima[t].unidades += Number(l.cantidad)||0;
+    });
+    res.json({ ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
 // ── GET /api/bod/sesion/:id ────────────────────────────────────────────────
 // Devolver sesión + líneas vigentes + resumen por tarima.
 app.get('/api/bod/sesion/:id', bodGuard, async (req, res) => {
