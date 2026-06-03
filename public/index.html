@@ -512,7 +512,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="si-icon">🔍</div>
           <div class="si-text">
             <div class="si-title">Auditar sesión</div>
-            <div class="si-sub">Solo supervisores</div>
+            <div class="si-sub">Supervisores y contadores</div>
           </div>
         </div>
         <div class="submenu-item" id="sm-bod-barra-sku" style="display:none">
@@ -598,7 +598,13 @@ textarea.field-inp{resize:vertical;min-height:72px}
         </div>
 
         <!-- Tabla últimos 15 -->
-        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap">
+          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
+          <select id="bod-filtro-operador" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:150px">
+            <option value="mis">Mis capturas</option>
+            <option value="todos">Todos</option>
+          </select>
+        </div>
         <div class="tbl-wrap">
           <table>
             <thead><tr>
@@ -1872,16 +1878,13 @@ function afterLogin(){
   }
   navTo('pg-menu','📦 Conteo de Inventario');
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
-  if(currentUser && currentUser.role === 'supervisor') {
+  if(currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'contador')) {
     fetch('/api/bod/status').then(function(r){ return r.json(); })
       .then(function(d){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
           if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
-          var audBtn   = document.getElementById('sm-bod-auditoria');
-          var barraBtn = document.getElementById('sm-bod-barra-sku');
-          if(audBtn)   audBtn.style.display   = '';
-          if(barraBtn) barraBtn.style.display = '';
+          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
         }
       }).catch(function(){});
   }
@@ -5270,16 +5273,13 @@ function pollNow() {
         if(wait && wait.classList.contains('active')) {
           navTo('pg-menu','📦 Conteo de Inventario');
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
-  if(currentUser && currentUser.role === 'supervisor') {
+  if(currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'contador')) {
     fetch('/api/bod/status').then(function(r){ return r.json(); })
       .then(function(d){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
           if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
-          var audBtn   = document.getElementById('sm-bod-auditoria');
-          var barraBtn = document.getElementById('sm-bod-barra-sku');
-          if(audBtn)   audBtn.style.display   = '';
-          if(barraBtn) barraBtn.style.display = '';
+          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
         }
       }).catch(function(){});
   }
@@ -9941,12 +9941,20 @@ function bodInit() {
     });
 }
 
+// ── Helpers de rol BOD ───────────────────────────────────────────────────
+function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
+function isBodAuditor() { return !!(window.currentUser && (window.currentUser.role === 'supervisor' || window.currentUser.role === 'contador')); }
+function bodTarimaPrefix(nombre) {
+  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E' };
+  return map[nombre] || 'A';
+}
+
 // Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
 function bodMostrarMenuPrincipal() {
   if(!BOD_ENABLED_CLIENT) return;
   if(!window.currentUser) return;
   var role = window.currentUser.role;
-  if(role !== 'bodega' && role !== 'supervisor') return;
+  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') return;
   // Agregar tarjeta mc-bodega si no existe
   var mcBod = document.getElementById('mc-bodega');
   if(!mcBod) {
@@ -9966,11 +9974,15 @@ function bodMostrarMenuPrincipal() {
 
 // ── Menú bodega ──────────────────────────────────────────────────────────
 function bodAbrirMenu() {
-  var esSup = typeof isSup === 'function' && isSup();
+  var captBtn   = document.getElementById('sm-bod-captura');
   var audBtn    = document.getElementById('sm-bod-auditoria');
   var barraBtn  = document.getElementById('sm-bod-barra-sku');
-  if(audBtn)   audBtn.style.display   = esSup ? '' : 'none';
-  if(barraBtn) barraBtn.style.display = esSup ? '' : 'none';
+  // sm-bod-captura: bodega y supervisor
+  if(captBtn)   captBtn.style.display   = (isBodBodega() || (typeof isSup==='function' && isSup())) ? '' : 'none';
+  // sm-bod-auditoria: supervisor y contador
+  if(audBtn)    audBtn.style.display    = isBodAuditor() ? '' : 'none';
+  // sm-bod-barra-sku: solo supervisor
+  if(barraBtn)  barraBtn.style.display  = (typeof isSup==='function' && isSup()) ? '' : 'none';
 }
 
 // Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
@@ -10016,14 +10028,22 @@ if(btnAbrirSesion) btnAbrirSesion.addEventListener('click', function(){
 // Llenar selector tarimas A1-A100
 function bodPoblarTarimas() {
   var sel = document.getElementById('bod-sel-tarima');
-  if(!sel || sel.options.length > 1) return;
+  if(!sel) return;  // reconstruir siempre para usar el prefijo correcto según usuario
   sel.innerHTML = '';
-  // A1-A100 (100 tarimas en la misma letra A, números 1-100)
-  for(var n=1; n<=100; n++){
-    var opt=document.createElement('option');
-    opt.value='A'+n; opt.textContent='A'+n;
-    sel.appendChild(opt);
-  }
+  var nombre  = window.currentUser ? window.currentUser.name : '';
+  // Supervisor: genera A01-E100 (todos los prefijos)
+  // Bodega: genera solo su prefijo propio (ej. Huvaldo → A01-A100)
+  var prefijos = (typeof isSup==='function' && isSup())
+    ? ['A','B','C','D','E']
+    : [bodTarimaPrefix(nombre)];
+  prefijos.forEach(function(letra){
+    for(var n=1; n<=100; n++){
+      var num = n < 10 ? '0'+n : ''+n;
+      var opt = document.createElement('option');
+      opt.value = letra+num; opt.textContent = letra+num;
+      sel.appendChild(opt);
+    }
+  });
 }
 
 // Barra → autofill SKU/desc
@@ -10112,7 +10132,14 @@ function bodCargarLineas(sesId) {
 function bodRenderTabla() {
   var tbody = document.getElementById('bod-tabla-capturas');
   if(!tbody) return;
-  var ultimas = bodLineas.slice(-15).reverse();
+  // Filtro operador: por defecto "Mis capturas" para bodega
+  var filtroSel = document.getElementById('bod-filtro-operador');
+  var filtroVal = filtroSel ? filtroSel.value : (isBodBodega() ? 'mis' : 'todos');
+  var usuario   = window.currentUser ? window.currentUser.name : '';
+  var base = filtroVal === 'mis' && usuario
+    ? bodLineas.filter(function(l){ return l.operador === usuario; })
+    : bodLineas;
+  var ultimas = base.slice(-15).reverse();
   if(!ultimas.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Sin registros aún.</td></tr>'; return; }
   tbody.innerHTML = ultimas.map(function(l){
     var hora = l.ts_captura ? l.ts_captura.substring(11,16) : '';
@@ -10127,6 +10154,15 @@ function bodRenderTabla() {
       +'</tr>';
   }).join('');
 }
+
+// Wire filtro operador — re-renderiza la tabla al cambiar
+(function(){
+  var filtroEl = document.getElementById('bod-filtro-operador');
+  if(filtroEl) {
+    // Default: "Mis capturas" para bodega, "Todos" para supervisor/contador
+    filtroEl.addEventListener('change', function(){ bodRenderTabla(); });
+  }
+})();
 
 // ── Auditoría ─────────────────────────────────────────────────────────────
 var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
@@ -10161,8 +10197,8 @@ function bodRenderAuditoria(data) {
     if(!porTarima[t]) porTarima[t] = [];
     porTarima[t].push(l);
   });
-  var usuario = window.currentUser ? window.currentUser.name : '';
-  var esSup   = typeof isSup === 'function' && isSup();
+  var usuario    = window.currentUser ? window.currentUser.name : '';
+  var esAuditor  = isBodAuditor();
   var html = '<div style="font-size:.8rem;color:#666;margin-bottom:.5rem">Sesión <strong>'+escH(sesion.id||'')+'</strong>'
     +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></div>';
   Object.keys(porTarima).sort().forEach(function(t){
@@ -10170,17 +10206,17 @@ function bodRenderAuditoria(data) {
     html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
     html += '<div class="tbl-wrap"><table><thead><tr>'
       +'<th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Operador</th>'
-      +'<th>Auditado</th>'+(esSup?'<th class="tc">Acción</th>':'')
+      +'<th>Auditado</th>'+(esAuditor?'<th class="tc">Acción</th>':'')
       +'</tr></thead><tbody>';
     items.forEach(function(l){
       var audBadge = l.auditado
         ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
         : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
       var accion = '';
-      if(esSup && !l.auditado) {
+      if(esAuditor && !l.auditado) {
         accion = '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
           +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>';
-      } else if(esSup) {
+      } else if(esAuditor) {
         accion = '<td class="tc"><span style="color:#aaa;font-size:.75rem">—</span></td>';
       }
       html += '<tr>'
@@ -10189,18 +10225,18 @@ function bodRenderAuditoria(data) {
         +'<td class="tc">'+Number(l.cantidad)+'</td>'
         +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
         +'<td>'+audBadge+'</td>'
-        +(esSup ? accion : '')
+        +(esAuditor ? accion : '')
         +'</tr>';
     });
     html += '</tbody></table></div>';
   });
   el.innerHTML = html;
-  // Wire botones auditar
+  // Wire botones auditar — supervisor:true solo si isBodAuditor()
   el.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
     btn.addEventListener('click', function(){
       var linId = btn.dataset.id;
       bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
-        { usuario:usuario, supervisor:true })
+        { usuario:usuario, supervisor: isBodAuditor() })
         .then(function(d){
           if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
           else alert(d.error||'Error');
