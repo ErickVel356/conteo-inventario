@@ -1877,7 +1877,7 @@ function afterLogin(){
       .then(function(d){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
-          if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
+          if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
           var audBtn   = document.getElementById('sm-bod-auditoria');
           var barraBtn = document.getElementById('sm-bod-barra-sku');
           if(audBtn)   audBtn.style.display   = '';
@@ -5275,7 +5275,7 @@ function pollNow() {
       .then(function(d){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
-          if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
+          if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
           var audBtn   = document.getElementById('sm-bod-auditoria');
           var barraBtn = document.getElementById('sm-bod-barra-sku');
           if(audBtn)   audBtn.style.display   = '';
@@ -9950,7 +9950,7 @@ function bodMostrarMenuPrincipal() {
   // Agregar tarjeta mc-bodega si no existe
   var mcBod = document.getElementById('mc-bodega');
   if(!mcBod) {
-   var menuCards = document.querySelector('#pg-menu .menu-grid, #pg-menu .menu-cards, #pg-menu .main-menu');
+    var menuCards = document.querySelector('#pg-menu .menu-cards, #pg-menu .main-menu');
     if(!menuCards) return;
     var card = document.createElement('div');
     card.className = 'menu-card';
@@ -9972,6 +9972,14 @@ function bodAbrirMenu() {
   if(audBtn)   audBtn.style.display   = esSup ? '' : 'none';
   if(barraBtn) barraBtn.style.display = esSup ? '' : 'none';
 }
+
+// Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
+window.bodMostrarMenuPrincipal = function(){
+  BOD_ENABLED_CLIENT = !!window.BOD_ENABLED_CLIENT || BOD_ENABLED_CLIENT;
+  window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+  return bodMostrarMenuPrincipal();
+};
+window.bodAbrirMenu = bodAbrirMenu;
 
 // ── Helper fetch bodega ───────────────────────────────────────────────────
 function bodFetch(method, path, body) {
