@@ -10986,22 +10986,39 @@ function bodRenderWmsVsApp() {
   if(inp) inp.addEventListener('change', function(){
     if(!this.files||!this.files[0]) return;
     if(bodWmsUploading){ alert('Esperá que termine la carga anterior.'); return; }
+    var archivo = this.files[0];
+    var nombreArchivo = archivo.name;
     bodWmsUploading = true;
     var msgEl = document.getElementById('bod-wms-upload-msg');
-    msgEl.innerHTML = '<span style="color:#888">⏳ Procesando…</span>';
+    msgEl.innerHTML = '<span style="color:#888">⏳ Subiendo <strong>'+escH(nombreArchivo)+'</strong>…</span>';
     var fd = new FormData();
-    fd.append('file', this.files[0]);
+    fd.append('file', archivo);
     fd.append('usuario', usuario);
     fd.append('licencia_id', licId);
+    // Limpiar input siempre (éxito o error) para evitar reutilizar archivo anterior
+    inp.value = '';
     fetch('/api/bod/wms/upload', { method:'POST', body:fd })
       .then(function(r){ return r.json(); })
       .then(function(d){
         bodWmsUploading = false;
-        if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
-        msgEl.innerHTML='<span style="color:#1e7e34">✅ '+d.procesadas+' mov. cargados'+
-          (d.omitidas?' · '+d.omitidas+' omitidas':'')+'</span>';
+        if(!d.ok){
+          msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+' <span style="color:#aaa;font-size:.72rem">('+escH(nombreArchivo)+')</span></span>';
+          return;
+        }
+        var resumen = '✅ '+d.procesadas+' filas procesadas'
+          +(d.omitidas   ? ' · '+d.omitidas+' omitidas' : '')
+          +' | Entradas bolsón: '+((d.entradas_bolson)||0)
+          +' · Salidas TR999: '+((d.salidas_tr999)||0)
+          +' · Otros: '+((d.otros)||0);
+        var color = d.advertencia ? '#e65100' : '#1e7e34';
+        var adv   = d.advertencia ? ' <br><span style="font-size:.75rem;color:#e65100">⚠ '+escH(d.advertencia)+'</span>' : '';
+        msgEl.innerHTML='<span style="color:'+color+'">'+resumen+'</span>'+adv;
         bodCargarWmsVsApp(licId, sesId);
-      }).catch(function(){ bodWmsUploading=false; msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
+      }).catch(function(){
+        bodWmsUploading = false;
+        inp.value = '';
+        msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión <span style="color:#aaa;font-size:.72rem">('+escH(nombreArchivo)+')</span></span>';
+      });
   });
 
   if(licId) bodCargarWmsVsApp(licId, sesId);
