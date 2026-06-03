@@ -1878,8 +1878,10 @@ function afterLogin(){
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
           if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
-          var audBtn = document.getElementById('sm-bod-auditoria');
-          if(audBtn) audBtn.style.display = '';
+          var audBtn   = document.getElementById('sm-bod-auditoria');
+          var barraBtn = document.getElementById('sm-bod-barra-sku');
+          if(audBtn)   audBtn.style.display   = '';
+          if(barraBtn) barraBtn.style.display = '';
         }
       }).catch(function(){});
   }
@@ -5274,8 +5276,10 @@ function pollNow() {
         if(d && d.enabled){
           window.BOD_ENABLED_CLIENT = true;
           if(typeof bodMostrarMenuPrincipal === 'function') bodMostrarMenuPrincipal();
-          var audBtn = document.getElementById('sm-bod-auditoria');
-          if(audBtn) audBtn.style.display = '';
+          var audBtn   = document.getElementById('sm-bod-auditoria');
+          var barraBtn = document.getElementById('sm-bod-barra-sku');
+          if(audBtn)   audBtn.style.display   = '';
+          if(barraBtn) barraBtn.style.display = '';
         }
       }).catch(function(){});
   }
