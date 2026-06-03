@@ -3786,25 +3786,29 @@ app.post('/api/bod/barra-sku/upload', bodGuard, upload.single('file'), async (re
     var procesadas = 0;
     var errores    = [];
     var chunks     = 0;
+    var startedAt    = Date.now();
+    var MAX_UPLOAD_MS = 22000;
 
     for(var ci = 0; ci < registros.length; ci += CHUNK) {
+      if(Date.now() - startedAt > MAX_UPLOAD_MS) {
+        errores.push({
+          chunk: chunks + 1,
+          error: 'Upload detenido antes del timeout HTTP. Reintentar para completar chunks pendientes.'
+        });
+        break;
+      }
       var batch = registros.slice(ci, ci + CHUNK);
       chunks++;
       try {
-        await supabase('POST', 'bod_barra_sku', batch, '?on_conflict=barra');
+        await withTimeout(
+          supabase('POST', 'bod_barra_sku', batch, '?on_conflict=barra'),
+          8000,
+          'barra-sku chunk '+chunks
+        );
         procesadas += batch.length;
       } catch(e) {
-        // Si el chunk falla, intentar fila por fila como fallback
-        // para no perder el batch completo por un solo registro malo.
-        console.log('BOD barra-sku chunk', chunks, 'falló, reintentando fila a fila:', e.message);
-        for(var bi = 0; bi < batch.length; bi++) {
-          try {
-            await supabase('POST', 'bod_barra_sku', batch[bi], '?on_conflict=barra');
-            procesadas++;
-          } catch(e2) {
-            errores.push({ barra:batch[bi].barra, error:e2.message });
-          }
-        }
+        console.log('BOD barra-sku chunk', chunks, 'falló:', e.message);
+        errores.push({ chunk: chunks, error: e.message });
       }
     }
 
