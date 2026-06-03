@@ -4210,92 +4210,202 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
   }
 });
 
+// ── Helpers para construir filtro de licencias (punto 5) ─────────────────
+// Acepta ?licencia_id=X | ?fecha=YYYY-MM-DD | ?licencias=A,B,C
+function bodBuildMovQuery(req) {
+  var licId   = String(req.query.licencia_id || '').trim().toUpperCase();
+  var fecha   = String(req.query.fecha       || '').trim();
+  var licsRaw = String(req.query.licencias   || '').trim();
+  var lics    = licsRaw ? licsRaw.split(',').map(function(l){ return l.trim().toUpperCase(); }).filter(Boolean) : [];
+  if(licId && !lics.includes(licId)) lics.push(licId);
+
+  if(lics.length === 1) return { q:'?licencia_id=eq.'+encodeURIComponent(lics[0])+'&limit=10000', lics:lics };
+  if(lics.length > 1)  return { q:'?licencia_id=in.('+lics.map(encodeURIComponent).join(',')+')'+'&limit=10000', lics:lics };
+  if(fecha)            return { q:'?fecha=eq.'+encodeURIComponent(fecha)+'&limit=10000', lics:[] };
+  return { q:'?limit=5000', lics:[] };
+}
+
 // ── GET /api/bod/reportes/wms-vs-app ─────────────────────────────────────
+// Acepta: licencia_id | fecha | licencias (CSV)
 app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
   try {
-    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
-    if(!licId) return res.status(400).json({ ok:false, error:'falta licencia_id' });
+    var f = bodBuildMovQuery(req);
+
+    // app: bod_lineas por licencia_id
+    var lineasQ = f.lics.length === 1
+      ? '?licencia_id=eq.'+encodeURIComponent(f.lics[0])+'&eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id'
+      : f.lics.length > 1
+      ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000'
+      : '?eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000';
 
     var [wmsRows, lineas] = await Promise.all([
-      supabase('GET', 'bod_wms_movimientos', null,
-        '?licencia_id=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.entrada_bolson'),
-      supabase('GET', 'bod_lineas', null,
-        '?licencia_id=eq.'+encodeURIComponent(licId)+'&eliminada=eq.false&select=sku,cantidad,descripcion')
+      supabase('GET', 'bod_wms_movimientos', null, f.q+'&tipo_movimiento=eq.entrada_bolson'),
+      supabase('GET', 'bod_lineas', null, lineasQ)
     ]);
     wmsRows = Array.isArray(wmsRows) ? wmsRows : [];
     lineas  = Array.isArray(lineas)  ? lineas  : [];
 
-    var wmsMap = {}, wmsDesc = {};
+    // Agregar por licencia+sku para WMS
+    var wmsMap = {}, wmsDesc = {}, wmsLic = {};
     wmsRows.forEach(function(r){
-      wmsMap[r.sku]  = (wmsMap[r.sku]  || 0) + Number(r.unidades);
-      if(!wmsDesc[r.sku] && r.descripcion) wmsDesc[r.sku] = r.descripcion;
+      var k = r.licencia_id+'|'+r.sku;
+      wmsMap[k]  = (wmsMap[k]||0) + Number(r.unidades);
+      if(!wmsDesc[k] && r.descripcion) wmsDesc[k] = r.descripcion;
+      if(!wmsLic[k]) wmsLic[k] = r.licencia_id;
     });
-    var appMap = {}, appDesc = {};
+    // Agregar por licencia+sku para APP
+    var appMap = {}, appDesc = {}, appLic = {};
     lineas.forEach(function(l){
-      appMap[l.sku]  = (appMap[l.sku]  || 0) + Number(l.cantidad);
-      if(!appDesc[l.sku] && l.descripcion) appDesc[l.sku] = l.descripcion;
+      var k = l.licencia_id+'|'+l.sku;
+      appMap[k]  = (appMap[k]||0) + Number(l.cantidad);
+      if(!appDesc[k] && l.descripcion) appDesc[k] = l.descripcion;
+      if(!appLic[k]) appLic[k] = l.licencia_id;
     });
 
-    var skus = Object.keys(Object.assign({}, wmsMap, appMap));
-    var result = skus.map(function(sku){
-      var wms = wmsMap[sku] || 0, app = appMap[sku] || 0;
+    var keys = Object.keys(Object.assign({}, wmsMap, appMap));
+    var result = keys.map(function(k){
+      var wms = wmsMap[k]||0, app = appMap[k]||0;
       var dif = app - wms;
-      var estado = wms > 0 && app === wms ? 'Cuadrado'
-        : wms > app && wms > 0           ? 'Pendiente de tarimar'
-        : wms < app && wms > 0           ? 'Diferencia'
-        :                                  'Sobrante en aplicación';
-      return { sku, descripcion: wmsDesc[sku]||appDesc[sku]||'', cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado };
+      var estado;
+      if     (wms > 0 && app === wms)       estado = 'Cuadrado';
+      else if(wms > 0 && app === 0)         estado = 'Pendiente de entarimar';
+      else if(wms > 0 && app > 0 && wms > app) estado = 'Diferencia: faltante APP';
+      else if(wms > 0 && app > 0 && app > wms) estado = 'Diferencia: excedente APP';
+      else if(wms === 0 && app > 0)         estado = 'Entarimado sin WMS';
+      else                                   estado = 'Sin datos';
+      var parts = k.split('|');
+      var lic = wmsLic[k] || appLic[k] || parts[0];
+      var sku = parts.slice(1).join('|');
+      return { licencia_id:lic, sku, descripcion:wmsDesc[k]||appDesc[k]||'',
+               cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado };
     });
-    res.json({ ok:true, licencia_id:licId, skus:result });
+    res.json({ ok:true, skus:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
 // ── GET /api/bod/reportes/flujo-bolson ───────────────────────────────────
+// Acepta: licencia_id | fecha | licencias (CSV)
+// Incluye licencia_origen (entrada) y licencia_salida (salida TR999)
 app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
   try {
-    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
-    var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '?limit=5000';
-    var movs = await supabase('GET', 'bod_wms_movimientos', null, q);
+    var f = bodBuildMovQuery(req);
+    var movs = await supabase('GET', 'bod_wms_movimientos', null, f.q);
     movs = Array.isArray(movs) ? movs : [];
 
-    var entradasMap = {}, salidasMap = {}, descMap = {};
+    var skuData = {};  // sku → { sku, desc, entradas, salidas, lic_origen, lic_salida, furgon, destino_tr999 }
     movs.forEach(function(m){
-      if(!descMap[m.sku] && m.descripcion) descMap[m.sku] = m.descripcion;
-      if(m.tipo_movimiento === 'entrada_bolson') entradasMap[m.sku] = (entradasMap[m.sku]||0) + Number(m.unidades);
-      if(m.tipo_movimiento === 'salida_tr999')   salidasMap[m.sku]  = (salidasMap[m.sku] ||0) + Number(m.unidades);
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas_952:0, salidas_tr999:0,
+        licencia_origen:'', licencia_salida:'', furgon:'', destino_tr999:'' };
+      var d = skuData[m.sku];
+      if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
+      if(m.tipo_movimiento === 'entrada_bolson'){
+        d.entradas_952 += Number(m.unidades);
+        if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
+      }
+      if(m.tipo_movimiento === 'salida_tr999'){
+        d.salidas_tr999 += Number(m.unidades);
+        if(!d.licencia_salida) d.licencia_salida = m.licencia_id;
+        if(!d.destino_tr999 && m.destino) d.destino_tr999 = m.destino;
+      }
     });
-    var skus = Object.keys(Object.assign({}, entradasMap, salidasMap));
-    var result = skus.map(function(sku){
-      var e = entradasMap[sku]||0, s = salidasMap[sku]||0;
-      return { sku, descripcion: descMap[sku]||'', entradas_952:e, salidas_tr999:s, remanente:e-s };
+    var result = Object.values(skuData).map(function(d){
+      return Object.assign({}, d, { remanente: d.entradas_952 - d.salidas_tr999 });
     });
     res.json({ ok:true, movimientos:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
 // ── GET /api/bod/reportes/remanentes ─────────────────────────────────────
+// Acepta: licencia_id | fecha | licencias (CSV)
+// Causa operativa enriquecida cruzando WMS + bod_lineas + bod_tarima_furgon
 app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
   try {
-    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
-    var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '?limit=5000';
-    var movs = await supabase('GET', 'bod_wms_movimientos', null, q);
-    movs = Array.isArray(movs) ? movs : [];
+    var f = bodBuildMovQuery(req);
+    var lineasQ = f.lics.length === 1
+      ? '?licencia_id=eq.'+encodeURIComponent(f.lics[0])+'&eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000'
+      : f.lics.length > 1
+      ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000'
+      : '?eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000';
+
+    var [movs, lineas, asigs] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null, f.q),
+      supabase('GET', 'bod_lineas', null, lineasQ),
+      supabase('GET', 'bod_tarima_furgon', null, '?limit=5000')
+    ]);
+    movs   = Array.isArray(movs)   ? movs   : [];
+    lineas = Array.isArray(lineas) ? lineas : [];
+    asigs  = Array.isArray(asigs)  ? asigs  : [];
+
+    // Tarimas con furgón asignado
+    var tarimaConFurgon = {};
+    asigs.forEach(function(a){ tarimaConFurgon[a.tarima] = a.furgon; });
+
+    // APP por SKU
+    var appMap = {}, skuTarimadas = {}, skuConFurgon = {};
+    lineas.forEach(function(l){
+      appMap[l.sku] = (appMap[l.sku]||0) + Number(l.cantidad);
+      skuTarimadas[l.sku] = true;
+      if(tarimaConFurgon[l.tarima]) skuConFurgon[l.sku] = tarimaConFurgon[l.tarima];
+    });
 
     var hoy = new Date();
     var skuData = {};
     movs.forEach(function(m){
-      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas:0, salidas:0, fechas_entrada:[], ultima_fecha:null };
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas:0, salidas:0,
+        fechas_entrada:[], ultima_fecha:null, licencia_origen:'', licencia_salida:'', destinos_distintos:false };
       var d = skuData[m.sku];
-      if(m.tipo_movimiento === 'entrada_bolson'){ d.entradas += Number(m.unidades); if(m.fecha) d.fechas_entrada.push(m.fecha); }
-      if(m.tipo_movimiento === 'salida_tr999')  d.salidas += Number(m.unidades);
+      if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
+      if(m.tipo_movimiento === 'entrada_bolson'){
+        d.entradas += Number(m.unidades);
+        if(m.fecha) d.fechas_entrada.push(m.fecha);
+        if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
+      }
+      if(m.tipo_movimiento === 'salida_tr999'){
+        d.salidas += Number(m.unidades);
+        if(!d.licencia_salida) d.licencia_salida = m.licencia_id;
+      }
+      if(m.tipo_movimiento === 'otro') d.destinos_distintos = true;
       if(m.fecha && (!d.ultima_fecha || m.fecha > d.ultima_fecha)) d.ultima_fecha = m.fecha;
     });
-    var result = Object.values(skuData).filter(function(d){ return (d.entradas - d.salidas) > 0; }).map(function(d){
+
+    // Agregar SKUs que están en APP pero no en WMS
+    Object.keys(appMap).forEach(function(sku){
+      if(!skuData[sku]) skuData[sku] = { sku:sku, descripcion:'', entradas:0, salidas:0, fechas_entrada:[],
+        ultima_fecha:null, licencia_origen:'', licencia_salida:'', destinos_distintos:false };
+    });
+
+    var result = Object.values(skuData).filter(function(d){
       var rem = d.entradas - d.salidas;
+      return rem > 0 || (appMap[d.sku] || 0) > 0;
+    }).map(function(d){
+      var rem = d.entradas - d.salidas;
+      var app = appMap[d.sku] || 0;
       var fechaMin = d.fechas_entrada.sort()[0] || null;
       var dias = fechaMin ? Math.floor((hoy - new Date(fechaMin)) / 86400000) : null;
-      var estado = dias === null ? 'Sin fecha' : dias === 0 ? 'Reciente' : dias <= 2 ? 'Pendiente normal' : 'Atrasado';
-      return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem, fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha, dias_en_bolson:dias, estado_remanente:estado };
+      var furgon = skuConFurgon[d.sku] || '';
+
+      var causa;
+      if(d.entradas === 0 && d.destinos_distintos)
+        causa = 'Pendiente por ubicación distinta a 952';
+      else if(d.entradas > 0 && app === 0)
+        causa = 'Pendiente de entarimar';
+      else if(d.entradas > 0 && app > 0 && !furgon)
+        causa = 'Pendiente de carga en furgón';
+      else if(d.entradas > 0 && app > 0 && furgon && d.salidas === 0)
+        causa = 'Pendiente por ausencia de licencia hija';
+      else if(d.entradas > 0 && d.salidas > 0 && rem > 0)
+        causa = 'Remanente operativo';
+      else if(d.entradas === 0 && app > 0)
+        causa = 'Entarimado sin WMS';
+      else if(app > 0 && !skuTarimadas[d.sku])
+        causa = 'Pendiente de traslado';
+      else
+        causa = dias !== null && dias <= 2 ? 'Pendiente normal' : 'Atrasado';
+
+      return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem,
+               licencia_origen:d.licencia_origen, licencia_salida:d.licencia_salida,
+               furgon:furgon, fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha,
+               dias_en_bolson:dias, estado_remanente:causa };
     });
     res.json({ ok:true, remanentes:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
@@ -4317,14 +4427,14 @@ app.get('/api/bod/reportes/furgones', bodGuard, async (req, res) => {
     asig.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
     var porFurgon = {};
     lineas.forEach(function(l){
-      var f = tarimaFurgon[l.tarima]; if(!f) return;
-      if(!porFurgon[f]) porFurgon[f] = {};
-      if(!porFurgon[f][l.sku]) porFurgon[f][l.sku] = { sku:l.sku, descripcion:l.descripcion||'', cantidad:0, tarimas:new Set() };
-      porFurgon[f][l.sku].cantidad += Number(l.cantidad)||0;
-      porFurgon[f][l.sku].tarimas.add(l.tarima);
+      var furg = tarimaFurgon[l.tarima]; if(!furg) return;
+      if(!porFurgon[furg]) porFurgon[furg] = {};
+      if(!porFurgon[furg][l.sku]) porFurgon[furg][l.sku] = { sku:l.sku, descripcion:l.descripcion||'', cantidad:0, tarimas:new Set() };
+      porFurgon[furg][l.sku].cantidad += Number(l.cantidad)||0;
+      porFurgon[furg][l.sku].tarimas.add(l.tarima);
     });
-    var result = Object.keys(porFurgon).sort().map(function(f){
-      return { furgon:f, skus: Object.values(porFurgon[f]).map(function(s){ return Object.assign({}, s, { tarimas_relacionadas: Array.from(s.tarimas) }); }) };
+    var result = Object.keys(porFurgon).sort().map(function(furg){
+      return { furgon:furg, skus: Object.values(porFurgon[furg]).map(function(s){ return Object.assign({}, s, { tarimas_relacionadas: Array.from(s.tarimas) }); }) };
     });
     res.json({ ok:true, furgones:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
