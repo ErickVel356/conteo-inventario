@@ -4088,9 +4088,19 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
 app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res) => {
   try {
     if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
-    var usuario = String((req.body && req.body.usuario) || '').trim();
+    var usuario          = String((req.body && req.body.usuario)            || '').trim();
     if(!usuario) return res.status(400).json({ ok:false, error:'falta usuario' });
-    var licenciaId = String((req.body && req.body.licencia_id) || '').trim().toUpperCase();
+    var licenciaId       = String((req.body && req.body.licencia_id)        || '').trim().toUpperCase();
+    var tipoLicencia     = String((req.body && req.body.tipo_licencia)      || 'inicial').trim();
+    var licenciaPadre    = String((req.body && req.body.licencia_padre)     || '').trim().toUpperCase();
+    var furgonRelacionado= String((req.body && req.body.furgon_relacionado) || '').trim();
+
+    // Validaciones extra para licencias hija
+    if(tipoLicencia === 'hija_salida') {
+      if(!licenciaId)        return res.status(400).json({ ok:false, error:'falta licencia_id (licencia hija)' });
+      if(!licenciaPadre)     return res.status(400).json({ ok:false, error:'falta licencia_padre' });
+      if(!furgonRelacionado) return res.status(400).json({ ok:false, error:'falta furgon_relacionado' });
+    }
 
     var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
     var ws = wb.Sheets[wb.SheetNames[0]];
@@ -4123,7 +4133,6 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       });
     }
     var licsDistintas = Object.keys(licenciasEnArchivo).filter(function(l){
-      // Comparar sin sufijos (ej. "TEST-BOD-01 · CDG" → "TEST-BOD-01")
       var norm = l.split(/[\s·\-·]+/)[0];
       var esp  = licenciaId.split(/[\s·\-·]+/)[0];
       return norm !== esp;
@@ -4136,11 +4145,27 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       });
     }
 
-    // Modo reemplazo: borrar movimientos anteriores de esta licencia
+    // Modo reemplazo selectivo según tipo_licencia
     try {
-      await supabase('DELETE', 'bod_wms_movimientos', null,
-        '?licencia_id=eq.'+encodeURIComponent(licenciaId));
-    } catch(e) { console.log('BOD WMS delete previo warn:', e.message); }
+      if(tipoLicencia === 'hija_salida') {
+        // Reemplazar solo movimientos de esta licencia hija + furgón
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId)
+          +'&furgon_relacionado=eq.'+encodeURIComponent(furgonRelacionado)
+          +'&tipo_licencia=eq.hija_salida');
+      } else {
+        // Reemplazar movimientos iniciales de esta licencia
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId)+'&tipo_licencia=eq.inicial');
+        // Fallback: si la tabla no tiene la col aún, borrar todos los de esta licencia
+      }
+    } catch(e) {
+      // Fallback: borrar todos los de esa licencia
+      try {
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId));
+      } catch(e2) { console.log('BOD WMS delete previo warn:', e2.message); }
+    }
 
     var movimientos = [];
     var procesadas = 0, omitidas = 0;
@@ -4163,21 +4188,23 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       else if(tipo === 'salida_tr999') cntSalidas++;
       else cntOtros++;
 
-      var licId = licenciaId; // siempre usar la licencia del body (modo reemplazo)
       movimientos.push({
-        id:            'bwm-'+Date.now()+'-'+procesadas,
-        licencia_id:   licId,
-        fecha:         cFecha  >= 0 ? String(r[cFecha]  || '').trim() : '',
-        status:        cStatus >= 0 ? String(r[cStatus] || '').trim() : '',
-        sku:           sku,
-        descripcion:   cNombre >= 0 ? String(r[cNombre] || '').trim() : '',
-        unidades:      unis,
-        origen:        origen,
-        destino:       destino,
-        tipo_movimiento: tipo,
-        archivo_origen:  nomArchivo,
-        cargado_por:     usuario,
-        ts_carga:        now
+        id:                'bwm-'+Date.now()+'-'+procesadas+'-'+Math.random().toString(36).slice(2,5),
+        licencia_id:       licenciaId,
+        licencia_padre:    licenciaPadre,
+        furgon_relacionado: furgonRelacionado,
+        tipo_licencia:     tipoLicencia,
+        fecha:             cFecha  >= 0 ? String(r[cFecha]  || '').trim() : '',
+        status:            cStatus >= 0 ? String(r[cStatus] || '').trim() : '',
+        sku:               sku,
+        descripcion:       cNombre >= 0 ? String(r[cNombre] || '').trim() : '',
+        unidades:          unis,
+        origen:            origen,
+        destino:           destino,
+        tipo_movimiento:   tipo,
+        archivo_origen:    nomArchivo,
+        cargado_por:       usuario,
+        ts_carga:          now
       });
       procesadas++;
     });
@@ -4193,15 +4220,19 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       } catch(e) { errores.push({ desde:ci, error:e.message }); }
     }
 
-    var advertencia = cntEntradas === 0
-      ? 'El archivo fue cargado, pero no contiene movimientos con destino 952.006.01. WMS vs App mostrará cero teórico.'
-      : undefined;
+    var advertencia;
+    if(tipoLicencia === 'hija_salida' && cntSalidas === 0) {
+      advertencia = 'La licencia hija fue cargada, pero no contiene salidas desde 952.006.01 hacia TR999.';
+    } else if(tipoLicencia !== 'hija_salida' && cntEntradas === 0) {
+      advertencia = 'El archivo fue cargado, pero no contiene movimientos con destino 952.006.01. WMS vs App mostrará cero teórico.';
+    }
 
     res.json({
       ok:true, procesadas, omitidas,
       entradas_bolson: cntEntradas,
       salidas_tr999:   cntSalidas,
       otros:           cntOtros,
+      tipo_licencia:   tipoLicencia,
       advertencia:     advertencia,
       errores:         errores.length ? errores : undefined
     });
@@ -4284,32 +4315,60 @@ app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
 });
 
 // ── GET /api/bod/reportes/flujo-bolson ───────────────────────────────────
-// Acepta: licencia_id | fecha | licencias (CSV)
-// Incluye licencia_origen (entrada) y licencia_salida (salida TR999)
+// Entradas: tipo_movimiento=entrada_bolson de tipo_licencia=inicial (licencia_id activa)
+// Salidas: tipo_movimiento=salida_tr999 de licencias hija (licencia_padre=licencia activa)
 app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
   try {
-    var f = bodBuildMovQuery(req);
-    var movs = await supabase('GET', 'bod_wms_movimientos', null, f.q);
-    movs = Array.isArray(movs) ? movs : [];
+    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
 
-    var skuData = {};  // sku → { sku, desc, entradas, salidas, lic_origen, lic_salida, furgon, destino_tr999 }
-    movs.forEach(function(m){
-      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas_952:0, salidas_tr999:0,
-        licencia_origen:'', licencia_salida:'', furgon:'', destino_tr999:'' };
+    // Entradas: movimientos de la licencia activa con destino 952
+    var qEntradas = licId
+      ? '?licencia_id=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.entrada_bolson&limit=10000'
+      : '?tipo_movimiento=eq.entrada_bolson&limit=5000';
+    // Salidas: movimientos de licencias hija cuya licencia_padre es la activa
+    var qSalidas = licId
+      ? '?licencia_padre=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.salida_tr999&limit=10000'
+      : '?tipo_movimiento=eq.salida_tr999&limit=5000';
+
+    var [movsEntrada, movsSalida] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null, qEntradas),
+      supabase('GET', 'bod_wms_movimientos', null, qSalidas)
+    ]);
+    movsEntrada = Array.isArray(movsEntrada) ? movsEntrada : [];
+    movsSalida  = Array.isArray(movsSalida)  ? movsSalida  : [];
+
+    var skuData = {};
+    movsEntrada.forEach(function(m){
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'',
+        entradas_952:0, salidas_tr999:0, licencia_origen:'', licencias_hijas:[], furgones:[], destinos_tr999:[] };
       var d = skuData[m.sku];
       if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
-      if(m.tipo_movimiento === 'entrada_bolson'){
-        d.entradas_952 += Number(m.unidades);
-        if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
-      }
-      if(m.tipo_movimiento === 'salida_tr999'){
-        d.salidas_tr999 += Number(m.unidades);
-        if(!d.licencia_salida) d.licencia_salida = m.licencia_id;
-        if(!d.destino_tr999 && m.destino) d.destino_tr999 = m.destino;
-      }
+      d.entradas_952 += Number(m.unidades);
+      if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
     });
+    movsSalida.forEach(function(m){
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'',
+        entradas_952:0, salidas_tr999:0, licencia_origen:'', licencias_hijas:[], furgones:[], destinos_tr999:[] };
+      var d = skuData[m.sku];
+      if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
+      d.salidas_tr999 += Number(m.unidades);
+      if(m.licencia_id && !d.licencias_hijas.includes(m.licencia_id))      d.licencias_hijas.push(m.licencia_id);
+      if(m.furgon_relacionado && !d.furgones.includes(m.furgon_relacionado)) d.furgones.push(m.furgon_relacionado);
+      if(m.destino && !d.destinos_tr999.includes(m.destino))                d.destinos_tr999.push(m.destino);
+    });
+
     var result = Object.values(skuData).map(function(d){
-      return Object.assign({}, d, { remanente: d.entradas_952 - d.salidas_tr999 });
+      return {
+        sku:             d.sku,
+        descripcion:     d.descripcion,
+        entradas_952:    d.entradas_952,
+        salidas_tr999:   d.salidas_tr999,
+        remanente:       d.entradas_952 - d.salidas_tr999,
+        licencia_origen: d.licencia_origen,
+        licencia_hija:   d.licencias_hijas.join(', '),
+        furgon:          d.furgones.join(', '),
+        destino_tr999:   d.destinos_tr999.join(', ')
+      };
     });
     res.json({ ok:true, movimientos:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
