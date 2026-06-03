@@ -10223,8 +10223,12 @@ function bodAuditoriaAutoRefresh(){
   var now = Date.now();
   if(now - bodAudLastRefresh < 4500) return;
   bodAudLastRefresh = now;
-  var btn = document.getElementById('btn-bod-cargar-auditoria');
-  if(btn) btn.click();
+  var licEl   = document.getElementById('bod-aud-licencia');
+  var fechaEl = document.getElementById('bod-aud-fecha');
+  var msgEl2  = document.getElementById('bod-aud-msg');
+  var lic   = (licEl   ? licEl.value   : '').trim().toUpperCase();
+  var fecha = (fechaEl ? fechaEl.value : '').trim();
+  if(lic && fecha && msgEl2) bodCargarAuditoria(lic, fecha, msgEl2, true);
 }
 
 // Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
@@ -10239,13 +10243,13 @@ function bodSortTarimas(arr) {
 }
 
 // Cargar sesión + furgones y renderizar
-function bodCargarAuditoria(lic, fecha, msgEl) {
-  msgEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
+  if(!silencioso) msgEl.innerHTML = '<span style="color:#888">Cargando…</span>';
   fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      msgEl.innerHTML = '';
+      if(!d.ok){ if(!silencioso) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      if(!silencioso) msgEl.innerHTML = '';
       bodAuditoriaData = d;
       bodAudLastRefresh = Date.now();
       var sesId = d.sesion && d.sesion.id;
@@ -10257,7 +10261,7 @@ function bodCargarAuditoria(lic, fecha, msgEl) {
           bodRenderAuditoria(d);
         });
     })
-    .catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+    .catch(function(){ if(!silencioso) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
 }
 
 var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
@@ -10270,7 +10274,7 @@ if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
   var msgEl   = document.getElementById('bod-aud-msg');
   if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';  return; }
   if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>';  return; }
-  bodCargarAuditoria(lic, fecha, msgEl);
+  bodCargarAuditoria(lic, fecha, msgEl, false);
 });
 
 // bodRenderAuditoria: header + tabs + vista activa
