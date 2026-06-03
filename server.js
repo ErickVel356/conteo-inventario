@@ -4113,6 +4113,23 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
 
     var now = new Date().toISOString();
     var nomArchivo = req.file.originalname || 'wms.xlsx';
+    // P4: validar que el Excel corresponde a la licencia esperada
+    if(cNum >= 0 && rows.length > 1) {
+      var primeraLic  = String(rows[1][cNum]||'').trim().toUpperCase().split(/[\s]+/)[0];
+      var licEsperada = licenciaId.split(/[\s]+/)[0];
+      if(primeraLic && primeraLic !== licEsperada) {
+        return res.status(400).json({
+          ok:false,
+          error:'El WMS pertenece a "'+String(rows[1][cNum]||'').trim()+'" pero la sesión activa es "'+licenciaId+'". Verificá el archivo.'
+        });
+      }
+    }
+    // Modo reemplazo: borrar movimientos anteriores de esta licencia
+    try {
+      await supabase('DELETE', 'bod_wms_movimientos', null,
+        '?licencia_id=eq.'+encodeURIComponent(licenciaId));
+    } catch(e) { console.log('BOD WMS delete previo warn:', e.message); }
+
     var movimientos = [];
     var procesadas = 0, omitidas = 0;
 
@@ -4129,7 +4146,7 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       else if(origen === '952.006.01' && /^TR999\./.test(destino)) tipo = 'salida_tr999';
       else                                                tipo = 'otro';
 
-      var licId = licenciaId || (cNum >= 0 ? String(r[cNum]||'').trim().toUpperCase() : '');
+      var licId = licenciaId; // siempre usar la licencia del body (modo reemplazo)
       movimientos.push({
         id:            'bwm-'+Date.now()+'-'+procesadas,
         licencia_id:   licId,
