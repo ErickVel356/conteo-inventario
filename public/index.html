@@ -8499,17 +8499,35 @@ function wmsCargarEstado(licId){
     pLineas = fetch('/api/cdg/v2/' + encodeURIComponent(licId))
       .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,lineas:[]}; });
   } else if(fuente === 'clasico') {
-    // FIX (mar 2-jun-2026, v5.2.29 rev): cdgEntry incluye cdg[licId] como fallback.
-    // Antes se calculaba cdgEntry pero se ignoraba, usando solo cdgLocal por separado.
-    // Si cdgLocal existía pero cdgEntry no, itemsCdgV1 quedaba vacío → Validado CDG = 0.
+    // FIX (mar 2-jun-2026, v5.2.29 rev2): helper robusto para items CDG v1.
+    // Las fuentes se intentan en orden de confiabilidad:
+    //   1. cdg[licId]  — variable global si publicState la expone (puede no existir)
+    //   2. teorico[licId].items excl. _soloWMS — siempre disponible después de sincronizar
+    //      item.qty = Validado CDG consolidado (NUNCA item.teoricoWMS para validado)
+    // No tocar v2 ni state del servidor.
     var cdgEntry = (typeof window !== 'undefined' && window._cdgState && window._cdgState[licId])
       || (typeof state !== 'undefined' && state.cdg && state.cdg[licId])
       || (typeof cdg !== 'undefined' && cdg[licId])
       || null;
     var itemsCdgV1 = cdgEntry ? (cdgEntry.items || []) : [];
-    // Convertir al formato que espera wmsCompararSkus (igual que líneas v2)
+
+    // Fallback: leer teorico[licId] (variable global del cliente, disponible siempre).
+    // Se usa cuando cdg[] no existe (no la expone publicState).
+    // Excluir items _soloWMS — esos vienen solo del WMS, qty=0, no son Validado CDG.
+    if(!itemsCdgV1.length && typeof teorico !== 'undefined' && teorico[licId]) {
+      var teoEntry = teorico[licId];
+      if((teoEntry.fromCDG || teoEntry.cdgValidado) && Array.isArray(teoEntry.items)) {
+        itemsCdgV1 = teoEntry.items.filter(function(it){ return !it._soloWMS; });
+      }
+    }
+
     var lineasV1 = itemsCdgV1.map(function(it){
-      return { sku: it.sku, cantidad: Number(it.qty || it.cantidad || 0), descripcion: it.desc || it.descripcion || '', eliminada: false };
+      return {
+        sku:         it.sku,
+        cantidad:    Number(it.qty || it.cantidad || 0),  // qty = Validado CDG, nunca teoricoWMS
+        descripcion: it.desc || it.descripcion || '',
+        eliminada:   false
+      };
     });
     pLineas = Promise.resolve({ ok: true, lineas: lineasV1 });
   } else {
