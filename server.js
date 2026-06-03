@@ -4113,17 +4113,29 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
 
     var now = new Date().toISOString();
     var nomArchivo = req.file.originalname || 'wms.xlsx';
-    // P4: validar que el Excel corresponde a la licencia esperada
-    if(cNum >= 0 && rows.length > 1) {
-      var primeraLic  = String(rows[1][cNum]||'').trim().toUpperCase().split(/[\s]+/)[0];
-      var licEsperada = licenciaId.split(/[\s]+/)[0];
-      if(primeraLic && primeraLic !== licEsperada) {
-        return res.status(400).json({
-          ok:false,
-          error:'El WMS pertenece a "'+String(rows[1][cNum]||'').trim()+'" pero la sesión activa es "'+licenciaId+'". Verificá el archivo.'
-        });
-      }
+
+    // Escanear TODAS las filas y construir set de licencias encontradas
+    var licenciasEnArchivo = {};
+    if(cNum >= 0) {
+      rows.slice(1).forEach(function(r){
+        var lic = String(r[cNum]||'').trim().toUpperCase();
+        if(lic) licenciasEnArchivo[lic] = true;
+      });
     }
+    var licsDistintas = Object.keys(licenciasEnArchivo).filter(function(l){
+      // Comparar sin sufijos (ej. "TEST-BOD-01 · CDG" → "TEST-BOD-01")
+      var norm = l.split(/[\s·\-·]+/)[0];
+      var esp  = licenciaId.split(/[\s·\-·]+/)[0];
+      return norm !== esp;
+    });
+    if(licsDistintas.length > 0) {
+      return res.status(400).json({
+        ok:false,
+        error:'El archivo contiene licencias: '+Object.keys(licenciasEnArchivo).join(', ')+
+              '. La sesión activa es "'+licenciaId+'". Verificá el archivo o la sesión.'
+      });
+    }
+
     // Modo reemplazo: borrar movimientos anteriores de esta licencia
     try {
       await supabase('DELETE', 'bod_wms_movimientos', null,
@@ -4132,6 +4144,7 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
 
     var movimientos = [];
     var procesadas = 0, omitidas = 0;
+    var cntEntradas = 0, cntSalidas = 0, cntOtros = 0;
 
     rows.slice(1).forEach(function(r){
       var sku     = String(r[cSku]     || '').trim();
@@ -4142,9 +4155,13 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
       if(unis <= 0){ omitidas++; return; }
 
       var tipo;
-      if(destino === '952.006.01')                        tipo = 'entrada_bolson';
-      else if(origen === '952.006.01' && /^TR999\./.test(destino)) tipo = 'salida_tr999';
-      else                                                tipo = 'otro';
+      if(destino === '952.006.01')                                    tipo = 'entrada_bolson';
+      else if(origen === '952.006.01' && /^TR999\./.test(destino))    tipo = 'salida_tr999';
+      else                                                             tipo = 'otro';
+
+      if(tipo === 'entrada_bolson') cntEntradas++;
+      else if(tipo === 'salida_tr999') cntSalidas++;
+      else cntOtros++;
 
       var licId = licenciaId; // siempre usar la licencia del body (modo reemplazo)
       movimientos.push({
@@ -4175,7 +4192,19 @@ app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res
         await supabase('POST', 'bod_wms_movimientos', chunk, '?on_conflict=id');
       } catch(e) { errores.push({ desde:ci, error:e.message }); }
     }
-    res.json({ ok:true, procesadas, omitidas, errores: errores.length ? errores : undefined });
+
+    var advertencia = cntEntradas === 0
+      ? 'El archivo fue cargado, pero no contiene movimientos con destino 952.006.01. WMS vs App mostrará cero teórico.'
+      : undefined;
+
+    res.json({
+      ok:true, procesadas, omitidas,
+      entradas_bolson: cntEntradas,
+      salidas_tr999:   cntSalidas,
+      otros:           cntOtros,
+      advertencia:     advertencia,
+      errores:         errores.length ? errores : undefined
+    });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
