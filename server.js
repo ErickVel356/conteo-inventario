@@ -3828,8 +3828,9 @@ app.post('/api/bod/barra-sku/upload', bodGuard, upload.single('file'), async (re
 app.post('/api/bod/linea/:lineaId/auditar', bodGuard, async (req, res) => {
   try {
     var linId = String(req.params.lineaId).trim();
-    var { usuario, supervisor, cantidad_audit } = req.body || {};
-    if(!supervisor) return res.status(403).json({ ok:false, error:'Solo supervisores pueden auditar.' });
+    var { usuario, supervisor, auditor, cantidad_audit } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden auditar.' });
     var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
     if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
     var now = new Date().toISOString();
@@ -3846,13 +3847,86 @@ app.post('/api/bod/linea/:lineaId/auditar', bodGuard, async (req, res) => {
 app.post('/api/bod/sesion/:id/cerrar', bodGuard, async (req, res) => {
   try {
     var sesId  = String(req.params.id).trim();
-    var { usuario, supervisor } = req.body || {};
-    if(!supervisor) return res.status(403).json({ ok:false, error:'Solo supervisores pueden cerrar sesiones.' });
+    var { usuario, supervisor, auditor } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden cerrar sesiones.' });
     var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
     if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
     await supabase('PATCH', 'bod_sesiones',
       { estado:'cerrada', ts_cierre:new Date().toISOString(), modificado_por:usuario },
       '?id=eq.' + encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/furgones ─────────────────────────────────────
+app.get('/api/bod/sesion/:id/furgones', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var rows = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=furgon.asc,tarima.asc');
+    res.json({ ok:true, asignaciones: Array.isArray(rows) ? rows : [] });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/furgon ──────────────────────────────────────
+app.post('/api/bod/sesion/:id/furgon', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var { tarimas, furgon, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden asignar furgones.' });
+    if(!furgon)    return res.status(400).json({ ok:false, error:'falta furgon' });
+    if(!Array.isArray(tarimas)||!tarimas.length) return res.status(400).json({ ok:false, error:'tarimas debe ser array no vacío' });
+    var normadas = tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean);
+    if(!normadas.length) return res.status(400).json({ ok:false, error:'ninguna tarima válida' });
+    furgon = String(furgon).trim();
+
+    // Leer asignaciones existentes de la sesión
+    var existing = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var asigMap = {};
+    if(Array.isArray(existing)) existing.forEach(function(r){ asigMap[r.tarima] = r.furgon; });
+
+    // Detectar bloqueadas (asignadas a otro furgón distinto)
+    var bloqueadas = normadas.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
+    if(bloqueadas.length) return res.status(409).json({ ok:false, error:'Algunas tarimas ya están asignadas.', bloqueadas: bloqueadas });
+
+    // Insertar solo las nuevas
+    var nuevas = normadas.filter(function(t){ return !asigMap[t]; });
+    var now = new Date().toISOString();
+    for(var i=0; i<nuevas.length; i++) {
+      await supabase('POST', 'bod_tarima_furgon',
+        {
+          id: 'btf-' + Date.now() + '-' + i + '-' + Math.random().toString(36).slice(2,7),
+          sesion_id: sesId,
+          tarima: nuevas[i],
+          furgon: furgon,
+          asignado_por: usuario || '',
+          ts_asignacion: now
+        },
+        '?on_conflict=sesion_id,tarima');
+    }
+    res.json({ ok:true, asignadas: normadas.length, nuevas: nuevas.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id/furgon/:tarima ─────────────────────────────
+app.delete('/api/bod/sesion/:id/furgon/:tarima', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var tarima  = bodNormTarima(req.params.tarima);
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden quitar asignaciones.' });
+    await supabase('DELETE', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&tarima=eq.'+encodeURIComponent(tarima));
     res.json({ ok:true });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
