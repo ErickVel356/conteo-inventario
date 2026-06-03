@@ -10272,6 +10272,8 @@ var bodAudVista           = 'tarimas';
 var bodFurgonAsignaciones = [];
 var bodAudPollTimer       = null;
 var bodAudLastRefresh     = 0;
+var bodFurgonDraft        = '';   // persiste el valor del campo furgón entre renders
+var bodManifestLoading    = false; // evita fetches simultáneos del manifiesto
 
 function bodAuditoriaActiva(){
   var pg = document.getElementById('pg-bod-auditoria');
@@ -10279,7 +10281,13 @@ function bodAuditoriaActiva(){
 }
 function bodAuditoriaHayInputActivo(){
   var ae = document.activeElement;
-  return !!(ae && ae.classList && ae.classList.contains('bod-cant-audit-inp'));
+  if(!ae) return false;
+  // Proteger campo furgón y cualquier input/select/textarea dentro de bod-aud-vista
+  if(ae.id === 'bod-furgon-input') return true;
+  if(ae.classList && ae.classList.contains('bod-cant-audit-inp')) return true;
+  var vista = document.getElementById('bod-aud-vista');
+  if(vista && vista.contains(ae) && (ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA')) return true;
+  return false;
 }
 function bodAuditoriaAutoRefresh(){
   if(!BOD_ENABLED_CLIENT) return;
@@ -10355,32 +10363,41 @@ function bodRenderAuditoria(data) {
     +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
     +'<button class="tab-pill'+(bodAudVista==='detalle'?' on':'')+'" id="bod-tab-detalle">📋 Detalle</button>'
     +'<button class="tab-pill'+(bodAudVista==='manifiesto'?' on':'')+'" id="bod-tab-manifiesto">📦 Manifiesto</button>'
+    +'<button class="tab-pill'+(bodAudVista==='wms-app'?' on':'')+'" id="bod-tab-wms-app">🔁 WMS vs App</button>'
+    +'<button class="tab-pill'+(bodAudVista==='flujo'?' on':'')+'" id="bod-tab-flujo">📊 Flujo Bolsón</button>'
+    +'<button class="tab-pill'+(bodAudVista==='remanentes'?' on':'')+'" id="bod-tab-remanentes">⏳ Remanentes</button>'
     +'</div>';
   el.innerHTML = header + tabs + '<div id="bod-aud-vista"></div>';
-  // Wire tabs sin onclick
+  // Wire tabs sin onclick — manejados todos por el forEach de _switchTab más abajo
   var btnTarimas = document.getElementById('bod-tab-tarimas');
   var btnDetalle = document.getElementById('bod-tab-detalle');
   var btnManifiesto = document.getElementById('bod-tab-manifiesto');
-  if(btnTarimas) btnTarimas.addEventListener('click', function(){
-    bodAudVista = 'tarimas';
-    [btnTarimas].forEach(function(b){ if(b) b.classList.add('on'); });
-    [btnDetalle, btnManifiesto].forEach(function(b){ if(b) b.classList.remove('on'); });
-    bodRenderTarimasAuditoria();
+  function _switchTab(vista, fn) {
+    var ALL = ['bod-tab-tarimas','bod-tab-detalle','bod-tab-manifiesto','bod-tab-wms-app','bod-tab-flujo','bod-tab-remanentes'];
+    ALL.forEach(function(id){ var b=document.getElementById(id); if(b) b.classList.remove('on'); });
+    var active = document.getElementById('bod-tab-'+vista);
+    if(active) active.classList.add('on');
+    bodAudVista = vista;
+    fn();
+  }
+  ['tarimas','detalle','manifiesto','wms-app','flujo','remanentes'].forEach(function(v){
+    var btn = document.getElementById('bod-tab-'+v);
+    if(btn) btn.addEventListener('click', function(){
+      _switchTab(v, function(){
+        if(v==='tarimas')    bodRenderTarimasAuditoria();
+        else if(v==='detalle')    bodRenderDetalleAuditoria(data);
+        else if(v==='manifiesto') bodRenderManifiestoAuditoria();
+        else if(v==='wms-app')   bodRenderWmsVsApp();
+        else if(v==='flujo')     bodRenderFlujoBolson();
+        else if(v==='remanentes') bodRenderRemanentes();
+      });
+    });
   });
-  if(btnDetalle) btnDetalle.addEventListener('click', function(){
-    bodAudVista = 'detalle';
-    [btnDetalle].forEach(function(b){ if(b) b.classList.add('on'); });
-    [btnTarimas, btnManifiesto].forEach(function(b){ if(b) b.classList.remove('on'); });
-    bodRenderDetalleAuditoria(data);
-  });
-  if(btnManifiesto) btnManifiesto.addEventListener('click', function(){
-    bodAudVista = 'manifiesto';
-    [btnManifiesto].forEach(function(b){ if(b) b.classList.add('on'); });
-    [btnTarimas, btnDetalle].forEach(function(b){ if(b) b.classList.remove('on'); });
-    bodRenderManifiestoAuditoria();
-  });
-  if(bodAudVista === 'tarimas') bodRenderTarimasAuditoria();
+  if(bodAudVista === 'tarimas')     bodRenderTarimasAuditoria();
   else if(bodAudVista === 'manifiesto') bodRenderManifiestoAuditoria();
+  else if(bodAudVista === 'wms-app')   bodRenderWmsVsApp();
+  else if(bodAudVista === 'flujo')     bodRenderFlujoBolson();
+  else if(bodAudVista === 'remanentes') bodRenderRemanentes();
   else bodRenderDetalleAuditoria(data);
 }
 
@@ -10388,11 +10405,10 @@ function bodRenderAuditoria(data) {
 function bodRenderTarimasAuditoria() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
-  // FIX: no re-renderizar si el usuario está escribiendo en el campo furgón
+  // Usar bodFurgonDraft como fuente de verdad del valor del campo furgón
   var furgonInp = document.getElementById('bod-furgon-input');
-  if(furgonInp && document.activeElement === furgonInp) return;
-  // Preservar valor del campo furgón antes de re-renderizar
-  var savedFurgonVal = furgonInp ? furgonInp.value : '';
+  var curVal = furgonInp ? furgonInp.value : '';
+  if(curVal) bodFurgonDraft = curVal;  // actualizar draft si el campo tiene algo
   var data    = bodAuditoriaData;
   var sesion  = data.sesion || {};
   var sesId   = sesion.id || '';
@@ -10463,9 +10479,11 @@ function bodRenderTarimasAuditoria() {
   vistaEl.innerHTML = barraAsig
     +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>';
 
-  // Restaurar valor del campo furgón si había uno guardado
+  // Restaurar bodFurgonDraft en el campo recién creado
   var furgonInpNew = document.getElementById('bod-furgon-input');
-  if(furgonInpNew && savedFurgonVal) furgonInpNew.value = savedFurgonVal;
+  if(furgonInpNew && bodFurgonDraft) furgonInpNew.value = bodFurgonDraft;
+  // Listener para mantener bodFurgonDraft actualizado mientras el usuario escribe
+  if(furgonInpNew) furgonInpNew.addEventListener('input', function(){ bodFurgonDraft = this.value; });
 
   // Wire asignar furgón
   if(esAud) {
@@ -10483,6 +10501,7 @@ function bodRenderTarimasAuditoria() {
         .then(function(d){
           if(!d.ok){ msgEl2.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
           msgEl2.innerHTML='<span style="color:#1e7e34">✅ '+d.nuevas+' tarima(s) asignada(s).</span>';
+          bodFurgonDraft = '';  // limpiar draft tras asignación exitosa
           // Refrescar asignaciones
           fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
             .then(function(r){ return r.json(); })
@@ -10714,15 +10733,35 @@ function bodRenderManifiestoAuditoria() {
   if(!vistaEl || !bodAuditoriaData) return;
   var sesId = bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
   if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
-  // Solo mostrar "Cargando…" si el vistaEl está vacío (primera carga)
-  if(!vistaEl.querySelector('table') && !vistaEl.querySelector('.bod-furgon-bloque')) {
+  // Evitar fetch simultáneo si ya hay uno en curso
+  if(bodManifestLoading) return;
+  // Solo mostrar "Cargando…" la primera vez (sin contenido previo)
+  var tieneContenido = vistaEl.querySelector('.bod-furgon-bloque') || vistaEl.querySelector('table');
+  if(!tieneContenido) {
     vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando manifiesto…</div>';
   }
+  bodManifestLoading = true;
 
   fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto')
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">'+escH(d.error||'Error')+'</div>'; return; }
+      bodManifestLoading = false;
+      if(!d.ok){
+        // Si ya hay contenido visible, mostrar error pequeño sin destruirlo
+        if(tieneContenido){
+          var errEl = document.getElementById('bod-manif-err');
+          if(!errEl){
+            errEl = document.createElement('div');
+            errEl.id = 'bod-manif-err';
+            errEl.style.cssText = 'font-size:.75rem;color:#c0392b;margin-bottom:.3rem';
+            vistaEl.insertBefore(errEl, vistaEl.firstChild);
+          }
+          errEl.textContent = '⚠ ' + (d.error||'Error al actualizar');
+        } else {
+          vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">'+escH(d.error||'Error')+'</div>';
+        }
+        return;
+      }
       var html = '';
 
       // Advertencia de tarimas sin asignar
@@ -10884,7 +10923,136 @@ function bodRenderManifiestoAuditoria() {
         });
       });
     })
-    .catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Sin conexión.</div>'; });
+    .catch(function(){
+      bodManifestLoading = false;
+      if(!tieneContenido) vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Sin conexión.</div>';
+    });
+}
+
+// ── Vista WMS vs App ─────────────────────────────────────────────────────
+var bodWmsUploading = false;
+
+function bodRenderWmsVsApp() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !bodAuditoriaData) return;
+  var sesion  = bodAuditoriaData.sesion || {};
+  var licId   = sesion.licencia_id || '';
+  var sesId   = sesion.id || '';
+  var usuario = window.currentUser ? window.currentUser.name : '';
+
+  vistaEl.innerHTML = '<div style="margin-bottom:.5rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<label class="btn btn-sm" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.75rem">'
+    +'📂 Cargar Excel WMS'
+    +'<input type="file" id="bod-wms-upload-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
+    +'</label>'
+    +'<span id="bod-wms-upload-msg" style="font-size:.78rem"></span>'
+    +'</div>'
+    +'<div id="bod-wms-app-tabla"><div style="color:#aaa;font-size:.82rem">Cargá un Excel WMS para ver la conciliación.</div></div>';
+
+  // Wire upload
+  var inp = document.getElementById('bod-wms-upload-inp');
+  if(inp) inp.addEventListener('change', function(){
+    if(!this.files||!this.files[0]) return;
+    if(bodWmsUploading){ alert('Esperá que termine la carga anterior.'); return; }
+    bodWmsUploading = true;
+    var msgEl = document.getElementById('bod-wms-upload-msg');
+    msgEl.innerHTML = '<span style="color:#888">⏳ Procesando…</span>';
+    var fd = new FormData();
+    fd.append('file', this.files[0]);
+    fd.append('usuario', usuario);
+    fd.append('licencia_id', licId);
+    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        bodWmsUploading = false;
+        if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
+        msgEl.innerHTML='<span style="color:#1e7e34">✅ '+d.procesadas+' mov. cargados'+
+          (d.omitidas?' · '+d.omitidas+' omitidas':'')+'</span>';
+        bodCargarWmsVsApp(licId, sesId);
+      }).catch(function(){ bodWmsUploading=false; msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
+  });
+
+  if(licId) bodCargarWmsVsApp(licId, sesId);
+}
+
+function bodCargarWmsVsApp(licId, sesId) {
+  var tbl = document.getElementById('bod-wms-app-tabla');
+  if(!tbl) return;
+  fetch('/api/bod/reportes/wms-vs-app?licencia_id='+encodeURIComponent(licId))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok||!d.skus||!d.skus.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>'; return; }
+      var colores = { 'Cuadrado':'#1e7e34', 'Pendiente de tarimar':'#e65100', 'Diferencia':'#c0392b', 'Sobrante en aplicación':'#1565c0' };
+      var html = '<div class="tbl-wrap"><table><thead><tr>'
+        +'<th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th><th>Estado</th>'
+        +'</tr></thead><tbody>';
+      d.skus.forEach(function(s){
+        var col = colores[s.estado]||'#555';
+        html += '<tr><td style="font-weight:600">'+escH(s.sku)+'</td>'
+          +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
+          +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
+          +'<td class="tc">'+s.cantidad_app+'</td>'
+          +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
+          +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+      tbl.innerHTML = html;
+    }).catch(function(){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+}
+
+// ── Vista Flujo Bolsón ────────────────────────────────────────────────────
+function bodRenderFlujoBolson() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !bodAuditoriaData) return;
+  var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
+  vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando flujo…</div>';
+  fetch('/api/bod/reportes/flujo-bolson?licencia_id='+encodeURIComponent(licId))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
+      var html = '<div class="tbl-wrap"><table><thead><tr>'
+        +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th><th class="tc">Remanente</th>'
+        +'</tr></thead><tbody>';
+      d.movimientos.forEach(function(m){
+        var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
+        html += '<tr><td style="font-weight:600">'+escH(m.sku)+'</td>'
+          +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
+          +'<td class="tc">'+m.entradas_952+'</td>'
+          +'<td class="tc">'+m.salidas_tr999+'</td>'
+          +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      vistaEl.innerHTML = html;
+    }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+}
+
+// ── Vista Remanentes ─────────────────────────────────────────────────────
+function bodRenderRemanentes() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !bodAuditoriaData) return;
+  var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
+  vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando remanentes…</div>';
+  fetch('/api/bod/reportes/remanentes?licencia_id='+encodeURIComponent(licId))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok||!d.remanentes||!d.remanentes.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
+      var estadoCol = { 'Reciente':'#1e7e34', 'Pendiente normal':'#e65100', 'Atrasado':'#c0392b', 'Sin fecha':'#888' };
+      var html = '<div class="tbl-wrap"><table><thead><tr>'
+        +'<th>SKU</th><th>Descripción</th><th class="tc">Remanente</th>'
+        +'<th>Primer ingreso</th><th class="tc">Días</th><th>Estado</th>'
+        +'</tr></thead><tbody>';
+      d.remanentes.forEach(function(r){
+        var col = estadoCol[r.estado_remanente]||'#555';
+        html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
+          +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
+          +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
+          +'<td style="font-size:.78rem">'+escH(r.fecha_primer_ingreso||'—')+'</td>'
+          +'<td class="tc">'+((r.dias_en_bolson!==null)?r.dias_en_bolson:'—')+'</td>'
+          +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td></tr>';
+      });
+      html += '</tbody></table></div>';
+      vistaEl.innerHTML = html;
+    }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
 }
 
 })(); // FIN IIFE BOD MODULE
