@@ -515,6 +515,35 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <div class="si-sub">Solo supervisores</div>
           </div>
         </div>
+        <div class="submenu-item" id="sm-bod-barra-sku" style="display:none">
+          <div class="si-icon">📋</div>
+          <div class="si-text">
+            <div class="si-title">Catálogo barra-SKU</div>
+            <div class="si-sub">Solo supervisores</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BODEGA: CATÁLOGO BARRA-SKU ────────────────────────── -->
+    <div id="pg-bod-barra-sku" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Catálogo barra-SKU — Carga masiva</p>
+      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+        <p style="font-size:.82rem;color:#555;margin:0 0 .75rem">
+          Seleccioná un archivo <strong>Excel (.xlsx)</strong> con columnas
+          <code>barra</code>, <code>sku</code> y <code>descripcion</code>.
+          Las filas existentes se actualizan; las nuevas se insertan.
+        </p>
+        <label class="btn btn-dark" style="cursor:pointer;display:inline-block;position:relative">
+          📂 Elegir archivo…
+          <input type="file" id="inp-bod-barra-sku" accept=".xlsx,.xls,.csv"
+                 style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">
+        </label>
+        <span id="bod-barra-sku-nombre" style="margin-left:.75rem;font-size:.83rem;color:#555"></span>
+        <div style="margin-top:.75rem">
+          <button class="btn btn-dark" id="btn-bod-barra-sku-upload" disabled>⬆️ Subir catálogo</button>
+        </div>
+        <div id="bod-barra-sku-msg" style="font-size:.82rem;margin-top:.6rem"></div>
       </div>
     </div>
 
@@ -9896,8 +9925,10 @@ function bodInit() {
         // Mostrar botón bodega en menú si supervisor
         bodMostrarMenuPrincipal();
         // Mostrar opción auditoria a supervisores en pg-bod-menu
-        var audBtn = document.getElementById('sm-bod-auditoria');
-        if(audBtn && typeof isSup === 'function' && isSup()) audBtn.style.display = '';
+        var audBtn   = document.getElementById('sm-bod-auditoria');
+        var barraBtn = document.getElementById('sm-bod-barra-sku');
+        if(audBtn   && typeof isSup === 'function' && isSup()) audBtn.style.display   = '';
+        if(barraBtn && typeof isSup === 'function' && isSup()) barraBtn.style.display = '';
       }
     })
     .catch(function(){
@@ -9931,8 +9962,11 @@ function bodMostrarMenuPrincipal() {
 
 // ── Menú bodega ──────────────────────────────────────────────────────────
 function bodAbrirMenu() {
-  var audBtn = document.getElementById('sm-bod-auditoria');
-  if(audBtn) audBtn.style.display = (typeof isSup === 'function' && isSup()) ? '' : 'none';
+  var esSup = typeof isSup === 'function' && isSup();
+  var audBtn    = document.getElementById('sm-bod-auditoria');
+  var barraBtn  = document.getElementById('sm-bod-barra-sku');
+  if(audBtn)   audBtn.style.display   = esSup ? '' : 'none';
+  if(barraBtn) barraBtn.style.display = esSup ? '' : 'none';
 }
 
 // ── Helper fetch bodega ───────────────────────────────────────────────────
@@ -10178,6 +10212,54 @@ if(smBodCaptura) smBodCaptura.addEventListener('click', function(){
 var smBodAuditoria = document.getElementById('sm-bod-auditoria');
 if(smBodAuditoria) smBodAuditoria.addEventListener('click', function(){
   if(typeof navTo==='function') navTo('pg-bod-auditoria','🔍 Auditar sesión');
+});
+
+// ── Catálogo barra-SKU ────────────────────────────────────────────────────
+var _bodBarraSkuFile = null;
+var inpBarraSku  = document.getElementById('inp-bod-barra-sku');
+var btnBarraSku  = document.getElementById('btn-bod-barra-sku-upload');
+var msgBarraSku  = document.getElementById('bod-barra-sku-msg');
+var nomBarraSku  = document.getElementById('bod-barra-sku-nombre');
+
+if(inpBarraSku) inpBarraSku.addEventListener('change', function(){
+  _bodBarraSkuFile = this.files && this.files[0] ? this.files[0] : null;
+  if(nomBarraSku) nomBarraSku.textContent = _bodBarraSkuFile ? _bodBarraSkuFile.name : '';
+  if(btnBarraSku) btnBarraSku.disabled = !_bodBarraSkuFile;
+});
+
+if(btnBarraSku) btnBarraSku.addEventListener('click', function(){
+  if(!_bodBarraSkuFile) return;
+  if(!BOD_ENABLED_CLIENT){ alert('Módulo bodega no habilitado.'); return; }
+  btnBarraSku.disabled = true;
+  msgBarraSku.innerHTML = '<span style="color:#888">⏳ Subiendo catálogo…</span>';
+  var fd = new FormData();
+  fd.append('file', _bodBarraSkuFile);
+  fetch('/api/bod/barra-sku/upload', { method:'POST', body:fd })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btnBarraSku.disabled = false;
+      if(!d.ok){
+        msgBarraSku.innerHTML = '<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>';
+        return;
+      }
+      var txt = '✅ Listo: '+d.procesadas+' filas procesadas'
+        +(d.omitidas ? ' · '+d.omitidas+' omitidas' : '')
+        +(d.errores && d.errores.length ? ' · ⚠️ '+d.errores.length+' con error' : '');
+      msgBarraSku.innerHTML = '<span style="color:#1e7e34">'+txt+'</span>';
+      _bodBarraSkuFile = null;
+      inpBarraSku.value = '';
+      if(nomBarraSku) nomBarraSku.textContent = '';
+      btnBarraSku.disabled = true;
+    })
+    .catch(function(){
+      btnBarraSku.disabled = false;
+      msgBarraSku.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
+    });
+});
+
+var smBodBarraSku = document.getElementById('sm-bod-barra-sku');
+if(smBodBarraSku) smBodBarraSku.addEventListener('click', function(){
+  if(typeof navTo==='function') navTo('pg-bod-barra-sku','📋 Catálogo barra-SKU');
 });
 
 // ── pg-bod-menu: mostrar páginas ──────────────────────────────────────────
