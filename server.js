@@ -2967,8 +2967,16 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
 
       var teo = state.teorico[teoKey];
 
-      // Parsear SKUs del WMS
-      var skusWMS;
+      // ── Capturar items y fisico ANTES de cualquier mutación ──────────────
+      // CRÍTICO: viejoItems debe leerse ANTES de modificar teo.items.
+      // Si se lee después de la consolidación, ya no tiene las N filas originales
+      // del mismo SKU y el remap de fisico queda incorrecto (suma solo la primera fila).
+      // FIX (mar 2-jun-2026, server v20 rev3): mover captura aquí, antes del consolidado.
+      var viejoFisico = state.fisico && state.fisico[teoKey]
+        ? (Array.isArray(state.fisico[teoKey]) ? state.fisico[teoKey].slice() : null)
+        : null;
+      var viejoItems = (Array.isArray(teo.items) ? teo.items : [])
+        .filter(function(it){ return !it._soloWMS; });
       try {
         skusWMS = typeof wmsRow.skus === 'string' ? JSON.parse(wmsRow.skus) : (wmsRow.skus || []);
       } catch(e) { skusWMS = []; }
@@ -3052,11 +3060,7 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
       }
 
       // ── Remap fisico existente al nuevo índice consolidado por SKU ────────
-      // El fisico anterior puede estar alineado a N filas del mismo SKU.
-      // Consolidamos sumando fisico y dañado por SKU, usando el teo anterior para saber
-      // qué SKU correspondía a cada posición.
-      var viejoFisico = state.fisico && state.fisico[teoKey];
-      var viejoItems  = Array.isArray(teo.items) ? teo.items.filter(function(it){ return !it._soloWMS; }) : [];
+      // fisMapeado usa viejoItems (capturado antes de mutar) y viejoFisico.
       // fisMapeado: SK_UPPER → { fisico, daniado, quien, ts, cobertura }
       var fisMapeado = {};
       if(Array.isArray(viejoFisico) && viejoFisico.length && viejoItems.length) {
