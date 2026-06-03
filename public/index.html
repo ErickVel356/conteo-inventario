@@ -10376,8 +10376,11 @@ function bodRenderAuditoria(data) {
   var el = document.getElementById('bod-aud-contenido');
   if(!el) return;
   var sesion = (data && data.sesion) || {};
-  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.6rem">Sesión <strong>'+escH(sesion.id||'')+'</strong>'
-    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></div>';
+  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
+    +'<span>Sesión <strong>'+escH(sesion.id||'')+'</strong>'
+    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
+    +'<button class="btn btn-xs" id="bod-btn-consolidado" style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;margin-left:auto">📥 Consolidado Excel</button>'
+    +'</div>';
   // Tabs
   var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
     +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
@@ -10388,6 +10391,9 @@ function bodRenderAuditoria(data) {
     +'<button class="tab-pill'+(bodAudVista==='remanentes'?' on':'')+'" id="bod-tab-remanentes">⏳ Remanentes</button>'
     +'</div>';
   el.innerHTML = header + tabs + '<div id="bod-aud-vista"></div>';
+  // Wire botón consolidado
+  var btnCons = document.getElementById('bod-btn-consolidado');
+  if(btnCons) btnCons.addEventListener('click', bodDescargarConsolidado);
   // Wire tabs sin onclick — manejados todos por el forEach de _switchTab más abajo
   var btnTarimas = document.getElementById('bod-tab-tarimas');
   var btnDetalle = document.getElementById('bod-tab-detalle');
@@ -11031,13 +11037,21 @@ function bodCargarWmsVsApp(licId, sesId) {
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok||!d.skus||!d.skus.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>'; return; }
-      var colores = { 'Cuadrado':'#1e7e34', 'Pendiente de tarimar':'#e65100', 'Diferencia':'#c0392b', 'Sobrante en aplicación':'#1565c0' };
+      var colores = {
+        'Cuadrado':'#1e7e34',
+        'Pendiente de entarimar':'#e65100',
+        'Diferencia: faltante APP':'#c0392b',
+        'Diferencia: excedente APP':'#1565c0',
+        'Entarimado sin WMS':'#7b1fa2',
+        'Sin datos':'#aaa'
+      };
       var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th><th>Estado</th>'
+        +'<th>Licencia</th><th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th><th>Estado</th>'
         +'</tr></thead><tbody>';
       d.skus.forEach(function(s){
         var col = colores[s.estado]||'#555';
-        html += '<tr><td style="font-weight:600">'+escH(s.sku)+'</td>'
+        html += '<tr><td style="font-size:.75rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
+          +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
           +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
           +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
           +'<td class="tc">'+s.cantidad_app+'</td>'
@@ -11060,7 +11074,8 @@ function bodRenderFlujoBolson() {
     .then(function(d){
       if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
       var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th><th class="tc">Remanente</th>'
+        +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
+        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. salida/hija</th><th>Destino TR999</th>'
         +'</tr></thead><tbody>';
       d.movimientos.forEach(function(m){
         var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
@@ -11068,7 +11083,11 @@ function bodRenderFlujoBolson() {
           +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
           +'<td class="tc">'+m.entradas_952+'</td>'
           +'<td class="tc">'+m.salidas_tr999+'</td>'
-          +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td></tr>';
+          +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_salida||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
+          +'</tr>';
       });
       html += '</tbody></table></div>';
       vistaEl.innerHTML = html;
@@ -11085,16 +11104,31 @@ function bodRenderRemanentes() {
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok||!d.remanentes||!d.remanentes.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
-      var estadoCol = { 'Reciente':'#1e7e34', 'Pendiente normal':'#e65100', 'Atrasado':'#c0392b', 'Sin fecha':'#888' };
+      var estadoCol = {
+        'Pendiente de entarimar':'#e65100',
+        'Pendiente por ubicación distinta a 952':'#f57c00',
+        'Pendiente de traslado':'#1565c0',
+        'Pendiente de carga en furgón':'#6a1b9a',
+        'Pendiente por ausencia de licencia hija':'#ad1457',
+        'Remanente operativo':'#c0392b',
+        'Entarimado sin WMS':'#7b1fa2',
+        'Pendiente normal':'#e65100',
+        'Atrasado':'#c0392b',
+        'Sin fecha':'#888'
+      };
       var html = '<div class="tbl-wrap"><table><thead><tr>'
         +'<th>SKU</th><th>Descripción</th><th class="tc">Remanente</th>'
-        +'<th>Primer ingreso</th><th class="tc">Días</th><th>Estado</th>'
+        +'<th>Lic. origen</th><th>Lic. hija/salida</th><th>Furgón</th>'
+        +'<th>Primer ingreso</th><th class="tc">Días</th><th>Causa</th>'
         +'</tr></thead><tbody>';
       d.remanentes.forEach(function(r){
         var col = estadoCol[r.estado_remanente]||'#555';
         html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
           +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
           +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_origen||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_salida||'—')+'</td>'
+          +'<td style="font-size:.75rem;color:#888">'+escH(r.furgon||'—')+'</td>'
           +'<td style="font-size:.78rem">'+escH(r.fecha_primer_ingreso||'—')+'</td>'
           +'<td class="tc">'+((r.dias_en_bolson!==null)?r.dias_en_bolson:'—')+'</td>'
           +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td></tr>';
@@ -11102,6 +11136,74 @@ function bodRenderRemanentes() {
       html += '</tbody></table></div>';
       vistaEl.innerHTML = html;
     }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+}
+
+// ── Reporte Consolidado Excel ─────────────────────────────────────────────
+function bodDescargarConsolidado() {
+  var sesion   = bodAuditoriaData && bodAuditoriaData.sesion;
+  if(!sesion){ alert('Cargá una sesión primero.'); return; }
+  var licId    = sesion.licencia_id || '';
+  var sesId    = sesion.id || '';
+  var fecha    = sesion.fecha_trabajo || '';
+  var XLSX2    = (typeof XLSX !== 'undefined') ? XLSX : null;
+  if(!XLSX2){ alert('Librería Excel no disponible.'); return; }
+
+  var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '';
+  var msgEl = document.getElementById('bod-aud-msg');
+  if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Generando consolidado…</span>';
+
+  Promise.all([
+    fetch('/api/bod/reportes/wms-vs-app'+q).then(function(r){ return r.json(); }),
+    fetch('/api/bod/reportes/flujo-bolson'+q).then(function(r){ return r.json(); }),
+    fetch('/api/bod/reportes/remanentes'+q).then(function(r){ return r.json(); }),
+    fetch('/api/bod/reportes/furgones?sesion_id='+encodeURIComponent(sesId)).then(function(r){ return r.json(); }),
+    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto').then(function(r){ return r.json(); })
+  ]).then(function(results){
+    var wmsApp = results[0], flujo = results[1], rems = results[2], furgones = results[3], manif = results[4];
+    var wb = XLSX2.utils.book_new();
+
+    // Hoja 1: WMS_vs_APP
+    var wmsData = [['Licencia','SKU','Descripción','WMS Teórico','APP','Diferencia','Estado']];
+    if(wmsApp.ok && wmsApp.skus) wmsApp.skus.forEach(function(s){
+      wmsData.push([s.licencia_id||'',s.sku,s.descripcion,s.cantidad_teorica_wms,s.cantidad_app,s.diferencia,s.estado]);
+    });
+    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(wmsData), 'WMS_vs_APP');
+
+    // Hoja 2: Flujo_Bolson
+    var flujoData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente','Lic. Origen','Lic. Salida','Destino TR999']];
+    if(flujo.ok && flujo.movimientos) flujo.movimientos.forEach(function(m){
+      flujoData.push([m.sku,m.descripcion,m.entradas_952,m.salidas_tr999,m.remanente,m.licencia_origen||'',m.licencia_salida||'',m.destino_tr999||'']);
+    });
+    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(flujoData), 'Flujo_Bolson');
+
+    // Hoja 3: Remanentes
+    var remData = [['SKU','Descripción','Remanente','Lic. Origen','Lic. Hija','Furgón','Primer Ingreso','Días','Causa']];
+    if(rems.ok && rems.remanentes) rems.remanentes.forEach(function(r){
+      remData.push([r.sku,r.descripcion,r.cantidad_remanente,r.licencia_origen||'',r.licencia_salida||'',r.furgon||'',r.fecha_primer_ingreso||'',r.dias_en_bolson,r.estado_remanente]);
+    });
+    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(remData), 'Remanentes');
+
+    // Hoja 4: Por_Furgon
+    var furgData = [['Furgón','SKU','Descripción','Cantidad','Tarimas']];
+    if(furgones.ok && furgones.furgones) furgones.furgones.forEach(function(f){
+      f.skus.forEach(function(s){ furgData.push([f.furgon,s.sku,s.descripcion,s.cantidad,(s.tarimas_relacionadas||[]).join(', ')]); });
+    });
+    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(furgData), 'Por_Furgon');
+
+    // Hoja 5: Movimientos_WMS (desde manifiesto — datos del manifiesto por furgon)
+    var movData = [['Furgón','SKU','Descripción','Unidades','Pendientes']];
+    if(manif.ok && manif.furgones) manif.furgones.forEach(function(f){
+      f.skus.forEach(function(s){ movData.push([f.furgon,s.sku,s.descripcion,s.unidades,s.pendientes]); });
+    });
+    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(movData), 'Movimientos_WMS');
+
+    var fechaFile = fecha.replace(/-/g,'')||new Date().toISOString().slice(0,10).replace(/-/g,'');
+    var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
+    XLSX2.writeFile(wb, 'Consolidado_'+licFile+'_'+fechaFile+'.xlsx');
+    if(msgEl) msgEl.innerHTML = '<span style="color:#1e7e34">✅ Consolidado descargado.</span>';
+  }).catch(function(e){
+    if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">❌ Error al generar consolidado.</span>';
+  });
 }
 
 })(); // FIN IIFE BOD MODULE
