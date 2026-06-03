@@ -9950,7 +9950,7 @@ function bodMostrarMenuPrincipal() {
   // Agregar tarjeta mc-bodega si no existe
   var mcBod = document.getElementById('mc-bodega');
   if(!mcBod) {
-    var menuCards = document.querySelector('#pg-menu .menu-cards, #pg-menu .main-menu');
+    var menuCards = document.querySelector('#pg-menu .menu-grid, #pg-menu .menu-cards, #pg-menu .main-menu');
     if(!menuCards) return;
     var card = document.createElement('div');
     card.className = 'menu-card';
