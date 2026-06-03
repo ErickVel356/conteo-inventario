@@ -3699,31 +3699,92 @@ app.get('/api/bod/barra/:barra', bodGuard, async (req, res) => {
 app.post('/api/bod/barra-sku/upload', bodGuard, upload.single('file'), async (req, res) => {
   try {
     if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
+
+    // ── Parsear CSV o XLSX con XLSX (maneja ambos formatos) ───────────────
     var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
     var ws = wb.Sheets[wb.SheetNames[0]];
-    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'', raw:false });
     if(rows.length < 2) return res.status(400).json({ ok:false, error:'Archivo vacío o solo encabezado.' });
-    var hdr  = rows[0].map(function(h){ return String(h).trim().toLowerCase(); });
-    var cBarra = hdr.findIndex(function(h){ return h.includes('barra') || h.includes('codigo') || h.includes('barcode'); });
-    var cSku   = hdr.findIndex(function(h){ return h === 'sku' || h.includes('articulo') || h.includes('artículo'); });
-    var cDesc  = hdr.findIndex(function(h){ return h.includes('desc') || h.includes('nombre'); });
-    if(cBarra < 0 || cSku < 0) return res.status(400).json({ ok:false, error:'No se encontraron columnas Barra y SKU. Encabezados: '+rows[0].join(', ') });
+
+    // ── Detectar columnas ─────────────────────────────────────────────────
+    var hdr   = rows[0].map(function(h){ return String(h).trim().toLowerCase(); });
+    var cBarra = hdr.findIndex(function(h){ return h==='barra'||h.includes('barcode')||h.includes('codigo'); });
+    var cSku   = hdr.findIndex(function(h){ return h==='sku'||h.includes('articulo')||h.includes('artículo'); });
+    var cDesc  = hdr.findIndex(function(h){ return h.includes('desc')||h.includes('nombre'); });
+    if(cBarra < 0 || cSku < 0) {
+      return res.status(400).json({
+        ok:false,
+        error:'No se encontraron columnas Barra y SKU. Encabezados detectados: '+rows[0].join(', ')
+      });
+    }
+
+    // ── Deduplicar en memoria ─────────────────────────────────────────────
+    // Reglas: ignorar barra vacía, sku vacío, barra con < 6 caracteres.
+    // Si barra aparece duplicada, conservar la última fila.
+    var dedup = {};        // barra → { barra, sku, descripcion }
+    var omitidas = 0;
     var now = new Date().toISOString();
-    var procesadas = 0, errores = [];
+
     for(var ri = 1; ri < rows.length; ri++) {
       var r    = rows[ri];
       var bar  = String(r[cBarra]||'').trim();
       var sku  = String(r[cSku]  ||'').trim();
       var desc = cDesc >= 0 ? String(r[cDesc]||'').trim() : '';
-      if(!bar || !sku) continue;
-      try {
-        await supabase('POST', 'bod_barra_sku', { barra:bar, sku, descripcion:desc, ts_actualizacion:now },
-          '?on_conflict=barra');
-        procesadas++;
-      } catch(e) { errores.push({ barra:bar, error:e.message }); }
+      if(!bar || !sku || bar.length < 6) { omitidas++; continue; }
+      dedup[bar] = { barra:bar, sku:sku, descripcion:desc, ts_actualizacion:now };
     }
-    res.json({ ok:true, procesadas, errores: errores.length ? errores : undefined });
+
+    var unicas  = Object.keys(dedup).length;
+    var registros = Object.values(dedup);
+
+    if(!unicas) {
+      return res.status(400).json({
+        ok:false,
+        error:'No se encontraron filas válidas. Revisá que las columnas barra y sku tengan datos.',
+        omitidas: omitidas
+      });
+    }
+
+    // ── Upsert por chunks de 500 ──────────────────────────────────────────
+    // PostgREST acepta arrays en el body + on_conflict=barra para upsert masivo.
+    var CHUNK = 500;
+    var procesadas = 0;
+    var errores    = [];
+    var chunks     = 0;
+
+    for(var ci = 0; ci < registros.length; ci += CHUNK) {
+      var batch = registros.slice(ci, ci + CHUNK);
+      chunks++;
+      try {
+        await supabase('POST', 'bod_barra_sku', batch, '?on_conflict=barra');
+        procesadas += batch.length;
+      } catch(e) {
+        // Si el chunk falla, intentar fila por fila como fallback
+        // para no perder el batch completo por un solo registro malo.
+        console.log('BOD barra-sku chunk', chunks, 'falló, reintentando fila a fila:', e.message);
+        for(var bi = 0; bi < batch.length; bi++) {
+          try {
+            await supabase('POST', 'bod_barra_sku', batch[bi], '?on_conflict=barra');
+            procesadas++;
+          } catch(e2) {
+            errores.push({ barra:batch[bi].barra, error:e2.message });
+          }
+        }
+      }
+    }
+
+    console.log('BOD barra-sku upload OK: unicas='+unicas+' procesadas='+procesadas+' chunks='+chunks);
+    res.json({
+      ok:        true,
+      procesadas: procesadas,
+      unicas:     unicas,
+      omitidas:   omitidas,
+      chunks:     chunks,
+      ...(errores.length ? { errores: errores } : {})
+    });
+
   } catch(e) {
+    console.log('BOD barra-sku upload FAILED:', e.message);
     res.status(500).json({ ok:false, error: e.message });
   }
 });
