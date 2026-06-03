@@ -3831,12 +3831,32 @@ app.post('/api/bod/linea/:lineaId/auditar', bodGuard, async (req, res) => {
     var { usuario, supervisor, auditor, cantidad_audit } = req.body || {};
     var esAuditor = supervisor === true || auditor === true;
     if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden auditar.' });
+    if(cantidad_audit === undefined || cantidad_audit === null || !(Number(cantidad_audit) > 0))
+      return res.status(400).json({ ok:false, error:'cantidad_audit debe ser mayor a 0.' });
     var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
     if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
     var now = new Date().toISOString();
-    var patch = { auditado:true, auditado_por:usuario, ts_auditado:now, ts_modif:now };
-    if(cantidad_audit !== undefined && Number(cantidad_audit) > 0) patch.cantidad_audit = Number(cantidad_audit);
+    var patch = { auditado:true, auditado_por:usuario, ts_auditado:now, ts_modif:now,
+                  cantidad_audit: Number(cantidad_audit) };
     await supabase('PATCH', 'bod_lineas', patch, '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/linea/:lineaId/unauditar ────────────────────────────────
+// Revierte una línea auditada a estado pendiente.
+app.post('/api/bod/linea/:lineaId/unauditar', bodGuard, async (req, res) => {
+  try {
+    var linId = String(req.params.lineaId).trim();
+    var { usuario, supervisor, auditor } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden anular auditorías.' });
+    var now = new Date().toISOString();
+    await supabase('PATCH', 'bod_lineas',
+      { auditado:false, auditado_por:null, ts_auditado:null, cantidad_audit:null, ts_modif:now },
+      '?id=eq.' + encodeURIComponent(linId));
     res.json({ ok:true });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
