@@ -9922,6 +9922,12 @@ var bodLineas        = [];    // array de líneas de la sesión
 var bodPollTimer     = null;
 
 // ── Inicialización: consultar status al servidor ─────────────────────────
+function bodEnsureAudPoll(){
+  if(!bodAudPollTimer){
+    bodAudPollTimer = setInterval(bodAuditoriaAutoRefresh, 5000);
+  }
+}
+
 function bodInit() {
   fetch('/api/bod/status')
     .then(function(r){ return r.json(); })
@@ -9942,6 +9948,7 @@ function bodInit() {
       BOD_ENABLED_CLIENT = false;
       window.BOD_ENABLED_CLIENT = false;
     });
+  bodEnsureAudPoll();
 }
 
 // ── Helpers de rol BOD ───────────────────────────────────────────────────
@@ -10007,6 +10014,8 @@ window.bodCleanup = function(){
   bodLineas = [];
   bodAuditoriaData = null;
   bodFurgonAsignaciones = [];
+  bodEnsureAudPoll();
+  bodAudLastRefresh = 0;
   var mcBod = document.getElementById('mc-bodega');
   if(mcBod) mcBod.remove();
   var captBtn = document.getElementById('sm-bod-captura');
@@ -10195,6 +10204,28 @@ function bodRenderTabla() {
 var bodAuditoriaData      = null;
 var bodAudVista           = 'tarimas';
 var bodFurgonAsignaciones = [];
+var bodAudPollTimer       = null;
+var bodAudLastRefresh     = 0;
+
+function bodAuditoriaActiva(){
+  var pg = document.getElementById('pg-bod-auditoria');
+  return !!(pg && pg.classList.contains('active'));
+}
+function bodAuditoriaHayInputActivo(){
+  var ae = document.activeElement;
+  return !!(ae && ae.classList && ae.classList.contains('bod-cant-audit-inp'));
+}
+function bodAuditoriaAutoRefresh(){
+  if(!BOD_ENABLED_CLIENT) return;
+  if(!bodAuditoriaActiva()) return;
+  if(!bodAuditoriaData || !bodAuditoriaData.sesion || !bodAuditoriaData.sesion.id) return;
+  if(bodAuditoriaHayInputActivo()) return;
+  var now = Date.now();
+  if(now - bodAudLastRefresh < 4500) return;
+  bodAudLastRefresh = now;
+  var btn = document.getElementById('btn-bod-cargar-auditoria');
+  if(btn) btn.click();
+}
 
 // Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
 function bodSortTarimas(arr) {
@@ -10216,6 +10247,7 @@ function bodCargarAuditoria(lic, fecha, msgEl) {
       if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
       msgEl.innerHTML = '';
       bodAuditoriaData = d;
+      bodAudLastRefresh = Date.now();
       var sesId = d.sesion && d.sesion.id;
       if(!sesId){ bodRenderAuditoria(d); return; }
       return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
