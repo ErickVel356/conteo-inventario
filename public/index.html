@@ -10165,6 +10165,43 @@ function bodRenderTabla() {
 })();
 
 // ── Auditoría ─────────────────────────────────────────────────────────────
+// ── Estado auditoría ─────────────────────────────────────────────────────
+var bodAuditoriaData      = null;
+var bodAudVista           = 'tarimas';
+var bodFurgonAsignaciones = [];
+
+// Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
+function bodSortTarimas(arr) {
+  return arr.slice().sort(function(a, b){
+    var ma = a.match(/^([A-Z]+)(\d+)$/i);
+    var mb = b.match(/^([A-Z]+)(\d+)$/i);
+    if(!ma || !mb) return a.localeCompare(b);
+    if(ma[1] !== mb[1]) return ma[1].localeCompare(mb[1]);
+    return Number(ma[2]) - Number(mb[2]);
+  });
+}
+
+// Cargar sesión + furgones y renderizar
+function bodCargarAuditoria(lic, fecha, msgEl) {
+  msgEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+  fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      msgEl.innerHTML = '';
+      bodAuditoriaData = d;
+      var sesId = d.sesion && d.sesion.id;
+      if(!sesId){ bodRenderAuditoria(d); return; }
+      return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+        .then(function(r){ return r.json(); })
+        .then(function(f){
+          bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+          bodRenderAuditoria(d);
+        });
+    })
+    .catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+}
+
 var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
 if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
   if(!BOD_ENABLED_CLIENT) return;
@@ -10175,33 +10212,176 @@ if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
   var msgEl   = document.getElementById('bod-aud-msg');
   if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';  return; }
   if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>';  return; }
-  msgEl.innerHTML='<span style="color:#888">Cargando…</span>';
-  fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      msgEl.innerHTML='';
-      bodRenderAuditoria(d);
-    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+  bodCargarAuditoria(lic, fecha, msgEl);
 });
 
+// bodRenderAuditoria: header + tabs + vista activa
 function bodRenderAuditoria(data) {
   var el = document.getElementById('bod-aud-contenido');
   if(!el) return;
+  var sesion = (data && data.sesion) || {};
+  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.6rem">Sesión <strong>'+escH(sesion.id||'')+'</strong>'
+    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></div>';
+  // Tabs
+  var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
+    +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
+    +'<button class="tab-pill'+(bodAudVista==='detalle'?' on':'')+'" id="bod-tab-detalle">📋 Detalle</button>'
+    +'</div>';
+  el.innerHTML = header + tabs + '<div id="bod-aud-vista"></div>';
+  // Wire tabs sin onclick
+  var btnTarimas = document.getElementById('bod-tab-tarimas');
+  var btnDetalle = document.getElementById('bod-tab-detalle');
+  if(btnTarimas) btnTarimas.addEventListener('click', function(){
+    bodAudVista = 'tarimas';
+    btnTarimas.classList.add('on'); if(btnDetalle) btnDetalle.classList.remove('on');
+    bodRenderTarimasAuditoria();
+  });
+  if(btnDetalle) btnDetalle.addEventListener('click', function(){
+    bodAudVista = 'detalle';
+    btnDetalle.classList.add('on'); if(btnTarimas) btnTarimas.classList.remove('on');
+    bodRenderDetalleAuditoria(data);
+  });
+  if(bodAudVista === 'tarimas') bodRenderTarimasAuditoria();
+  else bodRenderDetalleAuditoria(data);
+}
+
+// ── Vista Tarimas ─────────────────────────────────────────────────────────
+function bodRenderTarimasAuditoria() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !bodAuditoriaData) return;
+  var data    = bodAuditoriaData;
+  var sesion  = data.sesion || {};
+  var sesId   = sesion.id || '';
+  var lineas  = data.lineas || [];
+  var usuario = window.currentUser ? window.currentUser.name : '';
+  var esAud   = isBodAuditor();
+
+  // Mapa furgón por tarima: tarima → furgon
+  var asigMap = {};
+  bodFurgonAsignaciones.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
+
+  // Derivar resumen de tarimas desde resumenTarimas o desde lineas
+  var resumenes = {};
+  if(data.resumenTarimas && data.resumenTarimas.length) {
+    data.resumenTarimas.forEach(function(r){ resumenes[r.tarima] = { lineas:r.lineas, unidades:r.unidades }; });
+  } else {
+    lineas.forEach(function(l){
+      var t = l.tarima||'?';
+      if(!resumenes[t]) resumenes[t] = { lineas:0, unidades:0 };
+      resumenes[t].lineas++;
+      resumenes[t].unidades += Number(l.cantidad)||0;
+    });
+  }
+  var tarimaKeys = bodSortTarimas(Object.keys(resumenes));
+
+  // Barra de asignación (visible solo para auditores)
+  var barraAsig = '';
+  if(esAud) {
+    barraAsig = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:.6rem;padding:.6rem;background:#f5f5f3;border-radius:8px">'
+      +'<label style="font-size:.78rem;font-weight:600;color:#555">Furgón:</label>'
+      +'<input type="text" id="bod-furgon-input" class="field-inp" placeholder="Ej: 1" style="width:80px;padding:4px 8px;font-size:.85rem">'
+      +'<button class="btn btn-sm btn-dark" id="btn-bod-asignar-furgon" style="font-size:.78rem">Asignar seleccionadas</button>'
+      +'<span id="bod-furgon-msg" style="font-size:.78rem"></span>'
+      +'</div>';
+  }
+
+  // Tabla de tarimas
+  var filas = tarimaKeys.map(function(t){
+    var r = resumenes[t];
+    var furgon = asigMap[t];
+    var asignada = !!furgon;
+    var estadoCell = asignada
+      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.75rem;padding:2px 7px;border-radius:8px">Furgón '+escH(furgon)+'</span>'
+      : '<span style="background:#f5f5f3;color:#888;font-size:.75rem;padding:2px 7px;border-radius:8px">Sin asignar</span>';
+    var checkCell = (esAud && !asignada)
+      ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"></td>'
+      : (esAud ? '<td></td>' : '');
+    var quitarBtn = (esAud && asignada)
+      ? '<td class="tc"><button class="btn btn-xs bod-btn-quitar-furgon" data-tarima="'+escH(t)+'"'
+          +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Quitar</button></td>'
+      : (esAud ? '<td></td>' : '');
+    return '<tr>'
+      +checkCell
+      +'<td style="font-weight:700">'+escH(t)+'</td>'
+      +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
+      +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
+      +'<td>'+estadoCell+'</td>'
+      +quitarBtn
+      +'</tr>';
+  }).join('');
+
+  var thead = '<thead><tr>'
+    +(esAud ? '<th></th>' : '')
+    +'<th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th>'
+    +'<th>Estado</th>'+(esAud ? '<th class="tc">Acción</th>' : '')
+    +'</tr></thead>';
+
+  vistaEl.innerHTML = barraAsig
+    +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>';
+
+  // Wire asignar furgón
+  if(esAud) {
+    var btnAsig = document.getElementById('btn-bod-asignar-furgon');
+    if(btnAsig) btnAsig.addEventListener('click', function(){
+      var furgon = (document.getElementById('bod-furgon-input').value||'').trim();
+      var msgEl2 = document.getElementById('bod-furgon-msg');
+      if(!furgon){ msgEl2.innerHTML='<span style="color:#c0392b">Ingresá el número de furgón.</span>'; return; }
+      var sel = vistaEl.querySelectorAll('.bod-tarima-chk:checked');
+      if(!sel.length){ msgEl2.innerHTML='<span style="color:#c0392b">Seleccioná al menos una tarima.</span>'; return; }
+      var tarimas = Array.prototype.slice.call(sel).map(function(chk){ return chk.dataset.tarima; });
+      msgEl2.innerHTML='<span style="color:#888">Asignando…</span>';
+      bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon',
+        { tarimas:tarimas, furgon:furgon, usuario:usuario, auditor:isBodAuditor() })
+        .then(function(d){
+          if(!d.ok){ msgEl2.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+          msgEl2.innerHTML='<span style="color:#1e7e34">✅ '+d.nuevas+' tarima(s) asignada(s).</span>';
+          // Refrescar asignaciones
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+            .then(function(r){ return r.json(); })
+            .then(function(f){
+              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+              bodRenderTarimasAuditoria();
+            });
+        }).catch(function(){ msgEl2.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+    });
+  }
+
+  // Wire botones quitar furgón
+  vistaEl.querySelectorAll('.bod-btn-quitar-furgon').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var tarima = btn.dataset.tarima;
+      if(!confirm('¿Quitar asignación de tarima '+tarima+'?')) return;
+      bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon/'+encodeURIComponent(tarima),
+        { usuario:usuario, auditor:isBodAuditor() })
+        .then(function(d){
+          if(!d.ok){ alert(d.error||'Error'); return; }
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+            .then(function(r){ return r.json(); })
+            .then(function(f){
+              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+              bodRenderTarimasAuditoria();
+            });
+        }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+}
+
+// ── Vista Detalle (lógica original de auditoría por línea) ────────────────
+function bodRenderDetalleAuditoria(data) {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !data) return;
   var lineas = data.lineas || [];
   var sesion = data.sesion || {};
-  // Agrupar por tarima
   var porTarima = {};
   lineas.forEach(function(l){
     var t = l.tarima||'?';
     if(!porTarima[t]) porTarima[t] = [];
     porTarima[t].push(l);
   });
-  var usuario    = window.currentUser ? window.currentUser.name : '';
-  var esAuditor  = isBodAuditor();
-  var html = '<div style="font-size:.8rem;color:#666;margin-bottom:.5rem">Sesión <strong>'+escH(sesion.id||'')+'</strong>'
-    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></div>';
-  Object.keys(porTarima).sort().forEach(function(t){
+  var usuario   = window.currentUser ? window.currentUser.name : '';
+  var esAuditor = isBodAuditor();
+  var html = '';
+  bodSortTarimas(Object.keys(porTarima)).forEach(function(t){
     var items = porTarima[t];
     html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
     html += '<div class="tbl-wrap"><table><thead><tr>'
@@ -10230,13 +10410,13 @@ function bodRenderAuditoria(data) {
     });
     html += '</tbody></table></div>';
   });
-  el.innerHTML = html;
-  // Wire botones auditar — supervisor:true solo si isBodAuditor()
-  el.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
+  vistaEl.innerHTML = html;
+  // Wire botones auditar (compatibilidad: enviar auditor y supervisor)
+  vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
     btn.addEventListener('click', function(){
       var linId = btn.dataset.id;
       bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
-        { usuario:usuario, supervisor: isBodAuditor() })
+        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
         .then(function(d){
           if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
           else alert(d.error||'Error');
