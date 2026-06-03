@@ -253,7 +253,13 @@ app.post('/api/heartbeat', (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
-  res.json(publicState());
+  var ps = publicState();
+  try {
+    // Diagnóstico de tamaño: permite monitorear crecimiento del state sin crashear.
+    // FIX (mar 2-jun-2026, server v20): campo stateSizeBytes agregado para auditoría.
+    ps.stateSizeBytes = Buffer.byteLength(JSON.stringify(buildDailyStatePayload()), 'utf8');
+  } catch(e) { /* no bloquear el estado si falla el cálculo */ }
+  res.json(ps);
 });
 
 // Full state save (from client). Merges, never deletes existing data.
@@ -2927,11 +2933,12 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
 
   try {
-    var wmsAllRows = await supabase('GET', 'cdg_wms', null,
-      '?select=licencia_id,skus&limit=2000');
-    if(!Array.isArray(wmsAllRows) || !wmsAllRows.length) {
-      return res.json({ ok: true, actualizadas: [], sinConteo: [], msg: 'No hay WMS cargados.' });
-    }
+    // FIX (mar 2-jun-2026, server v20 rev): procesar cdg_wms página por página.
+    // NO acumular en wmsAllRows — cada página se procesa y descarta para no
+    // retener skus jsonb completos de 200 licencias en memoria simultáneamente.
+    var PAGE = 200;
+    var totalProcesadas = 0;
+    var huboWms = false;
 
     // ── Snapshot ANTES de mutar — para rollback si el save falla ──────────
     var snapTeorico   = state.teorico ? JSON.parse(JSON.stringify(state.teorico)) : {};
@@ -2943,8 +2950,15 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
     var sinConteo      = [];
     var advertencias   = [];
 
-    for(var wi = 0; wi < wmsAllRows.length; wi++) {
-      var wmsRow = wmsAllRows[wi];
+    for(var pg = 0; pg < 10; pg++) {   // máx 10 páginas = 2000 licencias
+      var pageRows = await supabase('GET', 'cdg_wms', null,
+        '?select=licencia_id,skus&limit='+PAGE+'&offset='+(pg*PAGE));
+      if(!Array.isArray(pageRows) || !pageRows.length) break;
+      huboWms = true;
+      totalProcesadas += pageRows.length;
+
+      for(var wi = 0; wi < pageRows.length; wi++) {
+      var wmsRow = pageRows[wi];
       var lic    = String(wmsRow.licencia_id || '').trim().toUpperCase();
       if(!lic) continue;
 
@@ -3150,6 +3164,13 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
 
       actualizadas.push(lic + (teoKey !== lic ? '→'+teoKey : '')
         + ' (' + nuevosItems.filter(function(i){ return !i._soloWMS; }).length + ' SKUs consolidados)');
+      } // fin for wi (pageRows)
+
+      if(pageRows.length < PAGE) break; // última página
+    } // fin for pg (páginas)
+
+    if(!huboWms) {
+      return res.json({ ok: true, actualizadas: [], sinConteo: [], msg: 'No hay WMS cargados.' });
     }
 
     // ── Persistir ────────────────────────────────────────────────────────
@@ -3180,7 +3201,7 @@ app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
       actualizadas:    actualizadas,
       sinConteo:       sinConteo,
       advertencias:    advertencias.length ? advertencias : undefined,
-      totalProcesadas: wmsAllRows.length
+      totalProcesadas: totalProcesadas
     });
 
   } catch(e) {
