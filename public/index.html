@@ -10272,8 +10272,10 @@ var bodAudVista           = 'tarimas';
 var bodFurgonAsignaciones = [];
 var bodAudPollTimer       = null;
 var bodAudLastRefresh     = 0;
-var bodFurgonDraft        = '';   // persiste el valor del campo furgón entre renders
-var bodManifestLoading    = false; // evita fetches simultáneos del manifiesto
+var bodFurgonDraft              = '';   // persiste el valor del campo furgón entre renders
+var bodManifestLoading          = false; // evita fetches simultáneos del manifiesto
+var bodTarimasSeleccionadasDraft = {};   // tarimas con checkbox marcado entre renders
+var bodUltimaInteraccionTarimas  = 0;   // timestamp de última interacción con checkbox
 
 function bodAuditoriaActiva(){
   var pg = document.getElementById('pg-bod-auditoria');
@@ -10287,6 +10289,9 @@ function bodAuditoriaHayInputActivo(){
   if(ae.classList && ae.classList.contains('bod-cant-audit-inp')) return true;
   var vista = document.getElementById('bod-aud-vista');
   if(vista && vista.contains(ae) && (ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA')) return true;
+  // Pausar si hay tarimas seleccionadas o interacción reciente con checkboxes
+  if(Object.keys(bodTarimasSeleccionadasDraft).length > 0) return true;
+  if(Date.now() - bodUltimaInteraccionTarimas < 15000) return true;
   return false;
 }
 function bodAuditoriaAutoRefresh(){
@@ -10327,6 +10332,21 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
       bodAuditoriaData = d;
       bodAudLastRefresh = Date.now();
       var sesId = d.sesion && d.sesion.id;
+
+      // P3: refresh silencioso — no destruir la vista activa
+      if(silencioso && bodAudVista) {
+        if(!sesId) return;
+        return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+          .then(function(r){ return r.json(); })
+          .then(function(f){
+            bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+            // Solo refrescar vistas no destructivas
+            if(bodAudVista === 'tarimas' && !bodAuditoriaHayInputActivo()) bodRenderTarimasAuditoria();
+            else if(bodAudVista === 'detalle' && !bodAuditoriaHayInputActivo()) bodRenderDetalleAuditoria(d);
+            // manifiesto, wms-app, flujo, remanentes: dejar intactas en refresh silencioso
+          });
+      }
+
       if(!sesId){ bodRenderAuditoria(d); return; }
       return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
         .then(function(r){ return r.json(); })
@@ -10453,8 +10473,9 @@ function bodRenderTarimasAuditoria() {
     var estadoCell = asignada
       ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.75rem;padding:2px 7px;border-radius:8px">Furgón '+escH(furgon)+'</span>'
       : '<span style="background:#f5f5f3;color:#888;font-size:.75rem;padding:2px 7px;border-radius:8px">Sin asignar</span>';
+    var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
     var checkCell = (esAud && !asignada)
-      ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"></td>'
+      ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
       : (esAud ? '<td></td>' : '');
     var quitarBtn = (esAud && asignada)
       ? '<td class="tc"><button class="btn btn-xs bod-btn-quitar-furgon" data-tarima="'+escH(t)+'"'
@@ -10485,6 +10506,15 @@ function bodRenderTarimasAuditoria() {
   // Listener para mantener bodFurgonDraft actualizado mientras el usuario escribe
   if(furgonInpNew) furgonInpNew.addEventListener('input', function(){ bodFurgonDraft = this.value; });
 
+  // Wire checkboxes — actualizar bodTarimasSeleccionadasDraft al cambiar
+  vistaEl.querySelectorAll('.bod-tarima-chk').forEach(function(chk){
+    chk.addEventListener('change', function(){
+      bodUltimaInteraccionTarimas = Date.now();
+      if(this.checked) bodTarimasSeleccionadasDraft[this.dataset.tarima] = true;
+      else             delete bodTarimasSeleccionadasDraft[this.dataset.tarima];
+    });
+  });
+
   // Wire asignar furgón
   if(esAud) {
     var btnAsig = document.getElementById('btn-bod-asignar-furgon');
@@ -10501,7 +10531,9 @@ function bodRenderTarimasAuditoria() {
         .then(function(d){
           if(!d.ok){ msgEl2.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
           msgEl2.innerHTML='<span style="color:#1e7e34">✅ '+d.nuevas+' tarima(s) asignada(s).</span>';
-          bodFurgonDraft = '';  // limpiar draft tras asignación exitosa
+          bodFurgonDraft = '';              // limpiar draft de furgón
+          bodTarimasSeleccionadasDraft = {};  // limpiar selección de tarimas
+          bodUltimaInteraccionTarimas = 0;
           // Refrescar asignaciones
           fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
             .then(function(r){ return r.json(); })
