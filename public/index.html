@@ -10781,52 +10781,103 @@ function bodRenderManifiestoAuditoria() {
             ? (bodAuditoriaData.sesion.licencia_id || '') : '';
           var fecha = bodAuditoriaData && bodAuditoriaData.sesion
             ? (bodAuditoriaData.sesion.fecha_trabajo || '') : '';
+
           // Pedir campos del encabezado
-          var marchamo = (prompt('Marchamo:')             || '').trim();
-          var ubicacion = (prompt('UBICACIÓN:')           || '').trim();
-          var cargaNo  = (prompt('Carga No.:')            || '').trim();
-          if(marchamo === null) return; // usuario canceló
-          // Construir hoja igual que el archivo de referencia
+          var marchamo  = prompt('Marchamo:');      if(marchamo  === null) return;
+          var ubicacion = prompt('UBICACIÓN:');     if(ubicacion === null) return;
+          var cargaNo   = prompt('Carga No.:');     if(cargaNo   === null) return;
+          marchamo  = marchamo.trim();
+          ubicacion = ubicacion.trim();
+          cargaNo   = cargaNo.trim();
+
           var XLSX2 = (typeof XLSX !== 'undefined') ? XLSX : null;
           if(!XLSX2){ alert('Librería Excel no disponible. Recargá la página.'); return; }
+
           var wb2 = XLSX2.utils.book_new();
           var ws2 = {};
-          var rango = { s:{r:0,c:0}, e:{r:0,c:0} };
-          function sc(r, col, v, opts){
-            ws2[XLSX2.utils.encode_cell({r:r,c:col})] = Object.assign({v:v, t:typeof v==='number'?'n':'s'}, opts||{});
-            if(r > rango.e.r) rango.e.r = r;
-            if(col > rango.e.c) rango.e.c = col;
+
+          // Helper sc: row y col son 1-based (igual que Excel A1=1,1)
+          // Internamente SheetJS usa 0-based, así que restamos 1
+          function sc(row, col, v, t) {
+            var cell = { v: v };
+            cell.t = t || (typeof v === 'number' ? 'n' : 's');
+            ws2[XLSX2.utils.encode_cell({ r: row-1, c: col-1 })] = cell;
           }
-          // Fila 1 (r=0): vacía
-          // Fila 2 (r=1): título
-          sc(1, 3, 'CARGA ENVÍO A BODEGA');
-          // Filas 5-9 (r=4-8): encabezados
-          sc(4, 5, 'Marchamo:');   sc(4, 6, marchamo);
-          sc(5, 1, licId);
-          sc(5, 5, 'Licencia:');   sc(5, 6, licId);
-          sc(6, 5, 'UBICACIÓN:');  sc(6, 6, ubicacion);
-          sc(7, 5, 'Fecha:');      sc(7, 6, fecha);
-          sc(8, 5, 'Carga No.');   sc(8, 6, cargaNo);
-          // Fila 11 (r=10): encabezados tabla
-          sc(10, 1, 'CODIGO');
-          sc(10, 2, 'ESTATUS');
-          sc(10, 3, 'DESCRIPCION');
-          sc(10, 4, 'CANTIDAD');
-          sc(10, 5, 'VALIDADO');
-          sc(10, 6, 'DIFERENCIA');
-          // Datos desde fila 12 (r=11)
-          fData.skus.forEach(function(s, i){
-            var r = 11 + i;
+
+          // ── Sección: título (igual que BIANCA) ──
+          // Fila 2, col D: título
+          sc(2, 4, 'CARGA ENVÍO A BODEGA');
+
+          // ── Sección: empresa y dirección (filas 5-9, cols B y F) ──
+          // Col B fila 6: empresa (BIANCA usa "Herramientas Poderosas" fijo)
+          sc(6, 2, 'Herramientas Poderosas');
+          // Col C/D filas 7-8: direcciones fijas de BIANCA
+          sc(7, 3, 'DIRECCIÓN:');
+          sc(7, 4, '27 Calle Bodega C 41-55 Zona 5 Calzada la Paz');
+          sc(8, 3, 'DIRECCIÓN DESTINO:');
+          sc(8, 4, 'BODEGA NODUS (Hamiltón)');
+          // Labels con valores concatenados en columna F (igual que Bianca: no hay col G para valores)
+          sc(5, 6, 'Marchamo: ' + marchamo);
+          sc(6, 6, 'Licencia: ' + licId);
+          sc(7, 6, 'UBICACIÓN: ' + ubicacion);
+          sc(8, 6, 'Fecha: ' + fecha);
+          sc(9, 6, 'Carga No. ' + cargaNo);
+
+          // ── Sección: encabezados tabla (fila 11) ──
+          sc(11, 2, 'CODIGO');
+          sc(11, 3, 'ESTATUS');
+          sc(11, 4, 'DESCRIPCION');
+          sc(11, 5, 'CANTIDAD');
+          sc(11, 6, 'VALIDADO');
+          sc(11, 7, 'DIFERENCIA');
+
+          // ── Sección: datos SKU (filas 12+, mínimo hasta fila 17) ──
+          // Footer SIEMPRE en fila 20 — dejar filas vacías si hay menos de 6 líneas
+          var DATA_START = 12;
+          var FOOTER_ROW = 20;
+          fData.skus.forEach(function(s, i) {
+            var row = DATA_START + i;
+            if(row >= FOOTER_ROW) return; // no pisar el footer
             var estatus = s.pendientes === 0 ? 'Auditado' : 'No auditado';
-            sc(r, 1, s.sku);
-            sc(r, 2, estatus);
-            sc(r, 3, s.descripcion || '');
-            sc(r, 4, s.unidades, {t:'n'});
-            sc(r, 5, s.unidades, {t:'n'});
-            sc(r, 6, 0, {t:'n'});
+            sc(row, 2, s.sku);
+            sc(row, 3, estatus);
+            sc(row, 4, s.descripcion || '');
+            sc(row, 5, s.unidades, 'n');
+            sc(row, 6, s.unidades, 'n');
+            sc(row, 7, 0, 'n');
           });
-          ws2['!ref'] = XLSX2.utils.encode_range(rango);
+
+          // ── Sección: footer firma (filas 20-28) — igual que BIANCA ──
+          sc(20, 2, 'AUTORIZACIÓN DE ENVÍO');
+          sc(20, 5, 'NOMBRE Y FIRMA QUIEN RECIBE');
+          // Filas 21-23: espacio para firmas (vacías)
+          sc(26, 2, 'ENCARGADO DE PEDIDO');
+          sc(26, 5, 'AUDITOR / VALIDADOR');
+          // Fila 27: espacio para nombre
+          sc(28, 4, 'ID DE CONTENEDOR');
+
+          // ── Rango mínimo A1:G28 ──
+          ws2['!ref'] = 'A1:G28';
+
+          // ── Anchos de columna (tomados de BIANCA) ──
+          ws2['!cols'] = [
+            {},                        // A (col 0)
+            { wch: 17 },               // B col 1
+            { wch: 11 },               // C col 2
+            { wch: 62 },               // D col 3
+            { wch: 10 },               // E col 4
+            { wch: 11 },               // F col 5
+            { wch: 11 }                // G col 6
+          ];
+
+          // ── Merges (tomados de BIANCA: D2:G2 y B2:B5) ──
+          ws2['!merges'] = [
+            { s:{r:1,c:3}, e:{r:1,c:6} },   // D2:G2 — título
+            { s:{r:1,c:1}, e:{r:4,c:1} }     // B2:B5 — logo/empresa
+          ];
+
           XLSX2.utils.book_append_sheet(wb2, ws2, 'Manifiesto');
+
           var fechaFile = fecha.replace(/-/g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
           var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
           XLSX2.writeFile(wb2, 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.xlsx');
