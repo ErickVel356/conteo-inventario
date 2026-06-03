@@ -10411,37 +10411,95 @@ function bodRenderDetalleAuditoria(data) {
     var items = porTarima[t];
     html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
     html += '<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Operador</th>'
-      +'<th>Auditado</th>'+(esAuditor?'<th class="tc">Acción</th>':'')
+      +'<th>SKU</th><th>Descripción</th>'
+      +'<th class="tc">Cant. captura</th>'
+      +'<th class="tc">Cant. auditoría</th>'
+      +'<th class="tc">Dif.</th>'
+      +'<th>Estado</th>'
+      +'<th>Operador</th>'
+      +'<th>Auditado</th>'
+      +(esAuditor ? '<th class="tc">Acción</th>' : '')
       +'</tr></thead><tbody>';
     items.forEach(function(l){
+      var cantCap = Number(l.cantidad);
       var audBadge = l.auditado
         ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
         : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
-      var accion = '';
-      if(esAuditor && !l.auditado) {
-        accion = '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
-          +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>';
-      } else if(esAuditor) {
-        accion = '<td class="tc"><span style="color:#aaa;font-size:.75rem">—</span></td>';
+
+      var cantAuditCell, difCell, estadoCell, accionCell;
+
+      if(l.auditado) {
+        // Línea auditada: mostrar cantidad_audit (fallback a cantidad si null)
+        var cantAud = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
+          ? Number(l.cantidad_audit) : cantCap;
+        var dif = cantAud - cantCap;
+        var difStr = (dif > 0 ? '+' : '') + dif;
+        var difColor = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
+        var estadoStr = dif === 0 ? 'OK' : dif < 0 ? 'Faltante' : 'Sobrante';
+        var estadoBg  = dif === 0 ? '#e8f5e9' : dif < 0 ? '#fdecea' : '#e3f2fd';
+        var estadoFg  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
+        cantAuditCell = '<td class="tc" style="font-weight:600">'+cantAud+'</td>';
+        difCell       = '<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>';
+        estadoCell    = '<td><span style="background:'+estadoBg+';color:'+estadoFg
+          +';font-size:.72rem;padding:2px 7px;border-radius:8px">'+estadoStr+'</span></td>';
+        accionCell = esAuditor
+          ? '<td class="tc"><button class="btn btn-xs bod-btn-unauditar" data-id="'+escH(l.id)+'"'
+            +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Anular</button></td>'
+          : '';
+      } else {
+        // Línea pendiente: input para cantidad auditoría
+        cantAuditCell = '<td class="tc">'
+          +'<input type="number" class="field-inp bod-cant-audit-inp" data-id="'+escH(l.id)+'"'
+          +' value="'+cantCap+'" min="1" step="1"'
+          +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center">'
+          +'</td>';
+        difCell    = '<td class="tc" style="color:#ccc">—</td>';
+        estadoCell = '<td><span style="color:#aaa;font-size:.72rem">—</span></td>';
+        accionCell = esAuditor
+          ? '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
+            +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>'
+          : '';
       }
+
       html += '<tr>'
-        +'<td style="font-weight:600">'+escH(l.sku||'')+'</td>'
+        +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
         +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
-        +'<td class="tc">'+Number(l.cantidad)+'</td>'
+        +'<td class="tc">'+cantCap+'</td>'
+        +cantAuditCell
+        +difCell
+        +estadoCell
         +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
         +'<td>'+audBadge+'</td>'
-        +(esAuditor ? accion : '')
+        +(esAuditor ? accionCell : '')
         +'</tr>';
     });
     html += '</tbody></table></div>';
   });
   vistaEl.innerHTML = html;
-  // Wire botones auditar (compatibilidad: enviar auditor y supervisor)
+
+  // Wire botones Auditar
   vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
     btn.addEventListener('click', function(){
       var linId = btn.dataset.id;
+      // Leer cantidad del input de esa fila
+      var inp = vistaEl.querySelector('.bod-cant-audit-inp[data-id="'+linId+'"]');
+      var cantAud = inp ? Number(inp.value) : 0;
+      if(!(cantAud > 0)){ alert('Ingresá una cantidad de auditoría mayor a 0.'); return; }
       bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
+        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor(), cantidad_audit:cantAud })
+        .then(function(d){
+          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+          else alert(d.error||'Error');
+        }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
+
+  // Wire botones Anular
+  vistaEl.querySelectorAll('.bod-btn-unauditar').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var linId = btn.dataset.id;
+      if(!confirm('¿Anular auditoría de esta línea?')) return;
+      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/unauditar',
         { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
         .then(function(d){
           if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
