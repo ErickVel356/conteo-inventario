@@ -10354,22 +10354,33 @@ function bodRenderAuditoria(data) {
   var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
     +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
     +'<button class="tab-pill'+(bodAudVista==='detalle'?' on':'')+'" id="bod-tab-detalle">📋 Detalle</button>'
+    +'<button class="tab-pill'+(bodAudVista==='manifiesto'?' on':'')+'" id="bod-tab-manifiesto">📦 Manifiesto</button>'
     +'</div>';
   el.innerHTML = header + tabs + '<div id="bod-aud-vista"></div>';
   // Wire tabs sin onclick
   var btnTarimas = document.getElementById('bod-tab-tarimas');
   var btnDetalle = document.getElementById('bod-tab-detalle');
+  var btnManifiesto = document.getElementById('bod-tab-manifiesto');
   if(btnTarimas) btnTarimas.addEventListener('click', function(){
     bodAudVista = 'tarimas';
-    btnTarimas.classList.add('on'); if(btnDetalle) btnDetalle.classList.remove('on');
+    [btnTarimas].forEach(function(b){ if(b) b.classList.add('on'); });
+    [btnDetalle, btnManifiesto].forEach(function(b){ if(b) b.classList.remove('on'); });
     bodRenderTarimasAuditoria();
   });
   if(btnDetalle) btnDetalle.addEventListener('click', function(){
     bodAudVista = 'detalle';
-    btnDetalle.classList.add('on'); if(btnTarimas) btnTarimas.classList.remove('on');
+    [btnDetalle].forEach(function(b){ if(b) b.classList.add('on'); });
+    [btnTarimas, btnManifiesto].forEach(function(b){ if(b) b.classList.remove('on'); });
     bodRenderDetalleAuditoria(data);
   });
+  if(btnManifiesto) btnManifiesto.addEventListener('click', function(){
+    bodAudVista = 'manifiesto';
+    [btnManifiesto].forEach(function(b){ if(b) b.classList.add('on'); });
+    [btnTarimas, btnDetalle].forEach(function(b){ if(b) b.classList.remove('on'); });
+    bodRenderManifiestoAuditoria();
+  });
   if(bodAudVista === 'tarimas') bodRenderTarimasAuditoria();
+  else if(bodAudVista === 'manifiesto') bodRenderManifiestoAuditoria();
   else bodRenderDetalleAuditoria(data);
 }
 
@@ -10686,6 +10697,95 @@ if(document.readyState==='loading'){
   document.addEventListener('DOMContentLoaded', bodInit);
 } else {
   bodInit();
+}
+
+// ── Vista Manifiesto ─────────────────────────────────────────────────────
+function bodRenderManifiestoAuditoria() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl || !bodAuditoriaData) return;
+  var sesId = bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
+  if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
+  vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando manifiesto…</div>';
+
+  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">'+escH(d.error||'Error')+'</div>'; return; }
+      var html = '';
+
+      // Advertencia de tarimas sin asignar
+      if(d.tarimas_sin_asignar && d.tarimas_sin_asignar.length) {
+        html += '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;font-size:.82rem">'
+          +'⚠️ <strong>Tarimas sin asignar a furgón:</strong> '
+          +d.tarimas_sin_asignar.map(function(t){ return escH(t); }).join(', ')
+          +'</div>';
+      }
+
+      if(!d.furgones || !d.furgones.length) {
+        html += '<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin furgones asignados todavía.</div>';
+        vistaEl.innerHTML = html; return;
+      }
+
+      d.furgones.forEach(function(f){
+        var estado = f.tiene_pendientes
+          ? '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>'
+          : '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
+        var tarimas = f.tarimas.join(', ');
+        html += '<div style="margin-bottom:1.25rem">'
+          +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
+          +'<div style="font-weight:700;font-size:.92rem">Furgón '+escH(f.furgon)+'</div>'
+          +estado
+          +'<span style="font-size:.78rem;color:#888">'+f.total_skus+' SKUs · '+f.total_unidades.toLocaleString('es-GT')+' unidades</span>'
+          +'<span style="font-size:.75rem;color:#aaa">Tarimas: '+escH(tarimas)+'</span>'
+          +'<button class="btn btn-xs bod-btn-export-csv" data-furgon="'+escH(f.furgon)+'"'
+          +' style="margin-left:auto;background:#e3f2fd;color:#1565c0;font-size:.73rem">⬇ CSV</button>'
+          +'</div>'
+          +'<div class="tbl-wrap"><table><thead><tr>'
+          +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
+          +'</tr></thead><tbody>';
+        f.skus.forEach(function(s){
+          var skuEstado = s.pendientes === 0
+            ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
+            : '<span style="color:#e65100;font-size:.75rem">'+s.pendientes+' pend.</span>';
+          html += '<tr>'
+            +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
+            +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
+            +'<td class="tc">'+s.unidades.toLocaleString('es-GT')+'</td>'
+            +'<td>'+skuEstado+'</td>'
+            +'</tr>';
+        });
+        html += '</tbody></table></div></div>';
+      });
+
+      vistaEl.innerHTML = html;
+
+      // Wire botones exportar CSV
+      vistaEl.querySelectorAll('.bod-btn-export-csv').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var furgon = btn.dataset.furgon;
+          var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
+          if(!fData) return;
+          var rows = ['SKU,Descripción,Unidades,Estado'];
+          fData.skus.forEach(function(s){
+            var estadoStr = s.pendientes === 0 ? 'Auditado' : 'Pendiente ('+s.pendientes+')';
+            rows.push([
+              '"'+String(s.sku).replace(/"/g,'""')+'"',
+              '"'+String(s.descripcion||'').replace(/"/g,'""')+'"',
+              s.unidades,
+              '"'+estadoStr+'"'
+            ].join(','));
+          });
+          var blob = new Blob([rows.join('\r\n')], { type:'text/csv;charset=utf-8;' });
+          var url  = URL.createObjectURL(blob);
+          var a    = document.createElement('a');
+          a.href = url;
+          a.download = 'manifiesto-furgon-'+furgon+'-sesion-'+(sesId.slice(0,12))+'.csv';
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a); URL.revokeObjectURL(url);
+        });
+      });
+    })
+    .catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Sin conexión.</div>'; });
 }
 
 })(); // FIN IIFE BOD MODULE
