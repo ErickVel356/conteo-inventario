@@ -9859,8 +9859,6 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 })();
 </script>
 
-</body>
-</html>
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
    BOD MODULE CLIENT — Bodega CDG / Armado de Tarimas — Fase 1
@@ -9998,6 +9996,27 @@ if(barraInput) barraInput.addEventListener('input', function(){
         }
       }).catch(function(){});
   }, 300);
+});
+
+// Listener keydown Enter: dispara lookup inmediato cuando el escáner envía Enter.
+// Evita esperar el debounce de 300ms que puede dejar la barra sin resolver.
+if(barraInput) barraInput.addEventListener('keydown', function(e){
+  if(e.key !== 'Enter') return;
+  e.preventDefault();
+  clearTimeout(barraTimer);
+  var val = this.value.trim();
+  if(!val) return;
+  fetch('/api/bod/barra/'+encodeURIComponent(val))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.encontrado){
+        var skuEl  = document.getElementById('bod-sku');
+        var descEl = document.getElementById('bod-desc');
+        if(skuEl)  skuEl.value  = d.sku;
+        if(descEl) descEl.value = d.descripcion || '';
+        document.getElementById('bod-cantidad').focus();
+      }
+    }).catch(function(){});
 });
 
 // Agregar línea
@@ -10167,3 +10186,6 @@ if(document.readyState==='loading'){
 
 })(); // FIN IIFE BOD MODULE
 </script>
+
+</body>
+</html>
