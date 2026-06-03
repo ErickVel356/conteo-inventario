@@ -1486,6 +1486,7 @@ var STORE_KEY = 'conteo_fisico_v4';
 var CDG_V2_HABILITADO = true;
 
 var currentUser  = null;
+window.ACCESS_SCOPE = 'full';   // 'full' | 'bodega'
 var teorico      = {};   // { contId: { items, type, cdgValidado? } }
 var fisico       = {};   // { contId: [{fisico,daniado,quien,ts,calcExpr}] | null }
                           // calcExpr: legacy histórico, ya no se setea desde UI desde 19/5/2026,
@@ -1718,19 +1719,23 @@ document.getElementById('btn-topbar-back').addEventListener('click',navBack);
      Si la clave de Supabase cambia mientras alguien cuenta, el que ya está
      adentro sigue sin interrupción (sus guardados no dependen del gate).
 ══════════════════════════════════════════════════════════════════ */
-var GATE_MARK_KEY = 'gate_ok_date';
+var GATE_MARK_KEY  = 'gate_ok_date';
+var GATE_SCOPE_KEY = 'gate_scope';
 
 // ¿Ya pasó el gate hoy? (modo equilibrado)
 function gatePassedToday(){
   try {
     var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
-    return sessionStorage.getItem(GATE_MARK_KEY) === today;
+    var ok = sessionStorage.getItem(GATE_MARK_KEY) === today;
+    if(ok) window.ACCESS_SCOPE = sessionStorage.getItem(GATE_SCOPE_KEY) || 'full';
+    return ok;
   } catch(e){ return false; }
 }
-function markGatePassed(){
+function markGatePassed(scope){
   try {
     var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
     sessionStorage.setItem(GATE_MARK_KEY, today);
+    sessionStorage.setItem(GATE_SCOPE_KEY, scope || 'full');
   } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
 }
 
@@ -1763,7 +1768,7 @@ function initGate(){
   fetchAccessKey()
     .then(function(key){
       // INTERRUPTOR DE EMERGENCIA: clave vacía u 'OFF' → login desactivado
-      if(!key || key.toUpperCase() === 'OFF'){ markGatePassed(); showNameLogin(); return; }
+      if(!key || key.toUpperCase() === 'OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
       window._accessKey = key;   // guardar para validar contra lo que escriba el usuario
       // (el gate queda visible, esperando que el usuario escriba la clave)
     })
@@ -1782,8 +1787,9 @@ function tryGate(){
   if(!val){ err.textContent='Ingresa la clave.'; err.style.display='block'; return; }
   // Si por algún motivo no se cargó la clave todavía, intentar leerla ahora
   var check = function(key){
-    if(!key || key.toUpperCase()==='OFF'){ markGatePassed(); showNameLogin(); return; } // OFF: dejar pasar
-    if(val === key){ markGatePassed(); showNameLogin(); }
+    if(!key || key.toUpperCase()==='OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
+    if(val === '12345'){ window.ACCESS_SCOPE='bodega'; markGatePassed('bodega'); showNameLogin(); return; }
+    if(val === key){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); }
     else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
   };
   if(window._accessKey !== undefined){ check(window._accessKey); }
@@ -1803,9 +1809,21 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
   var n=document.getElementById('login-name-sel').value;
   if(!n){var e=document.getElementById('login-err');e.textContent='Selecciona tu nombre.';e.style.display='block';return;}
   if(typeof window.bodCleanup === 'function') window.bodCleanup();
-  var sup=SUPERVISORES.indexOf(n)>=0;
-  var bod=typeof BODEGA_LIST!=='undefined'&&BODEGA_LIST.indexOf(n)>=0;
-  currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
+  // Scope bodega: solo permite nombres de BODEGA_LIST
+  if(window.ACCESS_SCOPE === 'bodega'){
+    var isBodName = typeof BODEGA_LIST !== 'undefined' && BODEGA_LIST.indexOf(n) >= 0;
+    if(!isBodName){
+      var e2 = document.getElementById('login-err');
+      e2.textContent = 'Esta clave solo permite acceso a usuarios de Bodega CDG.';
+      e2.style.display = 'block';
+      return;
+    }
+    currentUser = { name:n, role:'bodega' };
+  } else {
+    var sup=SUPERVISORES.indexOf(n)>=0;
+    var bod=typeof BODEGA_LIST!=='undefined'&&BODEGA_LIST.indexOf(n)>=0;
+    currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
+  }
   document.getElementById('pg-login').style.display='none';
   document.getElementById('main-wrap').style.display='';
   document.getElementById('user-badge').textContent=(sup?'🔑 ':'📋 ')+n;
@@ -1824,6 +1842,8 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   if(typeof window.bodCleanup === 'function') window.bodCleanup();
   lastVersion = -1;
   window.serverLocks = {};
+  window.ACCESS_SCOPE = 'full';
+  try { sessionStorage.removeItem(GATE_MARK_KEY); sessionStorage.removeItem(GATE_SCOPE_KEY); } catch(e){}
   currentUser=null;
   // Reset ALL role-specific UI before login screen
   var tabAsign = document.getElementById('tab-btn-asign');
@@ -9971,6 +9991,8 @@ function bodMostrarMenuPrincipal() {
   if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') {
     var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
   }
+  // Scope bodega: entra directo a pg-bod-menu, no necesita tarjeta en pg-menu
+  if(window.ACCESS_SCOPE === 'bodega') return;
   // Agregar tarjeta mc-bodega si no existe
   var mcBod = document.getElementById('mc-bodega');
   if(!mcBod) {
