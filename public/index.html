@@ -10342,6 +10342,7 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
           .then(function(r){ return r.json(); })
           .then(function(f){
             bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+            if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
             // Solo refrescar vistas no destructivas
             if(bodAudVista === 'tarimas' && !bodAuditoriaHayInputActivo()) bodRenderTarimasAuditoria();
             else if(bodAudVista === 'detalle' && !bodAuditoriaHayInputActivo()) bodRenderDetalleAuditoria(d);
@@ -10354,6 +10355,7 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
         .then(function(r){ return r.json(); })
         .then(function(f){
           bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+          if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
           bodRenderAuditoria(d);
         });
     })
@@ -10463,22 +10465,28 @@ function bodRenderAuditoria(data) {
 function bodRenderTarimasAuditoria() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
-  // Usar bodFurgonDraft como fuente de verdad del valor del campo furgón
-  var furgonInp = document.getElementById('bod-furgon-input');
-  var curVal = furgonInp ? furgonInp.value : '';
-  if(curVal) bodFurgonDraft = curVal;  // actualizar draft si el campo tiene algo
   var data    = bodAuditoriaData;
   var sesion  = data.sesion || {};
-  var sesId   = sesion.id || '';
+  var sesId   = sesion.id   || '';
   var lineas  = data.lineas || [];
   var usuario = window.currentUser ? window.currentUser.name : '';
   var esAud   = isBodAuditor();
 
-  // Mapa furgón por tarima: tarima → furgon
+  // Mapa tarima → furgon (asignaciones heredadas)
   var asigMap = {};
   bodFurgonAsignaciones.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
 
-  // Derivar resumen de tarimas desde resumenTarimas o desde lineas
+  // Cargas logísticas (bod_furgon_cierres)
+  var cargas = (bodAuditoriaData._cargas) || [];
+
+  // Mapa tarima → carga (tarimas que ya tienen carga logística)
+  var tarimaCargaMap = {};
+  cargas.forEach(function(cg){
+    var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
+    ts.forEach(function(t){ tarimaCargaMap[t] = cg; });
+  });
+
+  // Resumen de tarimas
   var resumenes = {};
   if(data.resumenTarimas && data.resumenTarimas.length) {
     data.resumenTarimas.forEach(function(r){ resumenes[r.tarima] = { lineas:r.lineas, unidades:r.unidades }; });
@@ -10492,59 +10500,106 @@ function bodRenderTarimasAuditoria() {
   }
   var tarimaKeys = bodSortTarimas(Object.keys(resumenes));
 
-  // Barra de asignación (visible solo para auditores)
-  var barraAsig = '';
-  if(esAud) {
-    barraAsig = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:.6rem;padding:.6rem;background:#f5f5f3;border-radius:8px">'
-      +'<label style="font-size:.78rem;font-weight:600;color:#555">Furgón:</label>'
-      +'<input type="text" id="bod-furgon-input" class="field-inp" placeholder="Ej: 1" style="width:80px;padding:4px 8px;font-size:.85rem">'
-      +'<button class="btn btn-sm btn-dark" id="btn-bod-asignar-furgon" style="font-size:.78rem">Asignar seleccionadas</button>'
-      +'<span id="bod-furgon-msg" style="font-size:.78rem"></span>'
-      +'</div>';
-  }
+  // ── BLOQUE A: Tarimas disponibles ──────────────────────────────────────
+  var thead = '<thead><tr>'
+    +(esAud ? '<th></th>' : '')
+    +'<th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th>'
+    +'<th>Estado</th>'
+    +'</tr></thead>';
 
-  // Tabla de tarimas
   var filas = tarimaKeys.map(function(t){
     var r = resumenes[t];
-    var furgon = asigMap[t];
-    var asignada = !!furgon;
-    var estadoCell = asignada
-      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.75rem;padding:2px 7px;border-radius:8px">Furgón '+escH(furgon)+'</span>'
-      : '<span style="background:#f5f5f3;color:#888;font-size:.75rem;padding:2px 7px;border-radius:8px">Sin asignar</span>';
+    var carga = tarimaCargaMap[t];
+    var furg  = asigMap[t];
     var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
-    var checkCell = (esAud && !asignada)
-      ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
-      : (esAud ? '<td></td>' : '');
-    var quitarBtn = (esAud && asignada)
-      ? '<td class="tc"><button class="btn btn-xs bod-btn-quitar-furgon" data-tarima="'+escH(t)+'"'
-          +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Quitar</button></td>'
-      : (esAud ? '<td></td>' : '');
-    return '<tr>'
-      +checkCell
+    var checkCell = '', estadoCell = '';
+    if(carga){
+      estadoCell = '<span style="background:#e3f2fd;color:#1565c0;font-size:.73rem;padding:2px 7px;border-radius:8px">'
+        +'🔒 Carga '+escH(carga.furgon)+'</span>';
+      checkCell = esAud ? '<td></td>' : '';
+    } else if(furg){
+      estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
+        +'Furgón '+escH(furg)+' (herencia)</span>';
+      checkCell = esAud ? '<td></td>' : '';
+    } else {
+      estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
+      checkCell = esAud
+        ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
+        : '';
+    }
+    return '<tr>'+checkCell
       +'<td style="font-weight:700">'+escH(t)+'</td>'
       +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
       +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
       +'<td>'+estadoCell+'</td>'
-      +quitarBtn
       +'</tr>';
   }).join('');
 
-  var thead = '<thead><tr>'
-    +(esAud ? '<th></th>' : '')
-    +'<th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th>'
-    +'<th>Estado</th>'+(esAud ? '<th class="tc">Acción</th>' : '')
-    +'</tr></thead>';
+  // Formulario "Crear carga logística" (solo si auditor)
+  var formCarga = '';
+  if(esAud) {
+    formCarga = '<div id="bod-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.75rem;margin-bottom:.6rem">'
+      +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Crear carga logística</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
+      +'<input type="text" id="bod-furgon-input" class="field-inp" placeholder="Ej: 1"'
+      +' style="width:70px;padding:4px 8px;font-size:.82rem"></div>'
+      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
+      +'<input type="text" id="bod-carga-placa" class="field-inp" placeholder="ABC-123"'
+      +' style="width:90px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Marchamo</label>'
+      +'<input type="text" id="bod-carga-marchamo" class="field-inp" placeholder="Marchamo"'
+      +' style="width:110px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
+      +'<input type="text" id="bod-carga-licencia-hija" class="field-inp" placeholder="U25-XXXXXX"'
+      +' style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Destino TR999</label>'
+      +'<input type="text" id="bod-carga-destino" class="field-inp" placeholder="TR999.001.01"'
+      +' style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div style="flex:1;min-width:100px"><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Observación</label>'
+      +'<input type="text" id="bod-carga-obs" class="field-inp" placeholder="Opcional"'
+      +' style="width:100%;padding:4px 8px;font-size:.82rem"></div>'
+      +'<button class="btn btn-sm btn-dark" id="btn-bod-crear-carga" style="align-self:flex-end">✅ Crear carga</button>'
+      +'</div>'
+      +'<div id="bod-carga-msg" style="font-size:.78rem;margin-top:.4rem;min-height:1.2em"></div>'
+      +'</div>';
+  }
 
-  vistaEl.innerHTML = barraAsig
-    +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>';
+  // ── BLOQUE B: Cargas logísticas existentes ──────────────────────────────
+  var bloqueCargasHtml = '';
+  if(cargas.length) {
+    bloqueCargasHtml = '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin:.75rem 0 .3rem;letter-spacing:.3px">Cargas logísticas</div>';
+    cargas.forEach(function(cg){
+      var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
+      var skus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+      bloqueCargasHtml += '<div style="background:#e3f2fd;border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;font-size:.8rem">'
+        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:.25rem">'
+        +'<strong>Furgón '+escH(cg.furgon)+'</strong>'
+        +'<span style="color:#1565c0">🔒 '+escH(cg.licencia_hija||'—')+'</span>'
+        +'<span style="color:#888">→ '+escH(cg.destino_tr999||'—')+'</span>'
+        +(cg.placa ? '<span style="color:#555">🚛 '+escH(cg.placa)+'</span>' : '')
+        +(cg.marchamo ? '<span style="color:#555">🔐 '+escH(cg.marchamo)+'</span>' : '')
+        +'<span style="color:#aaa;font-size:.73rem">por '+escH(cg.cerrado_por||'—')+'</span>'
+        +'</div>'
+        +'<div style="color:#555;font-size:.75rem">'
+        +'Tarimas: '+escH(ts.join(', '))+' · '
+        +skus.length+' SKUs · '+Number(cg.unidades_total)+' unidades'
+        +(cg.observacion ? ' · <em>'+escH(cg.observacion)+'</em>' : '')
+        +'</div></div>';
+    });
+  }
 
-  // Restaurar bodFurgonDraft en el campo recién creado
+  vistaEl.innerHTML = formCarga
+    +'<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.3rem;letter-spacing:.3px">Tarimas</div>'
+    +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>'
+    +bloqueCargasHtml;
+
+  // Restaurar bodFurgonDraft
   var furgonInpNew = document.getElementById('bod-furgon-input');
   if(furgonInpNew && bodFurgonDraft) furgonInpNew.value = bodFurgonDraft;
-  // Listener para mantener bodFurgonDraft actualizado mientras el usuario escribe
   if(furgonInpNew) furgonInpNew.addEventListener('input', function(){ bodFurgonDraft = this.value; });
 
-  // Wire checkboxes — actualizar bodTarimasSeleccionadasDraft al cambiar
+  // Wire checkboxes
   vistaEl.querySelectorAll('.bod-tarima-chk').forEach(function(chk){
     chk.addEventListener('change', function(){
       bodUltimaInteraccionTarimas = Date.now();
@@ -10553,54 +10608,51 @@ function bodRenderTarimasAuditoria() {
     });
   });
 
-  // Wire asignar furgón
+  // Wire "Crear carga logística"
   if(esAud) {
-    var btnAsig = document.getElementById('btn-bod-asignar-furgon');
-    if(btnAsig) btnAsig.addEventListener('click', function(){
-      var furgon = (document.getElementById('bod-furgon-input').value||'').trim();
-      var msgEl2 = document.getElementById('bod-furgon-msg');
-      if(!furgon){ msgEl2.innerHTML='<span style="color:#c0392b">Ingresá el número de furgón.</span>'; return; }
-      var sel = vistaEl.querySelectorAll('.bod-tarima-chk:checked');
-      if(!sel.length){ msgEl2.innerHTML='<span style="color:#c0392b">Seleccioná al menos una tarima.</span>'; return; }
-      var tarimas = Array.prototype.slice.call(sel).map(function(chk){ return chk.dataset.tarima; });
-      msgEl2.innerHTML='<span style="color:#888">Asignando…</span>';
-      bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon',
-        { tarimas:tarimas, furgon:furgon, usuario:usuario, auditor:isBodAuditor() })
-        .then(function(d){
-          if(!d.ok){ msgEl2.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-          msgEl2.innerHTML='<span style="color:#1e7e34">✅ '+d.nuevas+' tarima(s) asignada(s).</span>';
-          bodFurgonDraft = '';              // limpiar draft de furgón
-          bodTarimasSeleccionadasDraft = {};  // limpiar selección de tarimas
-          bodUltimaInteraccionTarimas = 0;
-          // Refrescar asignaciones
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-            .then(function(r){ return r.json(); })
-            .then(function(f){
-              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-              bodRenderTarimasAuditoria();
-            });
-        }).catch(function(){ msgEl2.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+    var btnCrear = document.getElementById('btn-bod-crear-carga');
+    if(btnCrear) btnCrear.addEventListener('click', function(){
+      var furgon    = (document.getElementById('bod-furgon-input').value||'').trim();
+      var placa     = (document.getElementById('bod-carga-placa').value||'').trim().toUpperCase();
+      var marchamo  = (document.getElementById('bod-carga-marchamo').value||'').trim().toUpperCase();
+      var licHija   = (document.getElementById('bod-carga-licencia-hija').value||'').trim().toUpperCase();
+      var destino   = (document.getElementById('bod-carga-destino').value||'').trim().toUpperCase();
+      var obs       = (document.getElementById('bod-carga-obs').value||'').trim();
+      var msgEl     = document.getElementById('bod-carga-msg');
+      var sel       = vistaEl.querySelectorAll('.bod-tarima-chk:checked');
+      var tarimasSel = Array.prototype.slice.call(sel).map(function(c){ return c.dataset.tarima; });
+
+      if(!furgon)          { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
+      if(!licHija)         { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
+      if(!destino)         { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
+      if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino)){
+        msgEl.innerHTML='<span style="color:#c0392b">El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01</span>'; return;
+      }
+      if(!tarimasSel.length){ msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una tarima.</span>'; return; }
+
+      msgEl.innerHTML='<span style="color:#888">Creando carga…</span>';
+      bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', {
+        tarimas: tarimasSel, furgon: furgon, placa: placa, marchamo: marchamo,
+        licencia_hija: licHija, destino_tr999: destino, observacion: obs,
+        usuario: usuario, auditor: isBodAuditor(), supervisor: isBodAuditor()
+      }).then(function(d){
+        if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+        msgEl.innerHTML='<span style="color:#1e7e34">✅ Carga logística creada. Furgón: '+escH(d.furgon)+' · '+d.unidades_total+' unidades.</span>';
+        bodFurgonDraft = '';
+        bodTarimasSeleccionadasDraft = {};
+        bodUltimaInteraccionTarimas = 0;
+        // Refrescar
+        fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+          .then(function(r){ return r.json(); })
+          .then(function(f){
+            bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+            // Guardar cargas en el data para el render
+            if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+            bodRenderTarimasAuditoria();
+          });
+      }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
     });
   }
-
-  // Wire botones quitar furgón
-  vistaEl.querySelectorAll('.bod-btn-quitar-furgon').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tarima = btn.dataset.tarima;
-      if(!confirm('¿Quitar asignación de tarima '+tarima+'?')) return;
-      bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon/'+encodeURIComponent(tarima),
-        { usuario:usuario, auditor:isBodAuditor() })
-        .then(function(d){
-          if(!d.ok){ alert(d.error||'Error'); return; }
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-            .then(function(r){ return r.json(); })
-            .then(function(f){
-              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-              bodRenderTarimasAuditoria();
-            });
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
 }
 
 // ── Vista Detalle (lógica original de auditoría por línea) ────────────────
