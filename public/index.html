@@ -10300,6 +10300,9 @@ var bodTarimasSeleccionadasDraft = {};   // tarimas con checkbox marcado entre r
 var bodUltimaInteraccionTarimas  = 0;   // timestamp de última interacción con checkbox
 var bodLicenciasAdicionales     = [];   // licencias bolsón adicionales para reportes
 var bodFurgonCierres           = {};   // furgon → datos de cierre (cache local)
+var _bodDatosWms   = [];   // cache datos WMS vs App para filtros sin re-fetch
+var _bodDatosFlujo = [];   // cache datos Flujo Bolsón para filtros sin re-fetch
+var _bodDatosRem   = [];   // cache datos Remanentes para filtros sin re-fetch
 
 function bodAuditoriaActiva(){
   var pg = document.getElementById('pg-bod-auditoria');
