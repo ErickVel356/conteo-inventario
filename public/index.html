@@ -10765,120 +10765,212 @@ function bodRenderTarimasAuditoria() {
 }
 
 // ── Vista Detalle (lógica original de auditoría por línea) ────────────────
+// Helper: mapa tarima → contexto logístico (furgon, licencia_hija, placa, marchamo, destino_tr999)
+function bodGetLogisticaTarimaMap() {
+  var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+  var asigs  = Array.isArray(bodFurgonAsignaciones) ? bodFurgonAsignaciones : [];
+  var map = {};
+  asigs.forEach(function(a) {
+    var t = String(a.tarima || '').trim();
+    if(!t) return;
+    if(!map[t]) map[t] = {};
+    map[t].furgon = a.furgon || '';
+  });
+  cargas.forEach(function(c) {
+    var ts = Array.isArray(c.tarimas) ? c.tarimas : [];
+    ts.forEach(function(t) {
+      t = String(t || '').trim();
+      if(!t) return;
+      if(!map[t]) map[t] = {};
+      map[t].furgon        = c.furgon        || map[t].furgon        || '';
+      map[t].licencia_hija = c.licencia_hija || map[t].licencia_hija || '';
+      map[t].placa         = c.placa         || map[t].placa         || '';
+      map[t].marchamo      = c.marchamo      || map[t].marchamo      || '';
+      map[t].destino_tr999 = c.destino_tr999 || map[t].destino_tr999 || '';
+    });
+  });
+  return map;
+}
+
 function bodRenderDetalleAuditoria(data) {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !data) return;
-  var lineas = data.lineas || [];
-  var sesion = data.sesion || {};
-  var porTarima = {};
-  lineas.forEach(function(l){
-    var t = l.tarima||'?';
-    if(!porTarima[t]) porTarima[t] = [];
-    porTarima[t].push(l);
-  });
+  var lineas    = data.lineas || [];
   var usuario   = window.currentUser ? window.currentUser.name : '';
   var esAuditor = isBodAuditor();
-  var html = '';
-  bodSortTarimas(Object.keys(porTarima)).forEach(function(t){
-    var items = porTarima[t];
-    html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
-    html += '<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>SKU</th><th>Descripción</th>'
-      +'<th class="tc">Cant. captura</th>'
-      +'<th class="tc">Cant. auditoría</th>'
-      +'<th class="tc">Dif.</th>'
-      +'<th>Estado</th>'
-      +'<th>Operador</th>'
-      +'<th>Auditado</th>'
-      +(esAuditor ? '<th class="tc">Acción</th>' : '')
-      +'</tr></thead><tbody>';
-    items.forEach(function(l){
-      var cantCap = Number(l.cantidad);
-      var audBadge = l.auditado
-        ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
-        : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
+  var logTarimaMap = bodGetLogisticaTarimaMap();
 
-      var cantAuditCell, difCell, estadoCell, accionCell;
+  // Filtros activos
+  var _fSku    = '';
+  var _fTarima = '';
+  var _fFurgon = '';
+  var _fHija   = '';
 
-      if(l.auditado) {
-        // Línea auditada: mostrar cantidad_audit (fallback a cantidad si null)
-        var cantAud = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
-          ? Number(l.cantidad_audit) : cantCap;
-        var dif = cantAud - cantCap;
-        var difStr = (dif > 0 ? '+' : '') + dif;
-        var difColor = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
-        var estadoStr = dif === 0 ? 'OK' : dif < 0 ? 'Faltante' : 'Sobrante';
-        var estadoBg  = dif === 0 ? '#e8f5e9' : dif < 0 ? '#fdecea' : '#e3f2fd';
-        var estadoFg  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
-        cantAuditCell = '<td class="tc" style="font-weight:600">'+cantAud+'</td>';
-        difCell       = '<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>';
-        estadoCell    = '<td><span style="background:'+estadoBg+';color:'+estadoFg
-          +';font-size:.72rem;padding:2px 7px;border-radius:8px">'+estadoStr+'</span></td>';
-        accionCell = esAuditor
-          ? '<td class="tc"><button class="btn btn-xs bod-btn-unauditar" data-id="'+escH(l.id)+'"'
-            +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Anular</button></td>'
-          : '';
-      } else {
-        // Línea pendiente: input para cantidad auditoría
-        cantAuditCell = '<td class="tc">'
-          +'<input type="number" class="field-inp bod-cant-audit-inp" data-id="'+escH(l.id)+'"'
-          +' value="'+cantCap+'" min="1" step="1"'
-          +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center">'
-          +'</td>';
-        difCell    = '<td class="tc" style="color:#ccc">—</td>';
-        estadoCell = '<td><span style="color:#aaa;font-size:.72rem">—</span></td>';
-        accionCell = esAuditor
-          ? '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
-            +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>'
-          : '';
-      }
-
-      html += '<tr>'
-        +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
-        +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
-        +'<td class="tc">'+cantCap+'</td>'
-        +cantAuditCell
-        +difCell
-        +estadoCell
-        +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
-        +'<td>'+audBadge+'</td>'
-        +(esAuditor ? accionCell : '')
-        +'</tr>';
+  function _renderFilas(lineasFiltradas) {
+    // Reagrupar por tarima
+    var porTarima = {};
+    lineasFiltradas.forEach(function(l) {
+      var t = l.tarima || '?';
+      if(!porTarima[t]) porTarima[t] = [];
+      porTarima[t].push(l);
     });
-    html += '</tbody></table></div>';
-  });
-  vistaEl.innerHTML = html;
-
-  // Wire botones Auditar
-  vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var linId = btn.dataset.id;
-      // Leer cantidad del input de esa fila
-      var inp = vistaEl.querySelector('.bod-cant-audit-inp[data-id="'+linId+'"]');
-      var cantAud = inp ? Number(inp.value) : 0;
-      if(!(cantAud > 0)){ alert('Ingresá una cantidad de auditoría mayor a 0.'); return; }
-      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
-        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor(), cantidad_audit:cantAud })
-        .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
-          else alert(d.error||'Error');
-        }).catch(function(){ alert('Sin conexión'); });
+    var html = '';
+    bodSortTarimas(Object.keys(porTarima)).forEach(function(t) {
+      var items  = porTarima[t];
+      var lg     = logTarimaMap[t] || {};
+      var furgon = lg.furgon        || '—';
+      var hija   = lg.licencia_hija || '—';
+      var dest   = lg.destino_tr999 || '—';
+      html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">'
+        +'Tarima '+escH(t)
+        +' <span style="font-weight:400;color:#888;font-size:.75rem">'
+        +'Furgón: '+escH(furgon)+' · Lic.hija: '+escH(hija)+' · Destino: '+escH(dest)
+        +'</span></div>';
+      html += '<div class="tbl-wrap"><table><thead><tr>'
+        +'<th>Tarima</th><th>SKU</th><th>Descripción</th>'
+        +'<th class="tc">Cant. captura</th>'
+        +'<th class="tc">Cant. auditoría</th>'
+        +'<th class="tc">Dif.</th>'
+        +'<th>Estado</th>'
+        +'<th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
+        +'<th>Operador</th>'
+        +'<th>Auditado</th>'
+        +(esAuditor ? '<th class="tc">Acción</th>' : '')
+        +'</tr></thead><tbody>';
+      items.forEach(function(l) {
+        var cantCap  = Number(l.cantidad);
+        var audBadge = l.auditado
+          ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
+          : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
+        var cantAuditCell, difCell, estadoCell, accionCell;
+        if(l.auditado) {
+          var cantAud = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
+            ? Number(l.cantidad_audit) : cantCap;
+          var dif     = cantAud - cantCap;
+          var difStr  = (dif > 0 ? '+' : '') + dif;
+          var difColor  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
+          var estadoStr = dif === 0 ? 'OK' : dif < 0 ? 'Faltante' : 'Sobrante';
+          var estadoBg  = dif === 0 ? '#e8f5e9' : dif < 0 ? '#fdecea' : '#e3f2fd';
+          var estadoFg  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
+          cantAuditCell = '<td class="tc" style="font-weight:600">'+cantAud+'</td>';
+          difCell       = '<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>';
+          estadoCell    = '<td><span style="background:'+estadoBg+';color:'+estadoFg
+            +';font-size:.72rem;padding:2px 7px;border-radius:8px">'+estadoStr+'</span></td>';
+          accionCell    = esAuditor
+            ? '<td class="tc"><button class="btn btn-xs bod-btn-unauditar" data-id="'+escH(l.id)+'"'
+              +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Anular</button></td>'
+            : '';
+        } else {
+          cantAuditCell = '<td class="tc">'
+            +'<input type="number" class="field-inp bod-cant-audit-inp" data-id="'+escH(l.id)+'"'
+            +' value="'+cantCap+'" min="1" step="1"'
+            +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center">'
+            +'</td>';
+          difCell    = '<td class="tc" style="color:#ccc">—</td>';
+          estadoCell = '<td><span style="color:#aaa;font-size:.72rem">—</span></td>';
+          accionCell = esAuditor
+            ? '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
+              +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>'
+            : '';
+        }
+        html += '<tr>'
+          +'<td style="font-size:.78rem;color:#888">'+escH(t)+'</td>'
+          +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
+          +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
+          +'<td class="tc">'+cantCap+'</td>'
+          +cantAuditCell
+          +difCell
+          +estadoCell
+          +'<td style="font-size:.72rem;color:#888">'+escH(furgon)+'</td>'
+          +'<td style="font-size:.72rem;color:#888">'+escH(hija)+'</td>'
+          +'<td style="font-size:.72rem;color:#888">'+escH(dest)+'</td>'
+          +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
+          +'<td>'+audBadge+'</td>'
+          +(esAuditor ? accionCell : '')
+          +'</tr>';
+      });
+      html += '</tbody></table></div>';
     });
+    return html || '<div style="color:#aaa;font-size:.82rem;margin-top:.5rem">Sin líneas que coincidan.</div>';
+  }
+
+  function _applyFilter() {
+    var filtradas = lineas.filter(function(l) {
+      var lg = logTarimaMap[l.tarima||''] || {};
+      if(_fSku    && !(l.sku   ||'').toUpperCase().includes(_fSku))                      return false;
+      if(_fTarima && !(l.tarima||'').toUpperCase().includes(_fTarima))                   return false;
+      if(_fFurgon && !(lg.furgon        ||'').toUpperCase().includes(_fFurgon))          return false;
+      if(_fHija   && !(lg.licencia_hija ||'').toUpperCase().includes(_fHija))            return false;
+      return true;
+    });
+    var contenido = document.getElementById('bod-det-contenido');
+    if(contenido) contenido.innerHTML = _renderFilas(filtradas);
+    _wireButtons();
+  }
+
+  function _wireButtons() {
+    vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var linId  = btn.dataset.id;
+        var inp    = vistaEl.querySelector('.bod-cant-audit-inp[data-id="'+linId+'"]');
+        var cantAud = inp ? Number(inp.value) : 0;
+        if(!(cantAud > 0)){ alert('Ingresá una cantidad de auditoría mayor a 0.'); return; }
+        bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
+          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor(), cantidad_audit:cantAud })
+          .then(function(d){
+            if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+            else alert(d.error||'Error');
+          }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+    vistaEl.querySelectorAll('.bod-btn-unauditar').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var linId = btn.dataset.id;
+        if(!confirm('¿Anular auditoría de esta línea?')) return;
+        bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/unauditar',
+          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
+          .then(function(d){
+            if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+            else alert(d.error||'Error');
+          }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+  }
+
+  // Render inicial — filtros + contenido
+  vistaEl.innerHTML = ''
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.75rem">'
+    +'<label>SKU: <input id="bod-det-f-sku" placeholder="ej. 100995" style="width:90px;font-size:.75rem"></label>'
+    +'<label>Tarima: <input id="bod-det-f-tarima" placeholder="A1" style="width:55px;font-size:.75rem"></label>'
+    +'<label>Furgón: <input id="bod-det-f-furgon" placeholder="ej. 1" style="width:55px;font-size:.75rem"></label>'
+    +'<label>Lic.hija: <input id="bod-det-f-hija" placeholder="U25-…" style="width:90px;font-size:.75rem"></label>'
+    +'<button id="bod-det-f-btn" class="btn btn-sm" style="font-size:.73rem">Filtrar</button>'
+    +'<button id="bod-det-f-clear" class="btn btn-sm" style="font-size:.73rem;background:#f5f5f5">Limpiar</button>'
+    +'</div>'
+    +'<div id="bod-det-contenido"></div>';
+
+  // Render filas iniciales
+  var contenido = document.getElementById('bod-det-contenido');
+  if(contenido) contenido.innerHTML = _renderFilas(lineas);
+  _wireButtons();
+
+  // Wire filtros
+  var btnFiltrar = document.getElementById('bod-det-f-btn');
+  var btnLimpiar = document.getElementById('bod-det-f-clear');
+  if(btnFiltrar) btnFiltrar.addEventListener('click', function() {
+    _fSku    = (document.getElementById('bod-det-f-sku'   ).value||'').trim().toUpperCase();
+    _fTarima = (document.getElementById('bod-det-f-tarima').value||'').trim().toUpperCase();
+    _fFurgon = (document.getElementById('bod-det-f-furgon').value||'').trim().toUpperCase();
+    _fHija   = (document.getElementById('bod-det-f-hija'  ).value||'').trim().toUpperCase();
+    _applyFilter();
+  });
+  if(btnLimpiar) btnLimpiar.addEventListener('click', function() {
+    _fSku = _fTarima = _fFurgon = _fHija = '';
+    ['bod-det-f-sku','bod-det-f-tarima','bod-det-f-furgon','bod-det-f-hija']
+      .forEach(function(id){ var el = document.getElementById(id); if(el) el.value = ''; });
+    _applyFilter();
   });
 
-  // Wire botones Anular
-  vistaEl.querySelectorAll('.bod-btn-unauditar').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var linId = btn.dataset.id;
-      if(!confirm('¿Anular auditoría de esta línea?')) return;
-      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/unauditar',
-        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-        .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
-          else alert(d.error||'Error');
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
 }
 
 // ── Navegación ─────────────────────────────────────────────────────────────
