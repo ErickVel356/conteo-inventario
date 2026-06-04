@@ -10270,6 +10270,7 @@ function bodRenderTabla() {
 var bodAuditoriaData      = null;
 var bodAudVista           = 'tarimas';
 var bodFurgonAsignaciones = [];
+var bodDetalleFiltrosDraft   = { sku:'', tarima:'', furgon:'', hija:'' }; // persiste filtros de Detalle entre refreshes
 var bodAudPollTimer       = null;
 var bodAudLastRefresh     = 0;
 var bodFurgonDraft              = '';   // persiste el valor del campo furgón entre renders
@@ -10800,11 +10801,11 @@ function bodRenderDetalleAuditoria(data) {
   var esAuditor = isBodAuditor();
   var logTarimaMap = bodGetLogisticaTarimaMap();
 
-  // Filtros activos
-  var _fSku    = '';
-  var _fTarima = '';
-  var _fFurgon = '';
-  var _fHija   = '';
+  // Filtros activos — inicializar desde draft para persistir entre refreshes
+  var _fSku    = bodDetalleFiltrosDraft.sku    || '';
+  var _fTarima = bodDetalleFiltrosDraft.tarima || '';
+  var _fFurgon = bodDetalleFiltrosDraft.furgon || '';
+  var _fHija   = bodDetalleFiltrosDraft.hija   || '';
 
   function _renderFilas(lineasFiltradas) {
     // Reagrupar por tarima
@@ -10949,9 +10950,24 @@ function bodRenderDetalleAuditoria(data) {
     +'</div>'
     +'<div id="bod-det-contenido"></div>';
 
-  // Render filas iniciales
+  // Restaurar valores de inputs desde draft
+  var _restoreMap = { 'bod-det-f-sku':_fSku, 'bod-det-f-tarima':_fTarima,
+                      'bod-det-f-furgon':_fFurgon, 'bod-det-f-hija':_fHija };
+  Object.keys(_restoreMap).forEach(function(id){
+    var el = document.getElementById(id); if(el && _restoreMap[id]) el.value = _restoreMap[id];
+  });
+
+  // Render filas — si hay filtros en draft, aplicar directamente
   var contenido = document.getElementById('bod-det-contenido');
-  if(contenido) contenido.innerHTML = _renderFilas(lineas);
+  var tieneFiltroDraft = _fSku || _fTarima || _fFurgon || _fHija;
+  if(contenido) contenido.innerHTML = tieneFiltroDraft ? _renderFilas(lineas.filter(function(l){
+    var lg = logTarimaMap[l.tarima||''] || {};
+    if(_fSku    && !(l.sku   ||'').toUpperCase().includes(_fSku))               return false;
+    if(_fTarima && !(l.tarima||'').toUpperCase().includes(_fTarima))             return false;
+    if(_fFurgon && !(lg.furgon        ||'').toUpperCase().includes(_fFurgon))    return false;
+    if(_fHija   && !(lg.licencia_hija ||'').toUpperCase().includes(_fHija))      return false;
+    return true;
+  })) : _renderFilas(lineas);
   _wireButtons();
 
   // Wire filtros
@@ -10962,10 +10978,17 @@ function bodRenderDetalleAuditoria(data) {
     _fTarima = (document.getElementById('bod-det-f-tarima').value||'').trim().toUpperCase();
     _fFurgon = (document.getElementById('bod-det-f-furgon').value||'').trim().toUpperCase();
     _fHija   = (document.getElementById('bod-det-f-hija'  ).value||'').trim().toUpperCase();
+    // Persistir en draft
+    bodDetalleFiltrosDraft.sku    = _fSku;
+    bodDetalleFiltrosDraft.tarima = _fTarima;
+    bodDetalleFiltrosDraft.furgon = _fFurgon;
+    bodDetalleFiltrosDraft.hija   = _fHija;
     _applyFilter();
   });
   if(btnLimpiar) btnLimpiar.addEventListener('click', function() {
     _fSku = _fTarima = _fFurgon = _fHija = '';
+    bodDetalleFiltrosDraft.sku = bodDetalleFiltrosDraft.tarima =
+      bodDetalleFiltrosDraft.furgon = bodDetalleFiltrosDraft.hija = '';
     ['bod-det-f-sku','bod-det-f-tarima','bod-det-f-furgon','bod-det-f-hija']
       .forEach(function(id){ var el = document.getElementById(id); if(el) el.value = ''; });
     _applyFilter();
@@ -11525,30 +11548,83 @@ function bodRenderFlujoBolson() {
   fetch('/api/bod/reportes/flujo-bolson'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
+      if(!d.ok||!d.movimientos||!d.movimientos.length){
+        vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return;
+      }
+      var _fSku='', _fTarima='', _fFurgon='', _fHija='';
+
+      function _renderFlujo(movs) {
+        var filtrados = movs.filter(function(m){
+          if(_fSku    && !(m.sku           ||'').toUpperCase().includes(_fSku))    return false;
+          if(_fTarima && !(m.tarimas       ||'').toUpperCase().includes(_fTarima)) return false;
+          if(_fFurgon && !(m.furgon        ||'').toUpperCase().includes(_fFurgon)) return false;
+          if(_fHija   && !(m.licencia_hija ||'').toUpperCase().includes(_fHija))   return false;
+          return true;
+        });
+        var html = '<tbody>';
+        filtrados.forEach(function(m){
+          var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
+          html += '<tr>'
+            +'<td style="font-weight:600">'+escH(m.sku)+'</td>'
+            +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
+            +'<td class="tc">'+m.entradas_952+'</td>'
+            +'<td class="tc">'+m.salidas_tr999+'</td>'
+            +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(m.furgon||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(m.tarimas||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
+            +'</tr>';
+        });
+        html += '</tbody>';
+        return html;
+      }
+
+      var html = ''
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.75rem">'
+        +'<label>SKU: <input id="bod-flu-f-sku" placeholder="ej. 100995" style="width:90px;font-size:.75rem"></label>'
+        +'<label>Tarima: <input id="bod-flu-f-tarima" placeholder="A1" style="width:55px;font-size:.75rem"></label>'
+        +'<label>Furgón: <input id="bod-flu-f-furgon" placeholder="ej. 1" style="width:55px;font-size:.75rem"></label>'
+        +'<label>Lic.hija: <input id="bod-flu-f-hija" placeholder="U25-…" style="width:90px;font-size:.75rem"></label>'
+        +'<button id="bod-flu-f-btn" class="btn btn-sm" style="font-size:.73rem">Filtrar</button>'
+        +'<button id="bod-flu-f-clear" class="btn btn-sm" style="font-size:.73rem;background:#f5f5f5">Limpiar</button>'
+        +'</div>'
+        +'<div class="tbl-wrap"><table>'
+        +'<thead><tr>'
         +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
-        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th><th>Destino TR999</th>'
-        +'</tr></thead><tbody>';
-      d.movimientos.forEach(function(m){
-        var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
-        html += '<tr><td style="font-weight:600">'+escH(m.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
-          +'<td class="tc">'+m.entradas_952+'</td>'
-          +'<td class="tc">'+m.salidas_tr999+'</td>'
-          +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(m.furgon||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table></div>';
+        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th>'
+        +'<th>Tarimas</th><th>Destino TR999</th>'
+        +'</tr></thead>'
+        +'<tbody id="bod-flu-tbody"></tbody>'
+        +'</table></div>';
+
       vistaEl.innerHTML = html;
+      var tbody = document.getElementById('bod-flu-tbody');
+      if(tbody) tbody.outerHTML = _renderFlujo(d.movimientos).replace('<tbody>','<tbody id="bod-flu-tbody">');
+
+      var btnF = document.getElementById('bod-flu-f-btn');
+      var btnC = document.getElementById('bod-flu-f-clear');
+      function _rerender(){
+        var tbl = vistaEl.querySelector('tbody');
+        if(tbl) tbl.innerHTML = _renderFlujo(d.movimientos).replace('<tbody>','').replace('</tbody>','');
+      }
+      if(btnF) btnF.addEventListener('click', function(){
+        _fSku    = (document.getElementById('bod-flu-f-sku'   ).value||'').trim().toUpperCase();
+        _fTarima = (document.getElementById('bod-flu-f-tarima').value||'').trim().toUpperCase();
+        _fFurgon = (document.getElementById('bod-flu-f-furgon').value||'').trim().toUpperCase();
+        _fHija   = (document.getElementById('bod-flu-f-hija'  ).value||'').trim().toUpperCase();
+        _rerender();
+      });
+      if(btnC) btnC.addEventListener('click', function(){
+        _fSku = _fTarima = _fFurgon = _fHija = '';
+        ['bod-flu-f-sku','bod-flu-f-tarima','bod-flu-f-furgon','bod-flu-f-hija']
+          .forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+        _rerender();
+      });
     }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
 }
 
-// ── Vista Remanentes ─────────────────────────────────────────────────────
 function bodRenderRemanentes() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
@@ -11557,7 +11633,9 @@ function bodRenderRemanentes() {
   fetch('/api/bod/reportes/remanentes'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok||!d.remanentes||!d.remanentes.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
+      if(!d.ok||!d.remanentes||!d.remanentes.length){
+        vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return;
+      }
       var estadoCol = {
         'Pendiente de entarimar':'#e65100',
         'Pendiente por ubicación distinta a 952':'#f57c00',
@@ -11570,25 +11648,79 @@ function bodRenderRemanentes() {
         'Atrasado':'#c0392b',
         'Sin fecha':'#888'
       };
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
+      var _fSku='', _fTarima='', _fFurgon='', _fHija='', _fCausa='';
+
+      function _renderRem(rems){
+        var filtrados = rems.filter(function(r){
+          if(_fSku    && !(r.sku            ||'').toUpperCase().includes(_fSku))    return false;
+          if(_fTarima && !(r.tarimas        ||'').toUpperCase().includes(_fTarima)) return false;
+          if(_fFurgon && !(r.furgon         ||'').toUpperCase().includes(_fFurgon)) return false;
+          if(_fHija   && !(r.licencia_hija  ||'').toUpperCase().includes(_fHija))   return false;
+          if(_fCausa  && !(r.estado_remanente||'').toUpperCase().includes(_fCausa)) return false;
+          return true;
+        });
+        var rows = '';
+        filtrados.forEach(function(r){
+          var col = estadoCol[r.estado_remanente]||'#555';
+          rows += '<tr>'
+            +'<td style="font-weight:600">'+escH(r.sku)+'</td>'
+            +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
+            +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_origen||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_salida||r.licencia_hija||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(r.furgon||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(r.tarimas||'—')+'</td>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(r.destino_tr999||'—')+'</td>'
+            +'<td style="font-size:.78rem">'+escH(r.fecha_primer_ingreso||'—')+'</td>'
+            +'<td class="tc">'+((r.dias_en_bolson!==null&&r.dias_en_bolson!==undefined)?r.dias_en_bolson:'—')+'</td>'
+            +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td>'
+            +'</tr>';
+        });
+        return rows || '<tr><td colspan="11" style="color:#aaa;font-size:.82rem;text-align:center">Sin resultados.</td></tr>';
+      }
+
+      var html = ''
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.75rem">'
+        +'<label>SKU: <input id="bod-rem-f-sku" placeholder="ej. 100995" style="width:90px;font-size:.75rem"></label>'
+        +'<label>Tarima: <input id="bod-rem-f-tarima" placeholder="A1" style="width:55px;font-size:.75rem"></label>'
+        +'<label>Furgón: <input id="bod-rem-f-furgon" placeholder="ej. 1" style="width:55px;font-size:.75rem"></label>'
+        +'<label>Lic.hija: <input id="bod-rem-f-hija" placeholder="U25-…" style="width:90px;font-size:.75rem"></label>'
+        +'<label>Causa: <input id="bod-rem-f-causa" placeholder="ej. Remanen…" style="width:90px;font-size:.75rem"></label>'
+        +'<button id="bod-rem-f-btn" class="btn btn-sm" style="font-size:.73rem">Filtrar</button>'
+        +'<button id="bod-rem-f-clear" class="btn btn-sm" style="font-size:.73rem;background:#f5f5f5">Limpiar</button>'
+        +'</div>'
+        +'<div class="tbl-wrap"><table>'
+        +'<thead><tr>'
         +'<th>SKU</th><th>Descripción</th><th class="tc">Remanente</th>'
         +'<th>Lic. origen</th><th>Lic. hija/salida</th><th>Furgón</th>'
+        +'<th>Tarimas</th><th>Destino TR999</th>'
         +'<th>Primer ingreso</th><th class="tc">Días</th><th>Causa</th>'
-        +'</tr></thead><tbody>';
-      d.remanentes.forEach(function(r){
-        var col = estadoCol[r.estado_remanente]||'#555';
-        html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
-          +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_origen||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(r.licencia_salida||'—')+'</td>'
-          +'<td style="font-size:.75rem;color:#888">'+escH(r.furgon||'—')+'</td>'
-          +'<td style="font-size:.78rem">'+escH(r.fecha_primer_ingreso||'—')+'</td>'
-          +'<td class="tc">'+((r.dias_en_bolson!==null)?r.dias_en_bolson:'—')+'</td>'
-          +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td></tr>';
-      });
-      html += '</tbody></table></div>';
+        +'</tr></thead>'
+        +'<tbody id="bod-rem-tbody">'+_renderRem(d.remanentes)+'</tbody>'
+        +'</table></div>';
+
       vistaEl.innerHTML = html;
+
+      var btnF = document.getElementById('bod-rem-f-btn');
+      var btnC = document.getElementById('bod-rem-f-clear');
+      function _rerender(){
+        var tb = document.getElementById('bod-rem-tbody');
+        if(tb) tb.innerHTML = _renderRem(d.remanentes);
+      }
+      if(btnF) btnF.addEventListener('click', function(){
+        _fSku    = (document.getElementById('bod-rem-f-sku'   ).value||'').trim().toUpperCase();
+        _fTarima = (document.getElementById('bod-rem-f-tarima').value||'').trim().toUpperCase();
+        _fFurgon = (document.getElementById('bod-rem-f-furgon').value||'').trim().toUpperCase();
+        _fHija   = (document.getElementById('bod-rem-f-hija'  ).value||'').trim().toUpperCase();
+        _fCausa  = (document.getElementById('bod-rem-f-causa' ).value||'').trim().toUpperCase();
+        _rerender();
+      });
+      if(btnC) btnC.addEventListener('click', function(){
+        _fSku = _fTarima = _fFurgon = _fHija = _fCausa = '';
+        ['bod-rem-f-sku','bod-rem-f-tarima','bod-rem-f-furgon','bod-rem-f-hija','bod-rem-f-causa']
+          .forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+        _rerender();
+      });
     }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
 }
 
@@ -11690,31 +11822,35 @@ function bodDescargarConsolidado() {
       XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(mData)), 'Manifiesto');
 
       // ── Hoja 4: WMS_vs_APP ────────────────────────────────────────────────
-      var wData = [['Licencia','SKU','Descripción','WMS','App','Diferencia','Estado']];
+      var wData = [['Licencia','SKU','Descripción','WMS','App','Diferencia','Estado','Tarimas','Furgón','Lic. hija','Destino TR999']];
       if(wmsApp.ok && wmsApp.skus) wmsApp.skus.forEach(function(s){
         wData.push([s.licencia_id||'', s.sku, s.descripcion||'',
-          s.cantidad_teorica_wms, s.cantidad_app, s.diferencia, s.estado]);
+          s.cantidad_teorica_wms, s.cantidad_app, s.diferencia, s.estado,
+          s.tarimas||'', s.furgon||'', s.licencia_hija||'', s.destino_tr999||'']);
       });
       XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(wData)), 'WMS_vs_APP');
 
       // ── Hoja 5: Flujo_Bolson ─────────────────────────────────────────────
-      var fData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente','Lic. Origen','Lic. Hija','Furgón','Destino TR999']];
+      var fData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente','Lic. Origen','Lic. Hija','Furgón','Tarimas','Placa','Marchamo','Destino TR999']];
       if(flujo.ok && flujo.movimientos) flujo.movimientos.forEach(function(m){
         fData.push([m.sku, m.descripcion||'', m.entradas_952, m.salidas_tr999, m.remanente,
-          m.licencia_origen||'', m.licencia_hija||'', m.furgon||'', m.destino_tr999||'']);
+          m.licencia_origen||'', m.licencia_hija||'', m.furgon||'',
+          m.tarimas||'', m.placa||'', m.marchamo||'', m.destino_tr999||'']);
       });
       XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(fData)), 'Flujo_Bolson');
 
       // ── Hoja 6: Remanentes ───────────────────────────────────────────────
       var rData = [['SKU','Descripción','Entrada 952','App entarimada','Salida TR999','Remanente',
-        'Lic. Origen','Lic. Hija','Furgón','Primer Ingreso','Último Mov.','Días en Bolsón','Causa']];
+        'Lic. Origen','Lic. Hija','Furgón','Tarimas','Placa','Marchamo','Destino TR999',
+        'Primer Ingreso','Último Mov.','Días en Bolsón','Causa']];
       if(rems.ok && rems.remanentes) rems.remanentes.forEach(function(r){
         rData.push([r.sku, r.descripcion||'',
           Number(r.entrada_952 || 0),
           Number(r.app_entarimada || 0),
           Number(r.salida_tr999 || 0),
           r.cantidad_remanente,
-          r.licencia_origen||'', r.licencia_salida||'', r.furgon||'',
+          r.licencia_origen||'', r.licencia_hija||'', r.furgon||'',
+          r.tarimas||'', r.placa||'', r.marchamo||'', r.destino_tr999||'',
           r.fecha_primer_ingreso||'', r.ultimo_movimiento||'',
           r.dias_en_bolson!=null ? r.dias_en_bolson : '',
           r.estado_remanente||'']);
