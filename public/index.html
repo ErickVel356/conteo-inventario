@@ -10277,6 +10277,7 @@ var bodManifestLoading          = false; // evita fetches simultáneos del manif
 var bodTarimasSeleccionadasDraft = {};   // tarimas con checkbox marcado entre renders
 var bodUltimaInteraccionTarimas  = 0;   // timestamp de última interacción con checkbox
 var bodLicenciasAdicionales     = [];   // licencias bolsón adicionales para reportes
+var bodFurgonCierres           = {};   // furgon → datos de cierre (cache local)
 
 function bodAuditoriaActiva(){
   var pg = document.getElementById('pg-bod-auditoria');
@@ -10800,6 +10801,7 @@ if(document.readyState==='loading'){
 function bodRenderManifiestoAuditoria() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
+  var esAud = isBodAuditor();
   var sesId = bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
   if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
   // Evitar fetch simultáneo si ya hay uno en curso
@@ -10847,16 +10849,31 @@ function bodRenderManifiestoAuditoria() {
       }
 
       d.furgones.forEach(function(f){
-        var estado = f.tiene_pendientes
-          ? '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>'
-          : '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
+        // Estado: Finalizado > Pendiente > Auditado
+        var estado;
+        if(f.finalizado){
+          estado = '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:8px">🔒 Finalizado</span>';
+        } else if(f.tiene_pendientes){
+          estado = '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>';
+        } else {
+          estado = '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
+        }
+        var finInfo = f.finalizado
+          ? '<span style="font-size:.73rem;color:#1565c0;margin-left:2px">Lic. hija: <strong>'
+            +escH(f.licencia_hija||'—')+'</strong> · Destino: <strong>'+escH(f.destino_tr999||'—')+'</strong></span>'
+          : '';
+        var btnFinal = (!f.finalizado && esAud)
+          ? '<button class="btn btn-xs bod-btn-finalizar-furgon" data-furgon="'+escH(f.furgon)+'"'
+            +' style="background:#e3f2fd;color:#0d47a1;font-size:.73rem">🔒 Finalizar furgón</button>'
+          : '';
         var tarimas = f.tarimas.join(', ');
         html += '<div class="bod-furgon-bloque" style="margin-bottom:1.25rem">'
           +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
           +'<div style="font-weight:700;font-size:.92rem">Furgón '+escH(f.furgon)+'</div>'
-          +estado
+          +estado+finInfo
           +'<span style="font-size:.78rem;color:#888">'+f.total_skus+' SKUs · '+f.total_unidades.toLocaleString('es-GT')+' unidades</span>'
           +'<span style="font-size:.75rem;color:#aaa">Tarimas: '+escH(tarimas)+'</span>'
+          +btnFinal
           +'<button class="btn btn-xs bod-btn-export-xlsx" data-furgon="'+escH(f.furgon)+'"'
           +' style="margin-left:auto;background:#e8f5e9;color:#1b5e20;font-size:.73rem">📥 Exportar Excel</button>'
           +'</div>'
@@ -10878,6 +10895,32 @@ function bodRenderManifiestoAuditoria() {
       });
 
       vistaEl.innerHTML = html;
+
+      // Wire botones Finalizar furgón
+      var _sesIdM   = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
+      var _usuarioM = window.currentUser ? window.currentUser.name : '';
+      vistaEl.querySelectorAll('.bod-btn-finalizar-furgon').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var furgon  = btn.dataset.furgon;
+          var licHija = (prompt('Licencia hija de salida (ej: U25-162400):')||'').trim().toUpperCase();
+          if(!licHija) return;
+          var destTR  = (prompt('Destino TR999 (formato TR999.xxx.xx):')||'').trim().toUpperCase();
+          if(!destTR) return;
+          if(!/^TR999\.\d{3}\.\d{2}$/i.test(destTR)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
+          var obs = (prompt('Observación (opcional):')||'').trim();
+          bodFetch('POST',
+            '/api/bod/sesion/'+encodeURIComponent(_sesIdM)+'/furgon/'+encodeURIComponent(furgon)+'/finalizar',
+            { licencia_hija:licHija, destino_tr999:destTR, observacion:obs,
+              usuario:_usuarioM, auditor:isBodAuditor(), supervisor:isBodAuditor() })
+            .then(function(d){
+              if(d.ok){
+                alert('Furgón '+furgon+' finalizado.\nLicencia hija: '+licHija
+                  +'\nDestino: '+destTR+'\nUnidades: '+d.unidades_total);
+                bodRenderManifiestoAuditoria();
+              } else { alert(d.error||'Error al finalizar'); }
+            }).catch(function(){ alert('Sin conexión'); });
+        });
+      });
 
       // Wire botones exportar XLSX con formato tipo Manifiesto_PRUEBA_BIANCA
       vistaEl.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
