@@ -11353,21 +11353,74 @@ function bodCargarWmsVsApp(licId, sesId) {
         'Entarimado sin WMS':'#7b1fa2',
         'Sin datos':'#aaa'
       };
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>Licencia</th><th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th><th>Estado</th>'
-        +'</tr></thead><tbody>';
-      d.skus.forEach(function(s){
-        var col = colores[s.estado]||'#555';
-        html += '<tr><td style="font-size:.75rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
-          +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
-          +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
-          +'<td class="tc">'+s.cantidad_app+'</td>'
-          +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
-          +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td></tr>';
-      });
-      html += '</tbody></table></div>';
+      // Filtros en cliente
+      var _filtFurgon = '';
+      var _filtHija   = '';
+      var _filtTarima = '';
+
+      function _wmsRenderFilas(skus) {
+        var tbody = tbl.querySelector('tbody');
+        if(!tbody) return;
+        var filas = '';
+        skus.filter(function(s){
+          if(_filtFurgon && !(s.furgon       ||'').toUpperCase().includes(_filtFurgon)) return false;
+          if(_filtHija   && !(s.licencia_hija||'').toUpperCase().includes(_filtHija))   return false;
+          if(_filtTarima && !(s.tarimas      ||'').toUpperCase().includes(_filtTarima)) return false;
+          return true;
+        }).forEach(function(s){
+          var col = colores[s.estado]||'#555';
+          filas += '<tr>'
+            +'<td style="font-size:.75rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
+            +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
+            +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
+            +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
+            +'<td class="tc">'+s.cantidad_app+'</td>'
+            +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
+            +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td>'
+            +'<td style="font-size:.72rem;color:#888">'+escH(s.tarimas      ||'—')+'</td>'
+            +'<td style="font-size:.72rem;color:#888">'+escH(s.furgon       ||'—')+'</td>'
+            +'<td style="font-size:.72rem;color:#888">'+escH(s.licencia_hija||'—')+'</td>'
+            +'<td style="font-size:.72rem;color:#888">'+escH(s.destino_tr999||'—')+'</td>'
+            +'</tr>';
+        });
+        tbody.innerHTML = filas;
+      }
+
+      var html = ''
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.75rem">'
+        +'<label>Furgón: <input id="bod-wms-f-furgon" placeholder="ej. 1" style="width:60px;font-size:.75rem"></label>'
+        +'<label>Lic.hija: <input id="bod-wms-f-hija" placeholder="U25-…" style="width:90px;font-size:.75rem"></label>'
+        +'<label>Tarima: <input id="bod-wms-f-tarima" placeholder="A1" style="width:55px;font-size:.75rem"></label>'
+        +'<button id="bod-wms-f-btn" class="btn btn-sm" style="font-size:.73rem">Filtrar</button>'
+        +'<button id="bod-wms-f-clear" class="btn btn-sm" style="font-size:.73rem;background:#f5f5f5">Limpiar</button>'
+        +'</div>'
+        +'<div class="tbl-wrap"><table>'
+        +'<thead><tr>'
+        +'<th>Licencia</th><th>SKU</th><th>Descripción</th>'
+        +'<th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th>'
+        +'<th>Estado</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
+        +'</tr></thead>'
+        +'<tbody></tbody>'
+        +'</table></div>';
+
       tbl.innerHTML = html;
+      _wmsRenderFilas(d.skus);
+
+      var btnF = document.getElementById('bod-wms-f-btn');
+      var btnC = document.getElementById('bod-wms-f-clear');
+      if(btnF) btnF.addEventListener('click', function(){
+        _filtFurgon = (document.getElementById('bod-wms-f-furgon').value||'').trim().toUpperCase();
+        _filtHija   = (document.getElementById('bod-wms-f-hija').value  ||'').trim().toUpperCase();
+        _filtTarima = (document.getElementById('bod-wms-f-tarima').value||'').trim().toUpperCase();
+        _wmsRenderFilas(d.skus);
+      });
+      if(btnC) btnC.addEventListener('click', function(){
+        _filtFurgon = _filtHija = _filtTarima = '';
+        document.getElementById('bod-wms-f-furgon').value = '';
+        document.getElementById('bod-wms-f-hija').value   = '';
+        document.getElementById('bod-wms-f-tarima').value = '';
+        _wmsRenderFilas(d.skus);
+      });
     }).catch(function(){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
 }
 
