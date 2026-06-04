@@ -10572,6 +10572,12 @@ function bodRenderTarimasAuditoria() {
     cargas.forEach(function(cg){
       var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
       var skus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+      var btnAcciones = esAud
+        ? '<button class="btn btn-xs bod-btn-editar-carga" data-id="'+escH(cg.id)+'"'
+          +' style="background:#fff3e0;color:#e65100;font-size:.72rem">✏ Editar</button>'
+          +'<button class="btn btn-xs bod-btn-eliminar-carga" data-id="'+escH(cg.id)+'"'
+          +' style="background:#fdecea;color:#c0392b;font-size:.72rem">🗑 Eliminar</button>'
+        : '';
       bloqueCargasHtml += '<div style="background:#e3f2fd;border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;font-size:.8rem">'
         +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:.25rem">'
         +'<strong>Furgón '+escH(cg.furgon)+'</strong>'
@@ -10580,6 +10586,7 @@ function bodRenderTarimasAuditoria() {
         +(cg.placa ? '<span style="color:#555">🚛 '+escH(cg.placa)+'</span>' : '')
         +(cg.marchamo ? '<span style="color:#555">🔐 '+escH(cg.marchamo)+'</span>' : '')
         +'<span style="color:#aaa;font-size:.73rem">por '+escH(cg.cerrado_por||'—')+'</span>'
+        +btnAcciones
         +'</div>'
         +'<div style="color:#555;font-size:.75rem">'
         +'Tarimas: '+escH(ts.join(', '))+' · '
@@ -10607,6 +10614,66 @@ function bodRenderTarimasAuditoria() {
       else             delete bodTarimasSeleccionadasDraft[this.dataset.tarima];
     });
   });
+
+  // Wire Editar carga logística
+  if(esAud) {
+    vistaEl.querySelectorAll('.bod-btn-editar-carga').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var cargaId = btn.dataset.id;
+        var cg = cargas.find(function(c){ return c.id === cargaId; });
+        if(!cg) return;
+        var _p;
+        _p = prompt('Placa:', cg.placa||''); if(_p === null) return;
+        var newPlaca   = _p.trim().toUpperCase();
+        _p = prompt('Marchamo:', cg.marchamo||''); if(_p === null) return;
+        var newMarcha  = _p.trim().toUpperCase();
+        _p = prompt('Licencia hija:', cg.licencia_hija||''); if(_p === null) return;
+        var newLicHija = _p.trim().toUpperCase();
+        if(!newLicHija){ alert('La licencia hija es requerida.'); return; }
+        _p = prompt('Destino TR999 (ej: TR999.001.01):', cg.destino_tr999||''); if(_p === null) return;
+        var newDestino = _p.trim().toUpperCase();
+        if(!/^TR999\.\d{3}\.\d{2}$/i.test(newDestino)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
+        _p = prompt('Observación:', cg.observacion||''); if(_p === null) return;
+        var newObs     = _p.trim();
+        bodFetch('PATCH', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId), {
+          placa:newPlaca, marchamo:newMarcha, licencia_hija:newLicHija,
+          destino_tr999:newDestino, observacion:newObs,
+          usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
+        }).then(function(d){
+          if(!d.ok){ alert(d.error||'Error al editar'); return; }
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+            .then(function(r){ return r.json(); })
+            .then(function(f){
+              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+              if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+              bodRenderTarimasAuditoria();
+            });
+        }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+
+    // Wire Eliminar carga logística
+    vistaEl.querySelectorAll('.bod-btn-eliminar-carga').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var cargaId = btn.dataset.id;
+        var cg = cargas.find(function(c){ return c.id === cargaId; });
+        if(!cg) return;
+        if(!confirm('Esto eliminará la carga logística del furgón '+cg.furgon+' y liberará sus tarimas para reagrupar. ¿Continuar?')) return;
+        bodFetch('DELETE', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId), {
+          usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
+        }).then(function(d){
+          if(!d.ok){ alert(d.error||'Error al eliminar'); return; }
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+            .then(function(r){ return r.json(); })
+            .then(function(f){
+              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+              if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+              bodRenderTarimasAuditoria();
+            });
+        }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+  }
 
   // Wire "Crear carga logística"
   if(esAud) {
