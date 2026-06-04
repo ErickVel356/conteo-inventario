@@ -410,6 +410,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <option>Huvaldo Pérez</option><option>Ader Chávez</option>
           <option>Angie Suar</option><option>Duma Pérez</option>
           <option>Edgar Soto</option>
+          <option>Alejandra Galeros</option><option>Sharon Hernández</option>
         </optgroup>
       </select>
     </div>
@@ -1486,7 +1487,7 @@ var STORE_KEY = 'conteo_fisico_v4';
 var CDG_V2_HABILITADO = true;
 
 var currentUser  = null;
-window.ACCESS_SCOPE = 'full';   // 'full' | 'bodega'
+window.ACCESS_SCOPE = 'full';   // 'full' | 'bodega' | 'rgis'
 var teorico      = {};   // { contId: { items, type, cdgValidado? } }
 var fisico       = {};   // { contId: [{fisico,daniado,quien,ts,calcExpr}] | null }
                           // calcExpr: legacy histórico, ya no se setea desde UI desde 19/5/2026,
@@ -1749,11 +1750,18 @@ function renderLoginNameOptions(){
   var sel = document.getElementById('login-name-sel');
   if(!sel) return;
   var html = '<option value="">— Selecciona tu nombre —</option>';
-  if(window.ACCESS_SCOPE === 'bodega'){
+  if(window.ACCESS_SCOPE === 'rgis'){
+    html += '<optgroup label="Usuarios RGIS">';
+    html += '<option>Operador 1</option><option>Operador 2</option>';
+    html += '<option>Operador 3</option><option>Operador 4</option>';
+    html += '<option>Operador 5</option>';
+    html += '</optgroup>';
+  } else if(window.ACCESS_SCOPE === 'bodega'){
     html += '<optgroup label="Bodega CDG">';
     html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
     html += '<option>Angie Suar</option><option>Duma Pérez</option>';
     html += '<option>Edgar Soto</option>';
+    html += '<option>Alejandra Galeros</option><option>Sharon Hernández</option>';
     html += '</optgroup>';
   } else {
     html += '<optgroup label="Supervisores">';
@@ -1774,6 +1782,7 @@ function renderLoginNameOptions(){
     html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
     html += '<option>Angie Suar</option><option>Duma Pérez</option>';
     html += '<option>Edgar Soto</option>';
+    html += '<option>Alejandra Galeros</option><option>Sharon Hernández</option>';
     html += '</optgroup>';
   }
   sel.innerHTML = html;
@@ -1836,6 +1845,7 @@ function tryGate(){
     var key = (cfg && typeof cfg === 'object') ? cfg.accessKey : cfg;
     if(!key || key.toUpperCase()==='OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
     if(val === '12345'){ window.ACCESS_SCOPE='bodega'; markGatePassed('bodega'); showNameLogin(); return; }
+    if(window.RGIS_ACCESS_KEY && val === window.RGIS_ACCESS_KEY){ window.ACCESS_SCOPE='rgis'; markGatePassed('rgis'); showNameLogin(); return; }
     if(val === key){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); }
     else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
   };
@@ -1856,9 +1866,19 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
   var n=document.getElementById('login-name-sel').value;
   if(!n){var e=document.getElementById('login-err');e.textContent='Selecciona tu nombre.';e.style.display='block';return;}
   if(typeof window.bodCleanup === 'function') window.bodCleanup();
+  // Scope rgis: solo permite nombres de RGIS_LIST
+  if(window.ACCESS_SCOPE === 'rgis'){
+    var isRgisName = window.RGIS_LIST && window.RGIS_LIST.indexOf(n) >= 0;
+    if(!isRgisName){
+      var e2 = document.getElementById('login-err');
+      e2.textContent = 'Esta clave solo permite acceso a usuarios RGIS.';
+      e2.style.display = 'block';
+      return;
+    }
+    currentUser = { name:n, role:'rgis' };
   // Scope bodega: solo permite nombres de BODEGA_LIST
-  if(window.ACCESS_SCOPE === 'bodega'){
-    var isBodName = typeof BODEGA_LIST !== 'undefined' && BODEGA_LIST.indexOf(n) >= 0;
+  } else if(window.ACCESS_SCOPE === 'bodega'){
+    var isBodName = window.BODEGA_LIST && window.BODEGA_LIST.indexOf(n) >= 0;
     if(!isBodName){
       var e2 = document.getElementById('login-err');
       e2.textContent = 'Esta clave solo permite acceso a usuarios de Bodega CDG.';
@@ -1868,12 +1888,13 @@ document.getElementById('btn-login-enter').addEventListener('click',function(){
     currentUser = { name:n, role:'bodega' };
   } else {
     var sup=SUPERVISORES.indexOf(n)>=0;
-    var bod=typeof BODEGA_LIST!=='undefined'&&BODEGA_LIST.indexOf(n)>=0;
+    var bod=window.BODEGA_LIST && window.BODEGA_LIST.indexOf(n)>=0;
     currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
   }
   document.getElementById('pg-login').style.display='none';
   document.getElementById('main-wrap').style.display='';
-  document.getElementById('user-badge').textContent=(sup?'🔑 ':'📋 ')+n;
+  var _badgeIcon = (window.ACCESS_SCOPE==='rgis') ? '🔍 ' : (typeof sup!=='undefined'&&sup ? '🔑 ' : '📋 ');
+  document.getElementById('user-badge').textContent=_badgeIcon+n;
   document.getElementById('fecha').textContent=new Date().toLocaleDateString('es',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   afterLogin();
 });
@@ -1952,6 +1973,12 @@ function afterLogin(){
         if(errEl){ errEl.textContent = 'Error al verificar módulo. Reintentá.'; errEl.style.display = ''; }
       });
     return; // no continuar hasta que resuelva la promesa
+  }
+  // RGIS: entrar directo a Hamilton sin ver menú principal
+  if(currentUser.role === 'rgis'){
+    navTo('pg-hamilton','Conteos Hamilton');
+    updateSubmenúCounts();
+    return;
   }
   navTo('pg-menu','📦 Conteo de Inventario');
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
@@ -9984,8 +10011,11 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 (function(){ 'use strict';
 
 // ── Constantes ──────────────────────────────────────────────────────────
-var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto'];
+var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto','Alejandra Galeros','Sharon Hernández'];
 window.BODEGA_LIST = BODEGA_LIST; // exponer para el login en script anterior
+
+window.RGIS_ACCESS_KEY = 'rgis2026';
+window.RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5'];
 
 var BOD_ENABLED_CLIENT = false;
 window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
@@ -10029,7 +10059,8 @@ function bodInit() {
 function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
 function isBodAuditor() { return !!(window.currentUser && (window.currentUser.role === 'supervisor' || window.currentUser.role === 'contador')); }
 function bodTarimaPrefix(nombre) {
-  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E' };
+  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E',
+              'Alejandra Galeros':'F', 'Sharon Hernández':'G' };
   return map[nombre] || 'A';
 }
 
