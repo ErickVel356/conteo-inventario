@@ -4704,9 +4704,10 @@ app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
       qSalidas  = '?tipo_movimiento=eq.salida_tr999&limit=5000';
     }
 
-    var [movsEntrada, movsSalida] = await Promise.all([
+    var [movsEntrada, movsSalida, logMap] = await Promise.all([
       supabase('GET', 'bod_wms_movimientos', null, qEntradas),
-      supabase('GET', 'bod_wms_movimientos', null, qSalidas)
+      supabase('GET', 'bod_wms_movimientos', null, qSalidas),
+      bodGetSkuLogistica(lics)
     ]);
     movsEntrada = Array.isArray(movsEntrada) ? movsEntrada : [];
     movsSalida  = Array.isArray(movsSalida)  ? movsSalida  : [];
@@ -4732,6 +4733,11 @@ app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
     });
 
     var result = Object.values(skuData).map(function(d){
+      var skuKey    = String(d.sku || '').trim().toUpperCase();
+      var lg        = logMap[skuKey] || {};
+      var logFurgon  = (lg.furgones      ||[]).filter(Boolean).join(', ');
+      var logHija    = (lg.licencias_hijas||[]).filter(Boolean).join(', ');
+      var logDestino = (lg.destinos_tr999 ||[]).filter(Boolean).join(', ');
       return {
         sku:             d.sku,
         descripcion:     d.descripcion,
@@ -4739,9 +4745,12 @@ app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
         salidas_tr999:   d.salidas_tr999,
         remanente:       d.entradas_952 - d.salidas_tr999,
         licencia_origen: d.licencia_origen,
-        licencia_hija:   d.licencias_hijas.join(', '),
-        furgon:          d.furgones.join(', '),
-        destino_tr999:   d.destinos_tr999.join(', ')
+        licencia_hija:   d.licencias_hijas.join(', ') || logHija,
+        furgon:          d.furgones.join(', ')        || logFurgon,
+        destino_tr999:   d.destinos_tr999.join(', ')  || logDestino,
+        tarimas:         (lg.tarimas   ||[]).filter(Boolean).join(', '),
+        placa:           (lg.placas    ||[]).filter(Boolean).join(', '),
+        marchamo:        (lg.marchamos ||[]).filter(Boolean).join(', ')
       };
     });
     res.json({ ok:true, movimientos:result });
@@ -4760,10 +4769,11 @@ app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
       ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000'
       : '?eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000';
 
-    var [movs, lineas, asigs] = await Promise.all([
+    var [movs, lineas, asigs, logMap] = await Promise.all([
       supabase('GET', 'bod_wms_movimientos', null, f.q),
       supabase('GET', 'bod_lineas', null, lineasQ),
-      supabase('GET', 'bod_tarima_furgon', null, '?limit=5000')
+      supabase('GET', 'bod_tarima_furgon', null, '?limit=5000'),
+      bodGetSkuLogistica(f.lics)
     ]);
     movs   = Array.isArray(movs)   ? movs   : [];
     lineas = Array.isArray(lineas) ? lineas : [];
@@ -4835,10 +4845,21 @@ app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
       else
         causa = dias !== null && dias <= 2 ? 'Pendiente normal' : 'Atrasado';
 
+      var skuKey = String(d.sku || '').trim().toUpperCase();
+      var lg     = logMap[skuKey] || {};
+      // Furgón: preferir logMap (tiene cierre completo), fallback a tarima_furgon
+      var furgonFinal = (lg.furgones||[]).filter(Boolean).join(', ') || furgon;
+
       return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem,
                entrada_952:d.entradas, app_entarimada:app, salida_tr999:d.salidas,
                licencia_origen:d.licencia_origen, licencia_salida:d.licencia_salida,
-               furgon:furgon, fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha,
+               furgon:furgonFinal,
+               tarimas:       (lg.tarimas       ||[]).filter(Boolean).join(', '),
+               licencia_hija: (lg.licencias_hijas||[]).filter(Boolean).join(', '),
+               placa:         (lg.placas         ||[]).filter(Boolean).join(', '),
+               marchamo:      (lg.marchamos      ||[]).filter(Boolean).join(', '),
+               destino_tr999: (lg.destinos_tr999 ||[]).filter(Boolean).join(', '),
+               fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha,
                dias_en_bolson:dias, estado_remanente:causa };
     });
     res.json({ ok:true, remanentes:result });
