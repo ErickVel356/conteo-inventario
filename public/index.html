@@ -10345,8 +10345,18 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
             bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
             if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
             // Solo refrescar vistas no destructivas
+            var hayFiltrosDetalle = bodDetalleFiltrosDraft.sku || bodDetalleFiltrosDraft.tarima ||
+                                    bodDetalleFiltrosDraft.furgon || bodDetalleFiltrosDraft.hija;
             if(bodAudVista === 'tarimas' && !bodAuditoriaHayInputActivo()) bodRenderTarimasAuditoria();
-            else if(bodAudVista === 'detalle' && !bodAuditoriaHayInputActivo()) bodRenderDetalleAuditoria(d);
+            else if(bodAudVista === 'detalle') {
+              // Si hay filtros activos: actualizar datos en background sin re-renderizar
+              // para que el filtro aplicado no parpadee ni desaparezca
+              if(!hayFiltrosDetalle && !bodAuditoriaHayInputActivo()) {
+                bodRenderDetalleAuditoria(d);
+              }
+              // Con filtros activos: solo sincronizar bodAuditoriaData (ya se hizo arriba)
+              // La próxima vez que el usuario cambie de pestaña verá datos frescos
+            }
             // manifiesto, wms-app, flujo, remanentes: dejar intactas en refresh silencioso
           });
       }
@@ -10599,6 +10609,13 @@ function bodRenderTarimasAuditoria() {
           +' style="background:#fff3e0;color:#e65100;font-size:.72rem">✏ Editar</button>'
           +'<button class="btn btn-xs bod-btn-eliminar-carga" data-id="'+escH(cg.id)+'"'
           +' style="background:#fdecea;color:#c0392b;font-size:.72rem">🗑 Eliminar</button>'
+          +'<label class="btn btn-xs bod-btn-subir-hija" data-id="'+escH(cg.id)+'"'
+          +' style="cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.72rem;position:relative">'
+          +'📂 Subir licencia'
+          +'<input type="file" class="bod-hija-file-inp" data-id="'+escH(cg.id)+'"'
+          +' accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
+          +'</label>'
+          +'<span class="bod-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.72rem;display:block;min-height:1em"></span>'
         : '';
       bloqueCargasHtml += '<div style="background:#e3f2fd;border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;font-size:.8rem">'
         +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:.25rem">'
@@ -10714,6 +10731,38 @@ function bodRenderTarimasAuditoria() {
               bodRenderTarimasAuditoria();
             });
         }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+
+    // Wire Subir licencia hija por carga logística
+    vistaEl.querySelectorAll('.bod-hija-file-inp').forEach(function(inp){
+      inp.addEventListener('change', function(){
+        if(!this.files||!this.files[0]) return;
+        var archivo    = this.files[0];
+        var cargaId    = this.dataset.id;
+        var cg         = cargas.find(function(c){ return c.id === cargaId; });
+        var msgEl2     = vistaEl.querySelector('.bod-hija-msg[data-id="'+cargaId+'"]');
+        if(!cg){ if(msgEl2) msgEl2.innerHTML='<span style="color:#c0392b">Carga no encontrada.</span>'; return; }
+        if(!cg.licencia_hija){ if(msgEl2) msgEl2.innerHTML='<span style="color:#c0392b">Esta carga no tiene licencia hija. Editala primero.</span>'; return; }
+        this.value = '';
+        if(msgEl2) msgEl2.innerHTML='<span style="color:#888">⏳ Subiendo '+escH(archivo.name)+'…</span>';
+        var licId2 = (bodAuditoriaData&&bodAuditoriaData.sesion) ? (bodAuditoriaData.sesion.licencia_id||'') : '';
+        var fd2 = new FormData();
+        fd2.append('file', archivo);
+        fd2.append('usuario', usuario);
+        fd2.append('licencia_id', cg.licencia_hija);
+        fd2.append('licencia_padre', licId2);
+        fd2.append('furgon_relacionado', cg.furgon);
+        fd2.append('tipo_licencia', 'hija_salida');
+        fetch('/api/bod/wms/upload', { method:'POST', body:fd2 })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if(!d.ok){ if(msgEl2) msgEl2.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
+            var col2 = d.advertencia ? '#e65100' : '#1e7e34';
+            var txt2 = '✅ '+d.procesadas+' filas · Salidas: '+((d.salidas_tr999)||0);
+            if(d.advertencia) txt2 += ' ⚠ '+escH(d.advertencia);
+            if(msgEl2) msgEl2.innerHTML='<span style="color:'+col2+'">'+txt2+'</span>';
+          }).catch(function(){ if(msgEl2) msgEl2.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
       });
     });
   }
@@ -11159,7 +11208,7 @@ function bodRenderManifiestoAuditoria() {
         f.skus.forEach(function(s){
           var skuEstado = s.pendientes === 0
             ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
-            : '<span style="color:#e65100;font-size:.75rem">'+s.pendientes+' pend.</span>';
+            : '<span style="color:#e65100;font-size:.75rem">No auditado</span>';
           html += '<tr>'
             +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
             +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
@@ -11209,13 +11258,34 @@ function bodRenderManifiestoAuditoria() {
           var fecha = bodAuditoriaData && bodAuditoriaData.sesion
             ? (bodAuditoriaData.sesion.fecha_trabajo || '') : '';
 
-          // Pedir campos del encabezado
-          var marchamo  = prompt('Marchamo:');      if(marchamo  === null) return;
-          var ubicacion = prompt('UBICACIÓN:');     if(ubicacion === null) return;
-          var cargaNo   = prompt('Carga No.:');     if(cargaNo   === null) return;
-          marchamo  = marchamo.trim();
-          ubicacion = ubicacion.trim();
-          cargaNo   = cargaNo.trim();
+          // Helper: YYYY-MM-DD → DD/MM/YYYY
+          function _fmtDMA(s) {
+            if(!s) return '';
+            var m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+            return m ? m[3]+'/'+m[2]+'/'+m[1] : s;
+          }
+          var fechaDMA = _fmtDMA(fecha);
+
+          // Buscar datos de carga logística del furgón
+          var cargas2 = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+          var cgData  = cargas2.find(function(c){ return String(c.furgon) === String(furgon); }) || {};
+
+          var marchamo  = cgData.marchamo      || '';
+          var ubicacion = cgData.destino_tr999 || '';
+          var cargaNo   = cgData.licencia_hija || '';
+          var licExcel  = cgData.licencia_hija || licId; // Punto 6: usar licencia hija
+
+          // Si faltan datos críticos, avisar pero no bloquear
+          var faltantes = [];
+          if(!marchamo)  faltantes.push('Marchamo');
+          if(!ubicacion) faltantes.push('Ubicación/Destino TR999');
+          if(!cargaNo)   faltantes.push('Licencia hija (Carga No.)');
+          if(faltantes.length) {
+            var continuar = confirm('Faltan datos en la carga logística del furgón '+furgon+':\n'
+              + faltantes.join(', ')
+              + '\n\nPodés editarla en la pestaña Tarimas.\n¿Continuar de todos modos con los datos disponibles?');
+            if(!continuar) return;
+          }
 
           var XLSX2 = (typeof XLSX !== 'undefined') ? XLSX : null;
           if(!XLSX2){ alert('Librería Excel no disponible. Recargá la página.'); return; }
@@ -11245,9 +11315,9 @@ function bodRenderManifiestoAuditoria() {
           sc(8, 4, 'BODEGA NODUS (Hamiltón)');
           // Labels con valores concatenados en columna F (igual que Bianca: no hay col G para valores)
           sc(5, 6, 'Marchamo: ' + marchamo);
-          sc(6, 6, 'Licencia: ' + licId);
+          sc(6, 6, 'Licencia: ' + licExcel);
           sc(7, 6, 'UBICACIÓN: ' + ubicacion);
-          sc(8, 6, 'Fecha: ' + fecha);
+          sc(8, 6, 'Fecha: ' + fechaDMA);
           sc(9, 6, 'Carga No. ' + cargaNo);
 
           // ── Sección: encabezados tabla (fila 11) ──
@@ -11306,7 +11376,7 @@ function bodRenderManifiestoAuditoria() {
           XLSX2.utils.book_append_sheet(wb2, ws2, 'Manifiesto');
 
           var fechaFile = fecha.replace(/-/g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
-          var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
+          var licFile   = (licExcel||licId).replace(/[^A-Z0-9]/gi,'_');
           XLSX2.writeFile(wb2, 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.xlsx');
         });
       });
@@ -11326,129 +11396,8 @@ function bodRenderWmsVsApp() {
   var sesion  = bodAuditoriaData.sesion || {};
   var licId   = sesion.licencia_id || '';
   var sesId   = sesion.id || '';
-  var usuario = window.currentUser ? window.currentUser.name : '';
 
-  vistaEl.innerHTML = '<div style="margin-bottom:.5rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-    +'<label class="btn btn-sm" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.75rem">'
-    +'📂 Cargar Excel WMS'
-    +'<input type="file" id="bod-wms-upload-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
-    +'</label>'
-    +'<span id="bod-wms-upload-msg" style="font-size:.78rem"></span>'
-    +'</div>'
-    +'<div id="bod-wms-app-tabla"><div style="color:#aaa;font-size:.82rem">Cargá un Excel WMS para ver la conciliación.</div></div>';
-
-  // Wire upload
-  var inp = document.getElementById('bod-wms-upload-inp');
-  if(inp) inp.addEventListener('change', function(){
-    if(!this.files||!this.files[0]) return;
-    if(bodWmsUploading){ alert('Esperá que termine la carga anterior.'); return; }
-    var archivo = this.files[0];
-    var nombreArchivo = archivo.name;
-    bodWmsUploading = true;
-    var msgEl = document.getElementById('bod-wms-upload-msg');
-    msgEl.innerHTML = '<span style="color:#888">⏳ Subiendo <strong>'+escH(nombreArchivo)+'</strong>…</span>';
-    var fd = new FormData();
-    fd.append('file', archivo);
-    fd.append('usuario', usuario);
-    fd.append('licencia_id', licId);
-    // Limpiar input siempre (éxito o error) para evitar reutilizar archivo anterior
-    inp.value = '';
-    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        bodWmsUploading = false;
-        if(!d.ok){
-          msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+' <span style="color:#aaa;font-size:.72rem">('+escH(nombreArchivo)+')</span></span>';
-          return;
-        }
-        var resumen = '✅ '+d.procesadas+' filas procesadas'
-          +(d.omitidas   ? ' · '+d.omitidas+' omitidas' : '')
-          +' | Entradas bolsón: '+((d.entradas_bolson)||0)
-          +' · Salidas TR999: '+((d.salidas_tr999)||0)
-          +' · Otros: '+((d.otros)||0);
-        var color = d.advertencia ? '#e65100' : '#1e7e34';
-        var adv   = d.advertencia ? ' <br><span style="font-size:.75rem;color:#e65100">⚠ '+escH(d.advertencia)+'</span>' : '';
-        msgEl.innerHTML='<span style="color:'+color+'">'+resumen+'</span>'+adv;
-        bodCargarWmsVsApp(licId, sesId);
-      }).catch(function(){
-        bodWmsUploading = false;
-        inp.value = '';
-        msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión <span style="color:#aaa;font-size:.72rem">('+escH(nombreArchivo)+')</span></span>';
-      });
-  });
-
-  // ── Sección carga licencia hija/salida TR999 ─────────────────────────────
-  vistaEl.insertAdjacentHTML('beforeend',
-    '<div style="margin-top:1rem;padding-top:.75rem;border-top:1px solid #e0e0e0">'
-    +'<div style="font-size:.78rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.4rem">Cargar licencia hija / salida TR999</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:.4rem">'
-    +'<div><label style="font-size:.73rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
-    +'<input type="text" id="bod-hija-licencia" class="field-inp" placeholder="Ej: U25-162300" autocomplete="off"'
-    +' style="width:140px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-    +'<div><label style="font-size:.73rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
-    +'<select id="bod-hija-furgon" class="field-inp" style="font-size:.82rem;padding:4px 8px;min-width:80px">'
-    +'<option value="">— Elegir —</option>'
-    +'</select></div>'
-    +'<label class="btn btn-sm" style="cursor:pointer;background:#fff3e0;color:#e65100;font-size:.75rem">'
-    +'📂 Excel licencia hija'
-    +'<input type="file" id="bod-hija-upload-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
-    +'</label></div>'
-    +'<span id="bod-hija-upload-msg" style="font-size:.78rem;display:block;min-height:1.2em"></span>'
-    +'</div>'
-  );
-
-  // Cargar furgones disponibles de la sesión
-  var selFurgon = document.getElementById('bod-hija-furgon');
-  if(sesId && selFurgon) {
-    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!d.ok || !d.asignaciones || !d.asignaciones.length) {
-          var opt = document.createElement('option');
-          opt.value = ''; opt.disabled = true;
-          opt.textContent = 'No hay furgones asignados todavía';
-          selFurgon.appendChild(opt);
-          return;
-        }
-        // Extraer furgones únicos
-        var furgones = [];
-        d.asignaciones.forEach(function(a){ if(a.furgon && !furgones.includes(a.furgon)) furgones.push(a.furgon); });
-        furgones.sort(function(a,b){ return String(a).localeCompare(String(b), undefined, {numeric:true}); });
-        furgones.forEach(function(f){ var opt=document.createElement('option'); opt.value=f; opt.textContent='Furgón '+f; selFurgon.appendChild(opt); });
-      }).catch(function(){});
-  }
-
-  // Wire upload licencia hija
-  var inpHija = document.getElementById('bod-hija-upload-inp');
-  if(inpHija) inpHija.addEventListener('change', function(){
-    if(!this.files||!this.files[0]) return;
-    var archivo = this.files[0];
-    var nombreArchivo = archivo.name;
-    var msgElH = document.getElementById('bod-hija-upload-msg');
-    var licHija   = (document.getElementById('bod-hija-licencia').value||'').trim().toUpperCase();
-    var furgHija  = (document.getElementById('bod-hija-furgon').value||'').trim();
-    if(!licHija)  { msgElH.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
-    if(!furgHija) { msgElH.innerHTML='<span style="color:#c0392b">Seleccioná el furgón.</span>'; return; }
-    msgElH.innerHTML = '<span style="color:#888">⏳ Subiendo <strong>'+escH(nombreArchivo)+'</strong>…</span>';
-    this.value = '';
-    var fd = new FormData();
-    fd.append('file', archivo);
-    fd.append('usuario', usuario);
-    fd.append('licencia_id', licHija);
-    fd.append('licencia_padre', licId);
-    fd.append('furgon_relacionado', furgHija);
-    fd.append('tipo_licencia', 'hija_salida');
-    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!d.ok){ msgElH.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
-        var col = d.advertencia ? '#e65100' : '#1e7e34';
-        var txt = '✅ '+d.procesadas+' filas · Salidas TR999: '+((d.salidas_tr999)||0);
-        if(d.advertencia) txt += ' <br><span style="font-size:.73rem">⚠ '+escH(d.advertencia)+'</span>';
-        msgElH.innerHTML = '<span style="color:'+col+'">'+txt+'</span>';
-        bodCargarWmsVsApp(licId, sesId);
-      }).catch(function(){ msgElH.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
-  });
+  vistaEl.innerHTML = '<div id="bod-wms-app-tabla"><div style="color:#aaa;font-size:.82rem">Cargando conciliación WMS vs App…</div></div>';
 
   if(licId) bodCargarWmsVsApp(licId, sesId);
 }
