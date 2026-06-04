@@ -3907,14 +3907,139 @@ app.post('/api/bod/sesion/:id/cerrar', bodGuard, async (req, res) => {
 });
 
 // ── GET /api/bod/sesion/:id/furgones ─────────────────────────────────────
+// Devuelve asignaciones bod_tarima_furgon + cargas logísticas bod_furgon_cierres
 app.get('/api/bod/sesion/:id/furgones', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
-    var rows = await supabase('GET', 'bod_tarima_furgon', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=furgon.asc,tarima.asc');
-    res.json({ ok:true, asignaciones: Array.isArray(rows) ? rows : [] });
+    var [rows, cierres] = await Promise.all([
+      supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=furgon.asc,tarima.asc'),
+      supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)).catch(function(){ return []; })
+    ]);
+    rows    = Array.isArray(rows)    ? rows    : [];
+    cierres = Array.isArray(cierres) ? cierres : [];
+    res.json({ ok:true, asignaciones: rows, cargas: cierres });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/carga-logistica ──────────────────────────────
+// Combina: asignar tarimas a furgón + crear carga logística en bod_furgon_cierres.
+// Reemplaza el flujo de 2 pasos (asignar + finalizar) por un único paso.
+app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var { tarimas, furgon, placa, marchamo, licencia_hija, destino_tr999,
+          observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden crear cargas logísticas.' });
+
+    furgon        = String(furgon        || '').trim();
+    placa         = String(placa         || '').trim().toUpperCase();
+    marchamo      = String(marchamo      || '').trim().toUpperCase();
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    observacion   = String(observacion   || '').trim();
+    usuario       = String(usuario       || '').trim();
+
+    if(!furgon)        return res.status(400).json({ ok:false, error:'falta furgon' });
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+    if(!Array.isArray(tarimas) || !tarimas.length)
+      return res.status(400).json({ ok:false, error:'Debe seleccionar al menos una tarima.' });
+
+    var tarimasNorm = tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean);
+
+    // Verificar sesión
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = sesRows[0];
+    if(sesion.estado === 'cerrada') return res.status(400).json({ ok:false, error:'La sesión está cerrada.' });
+
+    // Verificar que el furgón no tenga carga logística ya en esta sesión
+    try {
+      var existing = await supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon)+'&limit=1');
+      if(Array.isArray(existing) && existing.length) {
+        return res.status(409).json({ ok:false, error:'El furgón '+furgon+' ya tiene una carga logística en esta sesión.' });
+      }
+    } catch(e) { /* tabla puede no existir — continuar */ }
+
+    // Verificar que las tarimas no estén ya en otro furgón diferente
+    var asigExist = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    asigExist = Array.isArray(asigExist) ? asigExist : [];
+    var asigMap = {};
+    asigExist.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
+    var bloqueadas = tarimasNorm.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
+    if(bloqueadas.length)
+      return res.status(409).json({ ok:false, error:'Tarimas ya en otro furgón: '+bloqueadas.join(', '), bloqueadas:bloqueadas });
+
+    // 1. Asignar tarimas al furgón en bod_tarima_furgon
+    var now = new Date().toISOString();
+    var nuevas = tarimasNorm.filter(function(t){ return !asigMap[t]; });
+    for(var i=0; i<nuevas.length; i++) {
+      await supabase('POST', 'bod_tarima_furgon',
+        { id:'btf-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
+          sesion_id:sesId, tarima:nuevas[i], furgon:furgon,
+          asignado_por:usuario, ts_asignacion:now },
+        '');
+    }
+
+    // 2. Leer líneas de esas tarimas para resumen SKU
+    var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&tarima=in.('+tarimasNorm.map(encodeURIComponent).join(',')+')'
+      +'&eliminada=eq.false';
+    var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
+    lineas = Array.isArray(lineas) ? lineas : [];
+
+    var skuMap = {};
+    lineas.forEach(function(l){
+      var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
+      if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
+      skuMap[l.sku].unidades += cant;
+    });
+    var resumenSkus  = Object.values(skuMap);
+    var totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
+
+    // 3. Crear carga logística en bod_furgon_cierres
+    var cierre = {
+      id:             'bfc-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+      sesion_id:      sesId,
+      licencia_padre: sesion.licencia_id || '',
+      furgon:         furgon,
+      placa:          placa,
+      marchamo:       marchamo,
+      licencia_hija:  licencia_hija,
+      destino_tr999:  destino_tr999,
+      tarimas:        tarimasNorm,
+      resumen_skus:   resumenSkus,
+      unidades_total: totalUnidades,
+      observacion:    observacion,
+      cerrado_por:    usuario,
+      estado:         'finalizado',
+      ts_cierre:      now
+    };
+    await supabase('POST', 'bod_furgon_cierres', cierre, '');
+
+    res.json({
+      ok:            true,
+      furgon:        furgon,
+      placa:         placa,
+      marchamo:      marchamo,
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      tarimas:       tarimasNorm,
+      skus:          resumenSkus,
+      unidades_total: totalUnidades
+    });
+  } catch(e) {
+    console.log('BOD carga-logistica FAILED:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
 
