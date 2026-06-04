@@ -1725,10 +1725,14 @@ var GATE_SCOPE_KEY = 'gate_scope';
 // ¿Ya pasó el gate hoy? (modo equilibrado)
 function gatePassedToday(){
   try {
-    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
-    var ok = sessionStorage.getItem(GATE_MARK_KEY) === today;
-    if(ok) window.ACCESS_SCOPE = sessionStorage.getItem(GATE_SCOPE_KEY) || 'full';
-    return ok;
+    var today    = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    var okDate   = sessionStorage.getItem(GATE_MARK_KEY) === today;
+    if(!okDate) return false;
+    var savedVer = sessionStorage.getItem('gate_version') || 'v1';
+    var currVer  = window._gateVersion || 'v1';
+    if(savedVer !== currVer) return false;
+    window.ACCESS_SCOPE = sessionStorage.getItem(GATE_SCOPE_KEY) || 'full';
+    return true;
   } catch(e){ return false; }
 }
 function markGatePassed(scope){
@@ -1736,6 +1740,7 @@ function markGatePassed(scope){
     var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
     sessionStorage.setItem(GATE_MARK_KEY, today);
     sessionStorage.setItem(GATE_SCOPE_KEY, scope || 'full');
+    sessionStorage.setItem('gate_version', window._gateVersion || 'v1');
   } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
 }
 
@@ -1783,37 +1788,42 @@ function showNameLogin(){
   document.getElementById('pg-login').style.display='flex';
 }
 
-// Leer la clave configurada en Supabase. Devuelve string (puede ser '' u 'OFF').
+// Leer la configuración de acceso desde Supabase.
+// Devuelve { accessKey, gateVersion } (ambos string; gateVersion='v1' si no existe).
 function fetchAccessKey(){
   return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.app_config&select=value', {
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
   })
   .then(function(r){ if(!r.ok) throw new Error('config HTTP '+r.status); return r.json(); })
   .then(function(rows){
-    if(!rows || !rows.length) return '';        // no existe registro → login OFF
+    if(!rows || !rows.length) return { accessKey:'', gateVersion:'v1' };
     var v = rows[0].value;
-    try { var cfg = (typeof v === 'string') ? JSON.parse(v) : v; return (cfg && cfg.accessKey) ? String(cfg.accessKey) : ''; }
-    catch(e){ return ''; }                        // value corrupto → login OFF (no trabar)
+    try {
+      var cfg = (typeof v === 'string') ? JSON.parse(v) : v;
+      return {
+        accessKey:   (cfg && cfg.accessKey)   ? String(cfg.accessKey)   : '',
+        gateVersion: (cfg && cfg.gateVersion) ? String(cfg.gateVersion) : 'v1'
+      };
+    }
+    catch(e){ return { accessKey:'', gateVersion:'v1' }; }
   });
 }
 
 // Inicializar el gate al cargar la página
 function initGate(){
-  // Si ya pasó hoy, saltar directo al dropdown
-  if(gatePassedToday()){ showNameLogin(); return; }
-  // Leer la clave de Supabase para decidir si el gate aplica
+  // Cargar config primero para tener _gateVersion antes de verificar si ya pasó hoy
   fetchAccessKey()
-    .then(function(key){
-      // INTERRUPTOR DE EMERGENCIA: clave vacía u 'OFF' → login desactivado
-      if(!key || key.toUpperCase() === 'OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
-      window._accessKey = key;   // guardar para validar contra lo que escriba el usuario
+    .then(function(cfg){
+      window._accessKey   = cfg.accessKey;
+      window._gateVersion = cfg.gateVersion || 'v1';
+      var key = cfg.accessKey;
+      if(!key || key.toUpperCase() === 'OFF'){
+        window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return;
+      }
+      if(gatePassedToday()){ showNameLogin(); return; }
       // (el gate queda visible, esperando que el usuario escriba la clave)
     })
-    .catch(function(){
-      // Si Supabase no responde, NO trabar el acceso: dejar pasar al dropdown.
-      // (mismo criterio de "no bloquear la operación por un fallo de red")
-      showNameLogin();
-    });
+    .catch(function(){ showNameLogin(); });
 }
 
 // Validar la clave que escribe el usuario
@@ -1822,14 +1832,14 @@ function tryGate(){
   var err = document.getElementById('gate-err');
   var val = (inp.value || '').trim();
   if(!val){ err.textContent='Ingresa la clave.'; err.style.display='block'; return; }
-  // Si por algún motivo no se cargó la clave todavía, intentar leerla ahora
-  var check = function(key){
+  var check = function(cfg){
+    var key = (cfg && typeof cfg === 'object') ? cfg.accessKey : cfg;
     if(!key || key.toUpperCase()==='OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
     if(val === '12345'){ window.ACCESS_SCOPE='bodega'; markGatePassed('bodega'); showNameLogin(); return; }
     if(val === key){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); }
     else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
   };
-  if(window._accessKey !== undefined){ check(window._accessKey); }
+  if(window._accessKey !== undefined){ check({ accessKey: window._accessKey }); }
   else { fetchAccessKey().then(check).catch(function(){ showNameLogin(); }); }
 }
 document.getElementById('btn-gate-enter').addEventListener('click', tryGate);
@@ -10622,7 +10632,14 @@ function bodRenderTarimasAuditoria() {
       var esSup      = isSup();
       var btnAcciones;
       if(esCerrada) {
+        var badgeEnv = cg.enviado_hamilton
+          ? '<span style="background:#1565c0;color:#fff;font-size:.71rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Enviado a Hamilton</span>'
+          : (esAud
+              ? '<button class="btn btn-xs bod-btn-enviar-hamilton" data-id="'+escH(cg.id)+'"'
+                +' style="background:#1565c0;color:#fff;font-size:.72rem">🚀 Enviar a Hamilton</button>'
+              : '');
         btnAcciones = '<span style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Cerrada</span>'
+          +badgeEnv
           +(esSup ? ' <button class="btn btn-xs bod-btn-reabrir-carga" data-id="'+escH(cg.id)+'"'
             +' style="background:#fff3e0;color:#e65100;font-size:.72rem">🔓 Reabrir</button>' : '')
           +'<label class="btn btn-xs" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.72rem;position:relative">'
@@ -10828,6 +10845,30 @@ function bodRenderTarimasAuditoria() {
           { usuario:usuario, supervisor:isSup() })
           .then(function(d){
             if(!d.ok){ alert(d.error||'Error al reabrir'); return; }
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+              .then(function(r){ return r.json(); })
+              .then(function(f){
+                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+                bodRenderTarimasAuditoria();
+              });
+          }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+
+    // Wire Enviar a Hamilton
+    vistaEl.querySelectorAll('.bod-btn-enviar-hamilton').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var cargaId = btn.dataset.id;
+        var cg = cargas.find(function(c){ return c.id === cargaId; });
+        if(!cg) return;
+        if(!confirm('Enviar carga del furgón '+cg.furgon+' a Hamilton como licencia hija '+cg.licencia_hija+'. Esto creará el contenedor en Traslados CDG de Hamilton. ¿Continuar?')) return;
+        bodFetch('POST',
+          '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/enviar-hamilton',
+          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
+          .then(function(d){
+            if(!d.ok){ alert(d.error||'Error al enviar a Hamilton'); return; }
+            alert('Licencia hija '+cg.licencia_hija+' enviada a Hamilton → Traslados CDG. ('+d.skus+' SKUs)');
             fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
               .then(function(r){ return r.json(); })
               .then(function(f){
@@ -11225,10 +11266,7 @@ function bodRenderManifiestoAuditoria() {
             ? '<span style="font-size:.73rem;color:#1565c0;margin-left:2px">Lic. hija: <strong>'
               +escH(f.licencia_hija||'—')+'</strong> · Destino: <strong>'+escH(f.destino_tr999||'—')+'</strong></span>'
             : '';
-          var btnFinal = (!f.finalizado && esAud)
-            ? '<button class="btn btn-xs bod-btn-finalizar-furgon" data-furgon="'+escH(f.furgon)+'"'
-              +' style="background:#e3f2fd;color:#0d47a1;font-size:.73rem">🔒 Finalizar furgón</button>'
-            : '';
+          var btnFinal = ''; // Finalizar furgón removido — usar 'Enviar a Hamilton' desde Tarimas
           var tarimas = f.tarimas.join(', ');
           html += '<div class="bod-furgon-bloque" style="margin-bottom:1.25rem">'
             +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
@@ -11261,29 +11299,8 @@ function bodRenderManifiestoAuditoria() {
         // Re-wiredear botones dentro del manifBody
         var _sesIdM   = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
         var _usuarioM = window.currentUser ? window.currentUser.name : '';
-        manifBody.querySelectorAll('.bod-btn-finalizar-furgon').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            var furgon  = btn.dataset.furgon;
-            var licHija = (prompt('Licencia hija de salida (ej: U25-162400):')||'').trim().toUpperCase();
-            if(!licHija) return;
-            var destTR  = (prompt('Destino TR999 (formato TR999.xxx.xx):')||'').trim().toUpperCase();
-            if(!destTR) return;
-            if(!/^TR999\.\d{3}\.\d{2}$/i.test(destTR)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
-            var obs = (prompt('Observación (opcional):')||'').trim();
-            bodFetch('POST',
-              '/api/bod/sesion/'+encodeURIComponent(_sesIdM)+'/furgon/'+encodeURIComponent(furgon)+'/finalizar',
-              { licencia_hija:licHija, destino_tr999:destTR, observacion:obs,
-                usuario:_usuarioM, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-              .then(function(d){
-                if(d.ok){
-                  alert('Furgón '+furgon+' finalizado.\nLicencia hija: '+licHija
-                    +'\nDestino: '+destTR+'\nUnidades: '+d.unidades_total);
-                  bodRenderManifiestoAuditoria();
-                } else { alert(d.error||'Error al finalizar'); }
-              }).catch(function(){ alert('Sin conexión'); });
-          });
-        });
-        // Wire botones Exportar Excel (dentro de la closure para que persistan tras filtrar)
+        // Wire Finalizar furgón removido — envío a Hamilton se hace desde Tarimas.
+        // Wire botones Exportar Excel
         manifBody.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
           btn.addEventListener('click', function(){
             var furgon = btn.dataset.furgon;
