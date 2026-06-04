@@ -4532,6 +4532,86 @@ function bodBuildMovQuery(req) {
   return { q:'?limit=5000', lics:[] };
 }
 
+// ── Helper: contexto logístico por SKU ───────────────────────────────────
+async function bodGetSkuLogistica(licIds) {
+  licIds = (licIds || []).map(function(l){ return String(l||'').trim().toUpperCase(); }).filter(Boolean);
+  if(!licIds.length) return {};
+
+  var qSes = licIds.length === 1
+    ? '?licencia_id=eq.'+encodeURIComponent(licIds[0])+'&limit=100'
+    : '?licencia_id=in.('+licIds.map(encodeURIComponent).join(',')+')'+'&limit=100';
+
+  var sesiones = await supabase('GET', 'bod_sesiones', null, qSes);
+  sesiones = Array.isArray(sesiones) ? sesiones : [];
+  var sesIds = sesiones.map(function(s){ return s.id; }).filter(Boolean);
+  if(!sesIds.length) return {};
+
+  var qIn = '('+sesIds.map(encodeURIComponent).join(',')+')';
+
+  var results = await Promise.all([
+    supabase('GET', 'bod_lineas', null,
+      '?sesion_id=in.'+qIn+'&eliminada=eq.false&select=sesion_id,sku,tarima&limit=20000'),
+    supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=in.'+qIn+'&limit=10000'),
+    supabase('GET', 'bod_furgon_cierres', null,
+      '?sesion_id=in.'+qIn+'&limit=2000')
+  ]);
+  var lineas  = Array.isArray(results[0]) ? results[0] : [];
+  var asigs   = Array.isArray(results[1]) ? results[1] : [];
+  var cierres = Array.isArray(results[2]) ? results[2] : [];
+
+  // Mapa sesion|tarima → furgon
+  var tarimaFurgon = {};
+  asigs.forEach(function(a){
+    var key = a.sesion_id + '|' + bodNormTarima(a.tarima || '');
+    tarimaFurgon[key] = String(a.furgon || '');
+  });
+
+  // Mapa sesion|furgon → cierre  y  sesion|tarima → cierre
+  var cierreByFurgon = {};
+  var cierreByTarima = {};
+  cierres.forEach(function(c){
+    var fk = c.sesion_id + '|' + String(c.furgon || '');
+    cierreByFurgon[fk] = c;
+    var ts = Array.isArray(c.tarimas) ? c.tarimas : [];
+    ts.forEach(function(t){
+      cierreByTarima[c.sesion_id + '|' + bodNormTarima(t || '')] = c;
+    });
+  });
+
+  function addUnique(arr, val) {
+    val = String(val || '').trim();
+    if(val && !arr.includes(val)) arr.push(val);
+  }
+
+  var mapa = {};
+  lineas.forEach(function(l){
+    var sku = String(l.sku || '').trim().toUpperCase();
+    if(!sku) return;
+    if(!mapa[sku]) mapa[sku] = {
+      tarimas: [], furgones: [], licencias_hijas: [],
+      placas: [], marchamos: [], destinos_tr999: []
+    };
+    var m = mapa[sku];
+    var t  = bodNormTarima(l.tarima || '');
+    var tk = l.sesion_id + '|' + t;
+    addUnique(m.tarimas, t);
+    var f = tarimaFurgon[tk] || '';
+    addUnique(m.furgones, f);
+    var cierre = cierreByTarima[tk]
+      || (f ? cierreByFurgon[l.sesion_id + '|' + f] : null)
+      || null;
+    if(cierre) {
+      addUnique(m.furgones,       cierre.furgon);
+      addUnique(m.licencias_hijas, cierre.licencia_hija);
+      addUnique(m.placas,         cierre.placa);
+      addUnique(m.marchamos,      cierre.marchamo);
+      addUnique(m.destinos_tr999, cierre.destino_tr999);
+    }
+  });
+  return mapa;
+}
+
 // ── GET /api/bod/reportes/wms-vs-app ─────────────────────────────────────
 // Acepta: licencia_id | fecha | licencias (CSV)
 app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
@@ -4545,9 +4625,10 @@ app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
       ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000'
       : '?eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000';
 
-    var [wmsRows, lineas] = await Promise.all([
+    var [wmsRows, lineas, logMap] = await Promise.all([
       supabase('GET', 'bod_wms_movimientos', null, f.q+'&tipo_movimiento=eq.entrada_bolson'),
-      supabase('GET', 'bod_lineas', null, lineasQ)
+      supabase('GET', 'bod_lineas', null, lineasQ),
+      bodGetSkuLogistica(f.lics)
     ]);
     wmsRows = Array.isArray(wmsRows) ? wmsRows : [];
     lineas  = Array.isArray(lineas)  ? lineas  : [];
@@ -4583,8 +4664,15 @@ app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
       var parts = k.split('|');
       var lic = wmsLic[k] || appLic[k] || parts[0];
       var sku = parts.slice(1).join('|');
+      var lg  = logMap[sku] || {};
       return { licencia_id:lic, sku, descripcion:wmsDesc[k]||appDesc[k]||'',
-               cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado };
+               cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado,
+               tarimas:       (lg.tarimas       ||[]).filter(Boolean).join(', '),
+               furgon:        (lg.furgones      ||[]).filter(Boolean).join(', '),
+               licencia_hija: (lg.licencias_hijas||[]).filter(Boolean).join(', '),
+               placa:         (lg.placas         ||[]).filter(Boolean).join(', '),
+               marchamo:      (lg.marchamos      ||[]).filter(Boolean).join(', '),
+               destino_tr999: (lg.destinos_tr999 ||[]).filter(Boolean).join(', ') };
     });
     res.json({ ok:true, skus:result });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
