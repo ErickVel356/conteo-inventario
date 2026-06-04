@@ -4427,17 +4427,162 @@ app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId/reabrir', bodGuard, asyn
       return res.status(409).json({ ok:false, error:'La carga no está cerrada.' });
 
     await supabase('PATCH', 'bod_furgon_cierres',
-      { estado:'finalizado' },
+      { estado:'abierta' },
       '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
 
-    res.json({ ok:true, estado:'finalizado', reabierto_por: usuario });
+    res.json({ ok:true, estado:'abierta', reabierto_por: usuario });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton ─────
+// Crea licencia hija en state.teorico + state.cdg para que aparezca en Hamilton → Traslados CDG.
+// SQL previo requerido:
+//   ALTER TABLE bod_furgon_cierres
+//     ADD COLUMN IF NOT EXISTS enviado_hamilton BOOLEAN NOT NULL DEFAULT false,
+//     ADD COLUMN IF NOT EXISTS enviado_hamilton_por TEXT NOT NULL DEFAULT '',
+//     ADD COLUMN IF NOT EXISTS ts_envio_hamilton TIMESTAMPTZ,
+//     ADD COLUMN IF NOT EXISTS hamilton_contenedor TEXT NOT NULL DEFAULT '';
+app.post('/api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAud = auditor === true || supervisor === true;
+    if(!esAud) return res.status(403).json({ ok:false, error:'Solo auditores o supervisores pueden enviar a Hamilton.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+    var cg = rows[0];
+
+    if(cg.estado !== 'cerrada')
+      return res.status(400).json({ ok:false, error:'La carga debe estar en estado "cerrada" para enviar a Hamilton.' });
+    if(cg.enviado_hamilton)
+      return res.status(409).json({ ok:false, error:'Esta carga ya fue enviada a Hamilton ('+cg.hamilton_contenedor+').' });
+
+    var licHija = String(cg.licencia_hija||'').trim().toUpperCase();
+    var dest    = String(cg.destino_tr999||'').trim().toUpperCase();
+    var furgon  = String(cg.furgon||'').trim();
+    var placa   = String(cg.placa||'').trim().toUpperCase();
+    var marchamo= String(cg.marchamo||'').trim().toUpperCase();
+    var tarimas = Array.isArray(cg.tarimas) ? cg.tarimas.filter(Boolean) : [];
+    var resSkus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+
+    if(!licHija) return res.status(400).json({ ok:false, error:'La carga no tiene licencia hija definida.' });
+    if(!dest)    return res.status(400).json({ ok:false, error:'La carga no tiene destino TR999 definido.' });
+    if(!tarimas.length) return res.status(400).json({ ok:false, error:'La carga no tiene tarimas asignadas.' });
+    if(!resSkus.length) return res.status(400).json({ ok:false, error:'La carga no tiene SKUs en resumen.' });
+
+    // Leer licencia_padre desde la sesión
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&select=licencia_id&limit=1');
+    var licPadre = (Array.isArray(sesRows)&&sesRows.length) ? sesRows[0].licencia_id : '';
+
+    // Construir items del teórico desde resumen_skus
+    var items = resSkus.map(function(s){
+      return {
+        sku:  String(s.sku||''),
+        desc: String(s.descripcion||s.desc||''),
+        qty:  Number(s.unidades||0),
+        teoricoWMS: Number(s.unidades||0),
+        raw: {
+          origen: 'Bodega CDG',
+          status: 'Manifiesto Bodega CDG',
+          tipo:   'CDG',
+          licencia_padre: licPadre,
+          licencia_hija:  licHija,
+          destino_tr999:  dest,
+          furgon:  furgon,
+          placa:   placa,
+          marchamo: marchamo,
+          tarimas: tarimas.join(', ')
+        }
+      };
+    });
+
+    // Snapshot para rollback
+    var snapCdg     = state.cdg     ? JSON.parse(JSON.stringify(state.cdg[licHija]||null))     : null;
+    var snapTeorico = state.teorico ? JSON.parse(JSON.stringify(state.teorico[licHija]||null))  : null;
+    var snapFisico  = state.fisico  ? JSON.parse(JSON.stringify(state.fisico[licHija]||null))   : null;
+    var snapVer     = state.version;
+    var snapHist    = (state.historial||[]).length;
+
+    // Crear entrada en state
+    state.teorico[licHija] = {
+      type:             'Traslados',
+      fromCDG:          true,
+      fromBodegaCDG:    true,
+      cdgRef:           licHija,
+      cdgValidado:      true,
+      cdgBloqueado:     true,
+      cdgTipo:          'CDG',
+      items:            items,
+      meta: {
+        origen:       'Bodega CDG',
+        status:       'Manifiesto Bodega CDG',
+        tipo:         'CDG',
+        licencia_padre: licPadre,
+        licencia_hija:  licHija,
+        destino_tr999:  dest,
+        furgon:  furgon,
+        placa:   placa,
+        marchamo: marchamo,
+        tarimas: tarimas.join(', ')
+      }
+    };
+    state.fisico[licHija]  = null;
+    if(!state.cdg) state.cdg = {};
+    state.cdg[licHija] = {
+      creado: new Date().toISOString(),
+      autor:  usuario,
+      lastEditor: usuario,
+      tipo:   'CDG',
+      bloqueado: true,
+      items:  items
+    };
+    addHistorial(usuario, 'enviado_hamilton',
+      'Carga '+cargaId+' → Hamilton contenedor '+licHija+' ('+items.length+' SKUs, '+tarimas.join(',')+')');
+
+    try {
+      var saved = await saveDailyStateStrict('enviado_hamilton '+licHija);
+      if(!saved) throw new Error('saveDailyStateStrict devolvió respuesta vacía');
+    } catch(saveErr) {
+      if(snapTeorico === null) delete state.teorico[licHija]; else state.teorico[licHija] = snapTeorico;
+      if(snapFisico  === null) delete state.fisico[licHija];  else state.fisico[licHija]  = snapFisico;
+      if(snapCdg     === null) delete state.cdg[licHija];     else state.cdg[licHija]     = snapCdg;
+      state.version = snapVer;
+      if(state.historial) state.historial.length = snapHist;
+      return res.status(500).json({
+        ok:false,
+        error:'No se pudo persistir a Supabase. Operación revertida. '+saveErr.message
+      });
+    }
+
+    // Marcar en bod_furgon_cierres
+    var now = new Date().toISOString();
+    try {
+      await supabase('PATCH', 'bod_furgon_cierres',
+        { enviado_hamilton: true, enviado_hamilton_por: String(usuario||''),
+          ts_envio_hamilton: now, hamilton_contenedor: licHija },
+        '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    } catch(patchErr) {
+      // Hamilton ya fue creado — avisar sin revertir
+      return res.status(500).json({
+        ok:false, hamilton_contenedor:licHija, skus:items.length,
+        error:'Hamilton fue creado, pero no se pudo marcar la carga como enviada en bod_furgon_cierres. Verificá antes de reintentar. '+patchErr.message
+      });
+    }
+
+    res.json({ ok:true, hamilton_contenedor: licHija, skus: items.length });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// BOD MODULE END
 // ══════════════════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════════════════
