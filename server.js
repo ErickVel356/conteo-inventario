@@ -3978,36 +3978,31 @@ app.delete('/api/bod/sesion/:id/furgon/:tarima', bodGuard, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// BOD MODULE END
-// ══════════════════════════════════════════════════════════════════════════
-
-// ── GET /api/bod/sesion/:id/manifiesto ────────────────────────────────────
-// Agrupa bod_lineas × bod_tarima_furgon por furgón y SKU.
-// ?furgon=N: devuelve solo ese furgón.
-// Cantidad efectiva: cantidad_audit si auditado y no nulo, sino cantidad.
-// SKU auditado: si todas las líneas de ese SKU+furgón están auditadas.
-// Tarimas sin asignar: excluidas del resumen, informadas en tarimas_sin_asignar.
+// ── GET /api/bod/sesion/:id/manifiesto?furgon=N ──────────────────────────
+// Igual que antes + agrega estado_cierre desde bod_furgon_cierres
 app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
   try {
-    var sesId       = String(req.params.id).trim();
+    var sesId        = String(req.params.id).trim();
     var filtroFurgon = req.query.furgon ? String(req.query.furgon).trim() : null;
 
-    // Leer líneas vigentes y asignaciones en paralelo
-    var [lineas, asignaciones] = await Promise.all([
+    var [lineas, asignaciones, cierres] = await Promise.all([
       supabase('GET', 'bod_lineas', null,
         '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc'),
       supabase('GET', 'bod_tarima_furgon', null,
-        '?sesion_id=eq.'+encodeURIComponent(sesId))
+        '?sesion_id=eq.'+encodeURIComponent(sesId)),
+      supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)).catch(function(){ return []; })
     ]);
     lineas       = Array.isArray(lineas)       ? lineas       : [];
     asignaciones = Array.isArray(asignaciones) ? asignaciones : [];
+    cierres      = Array.isArray(cierres)      ? cierres      : [];
 
-    // Mapa tarima → furgon
+    // Mapa tarima → furgon y cierre → datos
     var tarimaFurgon = {};
     asignaciones.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
+    var cierreMap = {};
+    cierres.forEach(function(c){ cierreMap[c.furgon] = c; });
 
-    // Tarimas sin asignar (con al menos una línea)
     var tarimasSinAsignar = [];
     var tarimasConLineas = {};
     lineas.forEach(function(l){ tarimasConLineas[l.tarima] = true; });
@@ -4015,31 +4010,22 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
       if(!tarimaFurgon[t]) tarimasSinAsignar.push(t);
     });
 
-    // Agrupar por furgon → sku
-    // Estructura: { [furgon]: { [sku]: { desc, unidades, pendientes, lineasCount } } }
     var porFurgon = {};
-    var tarimasFurgon = {};  // furgon → Set de tarimas
+    var tarimasFurgon = {};
 
     lineas.forEach(function(l){
       var furgon = tarimaFurgon[l.tarima];
-      if(!furgon) return; // sin asignar — excluir del resumen
-
-      // Filtro opcional por furgón
+      if(!furgon) return;
       if(filtroFurgon && furgon !== filtroFurgon) return;
-
       if(!porFurgon[furgon]) porFurgon[furgon] = {};
       if(!tarimasFurgon[furgon]) tarimasFurgon[furgon] = {};
       tarimasFurgon[furgon][l.tarima] = true;
-
       var sku  = l.sku || '?';
       var cant = (l.auditado && l.cantidad_audit != null)
-        ? Number(l.cantidad_audit)
-        : Number(l.cantidad);
+        ? Number(l.cantidad_audit) : Number(l.cantidad);
       var desc = l.descripcion || '';
-
       if(!porFurgon[furgon][sku]) {
-        porFurgon[furgon][sku] = { sku: sku, descripcion: desc, unidades: 0,
-                                    lineasCount: 0, pendientes: 0 };
+        porFurgon[furgon][sku] = { sku:sku, descripcion:desc, unidades:0, lineasCount:0, pendientes:0 };
       }
       var entry = porFurgon[furgon][sku];
       entry.unidades    += cant;
@@ -4048,36 +4034,131 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
       if(!entry.descripcion && desc) entry.descripcion = desc;
     });
 
-    // Construir respuesta
     var furgonesKeys = Object.keys(porFurgon).sort(function(a,b){
-      return String(a).localeCompare(String(b), undefined, { numeric: true });
+      return String(a).localeCompare(String(b), undefined, { numeric:true });
     });
 
     var furgonesRes = furgonesKeys.map(function(furgon){
       var skus = Object.values(porFurgon[furgon]);
-      var totalUnidades = skus.reduce(function(s,x){ return s+x.unidades; }, 0);
+      var totalUnidades   = skus.reduce(function(s,x){ return s+x.unidades; }, 0);
       var totalPendientes = skus.reduce(function(s,x){ return s+x.pendientes; }, 0);
+      var cierre = cierreMap[furgon] || null;
       return {
-        furgon:          furgon,
-        tarimas:         Object.keys(tarimasFurgon[furgon]).sort(),
-        skus:            skus,
-        total_unidades:  totalUnidades,
-        total_skus:      skus.length,
-        tiene_pendientes: totalPendientes > 0
+        furgon:           furgon,
+        tarimas:          Object.keys(tarimasFurgon[furgon]).sort(),
+        skus:             skus,
+        total_unidades:   totalUnidades,
+        total_skus:       skus.length,
+        tiene_pendientes: totalPendientes > 0,
+        finalizado:       !!cierre,
+        licencia_hija:    cierre ? cierre.licencia_hija  : null,
+        destino_tr999:    cierre ? cierre.destino_tr999  : null,
+        ts_cierre:        cierre ? cierre.ts_cierre      : null,
+        cerrado_por:      cierre ? cierre.cerrado_por    : null
       };
     });
 
-    res.json({
-      ok:                  true,
-      sesion_id:           sesId,
-      furgones:            furgonesRes,
-      tarimas_sin_asignar: tarimasSinAsignar
-    });
+    res.json({ ok:true, sesion_id:sesId, furgones:furgonesRes, tarimas_sin_asignar:tarimasSinAsignar });
   } catch(e) {
     console.log('BOD manifiesto FAILED:', e.message);
-    res.status(500).json({ ok:false, error: e.message });
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
+
+// ── POST /api/bod/sesion/:id/furgon/:furgon/finalizar ─────────────────────
+// Registra el cierre de un furgón: licencia hija + destino TR999.
+// Persiste en bod_furgon_cierres. Idempotente: error 409 si ya cerrado.
+app.post('/api/bod/sesion/:id/furgon/:furgon/finalizar', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var furgon  = String(req.params.furgon).trim();
+    var { licencia_hija, destino_tr999, observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden finalizar furgones.' });
+
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    observacion   = String(observacion   || '').trim();
+    usuario       = String(usuario       || '').trim();
+
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+
+    // Verificar sesión existe
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = sesRows[0];
+
+    // Verificar que no esté ya finalizado
+    try {
+      var existing = await supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon)+'&limit=1');
+      if(Array.isArray(existing) && existing.length) {
+        return res.status(409).json({ ok:false, error:'El furgón '+furgon+' ya fue finalizado con licencia hija '+existing[0].licencia_hija+'.' });
+      }
+    } catch(e) { /* tabla puede no existir aún — continuar */ }
+
+    // Leer tarimas y líneas
+    var asig = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon));
+    asig = Array.isArray(asig) ? asig : [];
+    if(!asig.length) return res.status(400).json({ ok:false, error:'El furgón '+furgon+' no tiene tarimas asignadas.' });
+
+    var tarimas = asig.map(function(a){ return a.tarima; });
+    var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&tarima=in.('+tarimas.map(encodeURIComponent).join(',')+')'
+      +'&eliminada=eq.false';
+    var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
+    lineas = Array.isArray(lineas) ? lineas : [];
+    if(!lineas.length) return res.status(400).json({ ok:false, error:'El furgón '+furgon+' no tiene líneas capturadas.' });
+
+    // Agrupar por SKU
+    var skuMap = {};
+    lineas.forEach(function(l){
+      var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
+      if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
+      skuMap[l.sku].unidades += cant;
+    });
+    var resumenSkus = Object.values(skuMap);
+    var totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
+
+    // Persistir el cierre
+    var cierre = {
+      id:             'bfc-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+      sesion_id:      sesId,
+      licencia_padre: sesion.licencia_id || '',
+      furgon:         furgon,
+      licencia_hija:  licencia_hija,
+      destino_tr999:  destino_tr999,
+      tarimas:        tarimas,
+      resumen_skus:   resumenSkus,
+      unidades_total: totalUnidades,
+      observacion:    observacion,
+      cerrado_por:    usuario,
+      ts_cierre:      new Date().toISOString()
+    };
+    await supabase('POST', 'bod_furgon_cierres', cierre, '');
+
+    res.json({
+      ok:            true,
+      furgon:        furgon,
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      tarimas:       tarimas,
+      skus:          resumenSkus,
+      unidades_total: totalUnidades
+    });
+  } catch(e) {
+    console.log('BOD furgon finalizar FAILED:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD MODULE END
+// ══════════════════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════════════════
 // BOD WMS / TRAZABILIDAD — POST /api/bod/wms/upload
