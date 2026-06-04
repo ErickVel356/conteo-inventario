@@ -4664,7 +4664,8 @@ app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
       var parts = k.split('|');
       var lic = wmsLic[k] || appLic[k] || parts[0];
       var sku = parts.slice(1).join('|');
-      var lg  = logMap[sku] || {};
+      var skuKey = String(sku || '').trim().toUpperCase();
+      var lg  = logMap[skuKey] || {};
       return { licencia_id:lic, sku, descripcion:wmsDesc[k]||appDesc[k]||'',
                cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado,
                tarimas:       (lg.tarimas       ||[]).filter(Boolean).join(', '),
