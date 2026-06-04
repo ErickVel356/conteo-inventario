@@ -10828,11 +10828,11 @@ function bodRenderTarimasAuditoria() {
 function bodRenderDetalleAuditoria(data) {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !data) return;
-  var lineas = data.lineas || [];
+  var lineas    = data.lineas || [];
   var usuario   = window.currentUser ? window.currentUser.name : '';
   var esAuditor = isBodAuditor();
 
-  // Mapa tarima → licencia_hija desde cargas logísticas
+  // tarima → licencia_hija desde cargas logísticas
   var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
   var tarimaLicHija = {};
   cargas.forEach(function(cg){
@@ -10840,41 +10840,43 @@ function bodRenderDetalleAuditoria(data) {
     ts.forEach(function(t){ tarimaLicHija[t] = cg.licencia_hija || ''; });
   });
 
-  // Filtros en cliente
-  var filtLicHija = (document.getElementById('filtro-det-lichija') ? document.getElementById('filtro-det-lichija').value : '').trim().toUpperCase();
-  var filtSku     = (document.getElementById('filtro-det-sku')     ? document.getElementById('filtro-det-sku').value     : '').trim().toUpperCase();
+  // leer filtros actuales (persisten entre re-renders)
+  var filtLicHija = (document.getElementById('filtro-det-lichija')||{value:''}).value.trim().toUpperCase();
+  var filtSku     = (document.getElementById('filtro-det-sku')    ||{value:''}).value.trim().toUpperCase();
+  var filtTarima  = (document.getElementById('filtro-det-tarima') ||{value:''}).value.trim().toUpperCase();
 
-  // Render de filtros
+  // barra de filtros
   var barraFiltros = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-det-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem" value="'+escH(filtLicHija)+'">'
-    +'<input type="text" id="filtro-det-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem" value="'+escH(filtSku)+'">'
+    +'<input type="text" id="filtro-det-lichija" class="field-inp" placeholder="Lic. hija"'
+    +' style="width:110px;padding:3px 7px;font-size:.76rem" value="'+escH(filtLicHija)+'">'
+    +'<input type="text" id="filtro-det-sku" class="field-inp" placeholder="SKU"'
+    +' style="width:80px;padding:3px 7px;font-size:.76rem" value="'+escH(filtSku)+'">'
+    +'<input type="text" id="filtro-det-tarima" class="field-inp" placeholder="Tarima"'
+    +' style="width:70px;padding:3px 7px;font-size:.76rem" value="'+escH(filtTarima)+'">'
+    +'<button class="btn btn-xs" id="btn-det-filtrar"'
+    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
+    +'<button class="btn btn-xs" id="btn-det-limpiar" style="font-size:.73rem">Limpiar</button>'
     +'</div>';
 
-  // Aplicar filtros a líneas
+  // filtrar y ordenar por tarima
   var lineasFilt = lineas.filter(function(l){
-    var lh = (tarimaLicHija[l.tarima||'']||'').toUpperCase();
-    if(filtLicHija && !lh.includes(filtLicHija)) return false;
-    if(filtSku && !(l.sku||'').toUpperCase().includes(filtSku)) return false;
+    if(filtLicHija && !(tarimaLicHija[l.tarima||'']||'').toUpperCase().includes(filtLicHija)) return false;
+    if(filtSku     && !(l.sku||'').toUpperCase().includes(filtSku)) return false;
+    if(filtTarima  && !(l.tarima||'').toUpperCase().includes(filtTarima)) return false;
     return true;
   });
-
-  var porTarima = {};
-  lineasFilt.forEach(function(l){
-    var t = l.tarima||'?';
-    if(!porTarima[t]) porTarima[t] = [];
-    porTarima[t].push(l);
+  // ordenar por tarima
+  lineasFilt = lineasFilt.slice().sort(function(a,b){
+    return (a.tarima||'').localeCompare(b.tarima||'', undefined, {numeric:true});
   });
 
   var html = barraFiltros;
-  // Wire filtros en siguiente ciclo (para que el input exista en el DOM)
-  bodSortTarimas(Object.keys(porTarima)).forEach(function(t){
-    var items = porTarima[t];
-    var licHijaTarima = tarimaLicHija[t] || '—';
-    html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)
-      +'<span style="font-weight:400;color:#888;font-size:.75rem;margin-left:.5rem">Lic. hija: '+escH(licHijaTarima)+'</span></div>';
+  if(!lineasFilt.length){
+    html += '<div style="color:#aaa;font-size:.82rem;padding:.5rem 0">Sin resultados.</div>';
+  } else {
     html += '<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>SKU</th><th>Descripción</th><th>Lic. hija</th>'
+      +'<th>Tarima</th><th>Lic. hija</th><th>SKU</th><th>Descripción</th>'
       +'<th class="tc">Cant. captura</th>'
       +'<th class="tc">Cant. auditoría</th>'
       +'<th class="tc">Dif.</th>'
@@ -10883,21 +10885,21 @@ function bodRenderDetalleAuditoria(data) {
       +'<th>Auditado</th>'
       +(esAuditor ? '<th class="tc">Acción</th>' : '')
       +'</tr></thead><tbody>';
-    items.forEach(function(l){
-      var cantCap = Number(l.cantidad);
-      var audBadge = l.auditado
+
+    lineasFilt.forEach(function(l){
+      var cantCap   = Number(l.cantidad);
+      var licHijaTar = tarimaLicHija[l.tarima||''] || '—';
+      var audBadge  = l.auditado
         ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
         : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
-
       var cantAuditCell, difCell, estadoCell, accionCell;
 
-      if(l.auditado) {
-        // Línea auditada: mostrar cantidad_audit (fallback a cantidad si null)
-        var cantAud = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
+      if(l.auditado){
+        var cantAud   = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
           ? Number(l.cantidad_audit) : cantCap;
-        var dif = cantAud - cantCap;
-        var difStr = (dif > 0 ? '+' : '') + dif;
-        var difColor = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
+        var dif       = cantAud - cantCap;
+        var difStr    = (dif > 0 ? '+' : '') + dif;
+        var difColor  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
         var estadoStr = dif === 0 ? 'OK' : dif < 0 ? 'Faltante' : 'Sobrante';
         var estadoBg  = dif === 0 ? '#e8f5e9' : dif < 0 ? '#fdecea' : '#e3f2fd';
         var estadoFg  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
@@ -10905,17 +10907,14 @@ function bodRenderDetalleAuditoria(data) {
         difCell       = '<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>';
         estadoCell    = '<td><span style="background:'+estadoBg+';color:'+estadoFg
           +';font-size:.72rem;padding:2px 7px;border-radius:8px">'+estadoStr+'</span></td>';
-        accionCell = esAuditor
+        accionCell    = esAuditor
           ? '<td class="tc"><button class="btn btn-xs bod-btn-unauditar" data-id="'+escH(l.id)+'"'
             +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Anular</button></td>'
           : '';
       } else {
-        // Línea pendiente: input para cantidad auditoría
-        cantAuditCell = '<td class="tc">'
-          +'<input type="number" class="field-inp bod-cant-audit-inp" data-id="'+escH(l.id)+'"'
-          +' value="'+cantCap+'" min="1" step="1"'
-          +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center">'
-          +'</td>';
+        cantAuditCell = '<td class="tc"><input type="number" class="field-inp bod-cant-audit-inp"'
+          +' data-id="'+escH(l.id)+'" value="'+cantCap+'" min="1" step="1"'
+          +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center"></td>';
         difCell    = '<td class="tc" style="color:#ccc">—</td>';
         estadoCell = '<td><span style="color:#aaa;font-size:.72rem">—</span></td>';
         accionCell = esAuditor
@@ -10925,9 +10924,10 @@ function bodRenderDetalleAuditoria(data) {
       }
 
       html += '<tr>'
+        +'<td style="font-size:.78rem;font-weight:700">'+escH(l.tarima||'—')+'</td>'
+        +'<td style="font-size:.73rem;color:#1565c0">'+escH(licHijaTar)+'</td>'
         +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
         +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
-        +'<td style="font-size:.73rem;color:#1565c0">'+escH(tarimaLicHija[l.tarima||'']||'—')+'</td>'
         +'<td class="tc">'+cantCap+'</td>'
         +cantAuditCell
         +difCell
@@ -10938,31 +10938,35 @@ function bodRenderDetalleAuditoria(data) {
         +'</tr>';
     });
     html += '</tbody></table></div>';
-  });
+  }
+
   vistaEl.innerHTML = html;
 
-  // Wire filtros Detalle — re-render preservando foco y cursor
-  ['filtro-det-lichija','filtro-det-sku'].forEach(function(fid){
-    var el = document.getElementById(fid);
-    if(el && !el._bodWired){
-      el._bodWired = true;
-      el.addEventListener('input', function(){
-        var activeId  = document.activeElement ? document.activeElement.id : null;
-        var activeVal = document.activeElement ? document.activeElement.value : '';
-        bodRenderDetalleAuditoria(data);
-        if(activeId){
-          var el2 = document.getElementById(activeId);
-          if(el2){ el2.focus(); el2.value = activeVal; el2.setSelectionRange(activeVal.length, activeVal.length); }
-        }
-      });
-    }
+  // Wire filtros + botones
+  function _rerenderDet(){
+    var aId  = document.activeElement ? document.activeElement.id  : null;
+    var aVal = document.activeElement ? document.activeElement.value : '';
+    bodRenderDetalleAuditoria(data);
+    if(aId){ var e2=document.getElementById(aId); if(e2){ e2.focus(); e2.value=aVal; e2.setSelectionRange(aVal.length,aVal.length); } }
+  }
+  ['filtro-det-lichija','filtro-det-sku','filtro-det-tarima'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el && !el._bodWired){ el._bodWired=true; el.addEventListener('input',_rerenderDet); }
   });
+  var bF=document.getElementById('btn-det-filtrar');
+  if(bF&&!bF._bodWired){ bF._bodWired=true; bF.addEventListener('click',_rerenderDet); }
+  var bL=document.getElementById('btn-det-limpiar');
+  if(bL&&!bL._bodWired){ bL._bodWired=true; bL.addEventListener('click',function(){
+    ['filtro-det-lichija','filtro-det-sku','filtro-det-tarima'].forEach(function(id){
+      var e=document.getElementById(id); if(e) e.value='';
+    });
+    bodRenderDetalleAuditoria(data);
+  }); }
 
   // Wire botones Auditar
   vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
     btn.addEventListener('click', function(){
       var linId = btn.dataset.id;
-      // Leer cantidad del input de esa fila
       var inp = vistaEl.querySelector('.bod-cant-audit-inp[data-id="'+linId+'"]');
       var cantAud = inp ? Number(inp.value) : 0;
       if(!(cantAud > 0)){ alert('Ingresá una cantidad de auditoría mayor a 0.'); return; }
@@ -11076,13 +11080,16 @@ function bodRenderManifiestoAuditoria() {
   if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
   // Evitar fetch simultáneo si ya hay uno en curso
   if(bodManifestLoading) return;
-  // Solo mostrar "Cargando…" la primera vez (sin contenido previo)
-  var tieneContenido = vistaEl.querySelector('.bod-furgon-bloque') || vistaEl.querySelector('table');
+  // Reconstruir shell si no existe #manif-body (ej: venimos de Detalle)
+  var tieneContenido = !!vistaEl.querySelector('#manif-body');
   if(!tieneContenido) {
     vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
       +'<label>Filtrar:</label>'
-      +'<input type="text" id="filtro-man-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
-      +'<input type="text" id="filtro-man-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
+      +'<input type="text" id="filtro-man-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
+      +'<input type="text" id="filtro-man-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
+      +'<button class="btn btn-xs" id="btn-manif-filtrar"'
+      +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
+      +'<button class="btn btn-xs" id="btn-manif-limpiar" style="font-size:.73rem">Limpiar</button>'
       +'</div>'
       +'<div id="manif-body"><div style="color:#888;font-size:.82rem">Cargando manifiesto…</div></div>';
   }
@@ -11290,11 +11297,19 @@ function bodRenderManifiestoAuditoria() {
 
       renderManifiestoFiltrado();
 
-      // Listeners de filtros (idempotentes con _bodWired)
+      // Listeners de filtros + botones (idempotentes con _bodWired)
       ['filtro-man-lichija','filtro-man-sku'].forEach(function(id){
         var el = document.getElementById(id);
         if(el && !el._bodWired){ el._bodWired = true; el.addEventListener('input', renderManifiestoFiltrado); }
       });
+      var bMF=document.getElementById('btn-manif-filtrar');
+      if(bMF&&!bMF._bodWired){ bMF._bodWired=true; bMF.addEventListener('click',renderManifiestoFiltrado); }
+      var bML=document.getElementById('btn-manif-limpiar');
+      if(bML&&!bML._bodWired){ bML._bodWired=true; bML.addEventListener('click',function(){
+        var f1=document.getElementById('filtro-man-lichija'); if(f1) f1.value='';
+        var f2=document.getElementById('filtro-man-sku'); if(f2) f2.value='';
+        renderManifiestoFiltrado();
+      }); }
     })
     .catch(function(){
       bodManifestLoading = false;
@@ -11322,8 +11337,11 @@ function bodRenderWmsVsApp() {
     +'</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-wms-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-wms-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-wms-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-wms-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
+    +'<button class="btn btn-xs" id="btn-wms-filtrar"'
+    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
+    +'<button class="btn btn-xs" id="btn-wms-limpiar" style="font-size:.73rem">Limpiar</button>'
     +'</div>'
     +'<div id="bod-wms-app-tabla"><div style="color:#888;font-size:.82rem">Cargando conciliación WMS vs App…</div></div>';
 
@@ -11399,11 +11417,17 @@ function bodCargarWmsVsApp(licId, sesId) {
   var tbl = document.getElementById('bod-wms-app-tabla');
   if(!tbl) return;
   fetch('/api/bod/reportes/wms-vs-app'+bodLicQuery(licId))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok||!d.skus||!d.skus.length){
+    .then(function(r){
+      return r.json().then(function(d){ return {httpOk:r.ok, status:r.status, d:d}; });
+    })
+    .then(function(res){
+      var d = res.d;
+      if(!res.httpOk || !d.ok || !d.skus || !d.skus.length){
         _bodDatosWms = [];
-        tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>';
+        var msg = !res.httpOk
+          ? 'WMS vs App: HTTP '+res.status+' — '+(d&&d.error||'sin detalle')
+          : 'Sin movimientos WMS para esta licencia.';
+        tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">'+escH(msg)+'</div>';
         return;
       }
       _bodDatosWms = d.skus;
@@ -11411,7 +11435,15 @@ function bodCargarWmsVsApp(licId, sesId) {
       ['filtro-wms-lichija','filtro-wms-sku'].forEach(function(id){
         var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderWmsTbl);}
       });
-    }).catch(function(){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+      var bWF=document.getElementById('btn-wms-filtrar');
+      if(bWF&&!bWF._bodWired){ bWF._bodWired=true; bWF.addEventListener('click',_bodRenderWmsTbl); }
+      var bWL=document.getElementById('btn-wms-limpiar');
+      if(bWL&&!bWL._bodWired){ bWL._bodWired=true; bWL.addEventListener('click',function(){
+        var f1=document.getElementById('filtro-wms-lichija'); if(f1) f1.value='';
+        var f2=document.getElementById('filtro-wms-sku'); if(f2) f2.value='';
+        _bodRenderWmsTbl();
+      }); }
+    }).catch(function(e){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error WMS vs App: '+escH(e.message||'sin conexión')+'</div>'; });
 }
 
 // ── Vista Flujo Bolsón ────────────────────────────────────────────────────
@@ -11421,20 +11453,40 @@ function bodRenderFlujoBolson() {
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-flujo-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-flujo-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-flujo-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-flujo-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
+    +'<button class="btn btn-xs" id="btn-flujo-filtrar"'
+    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
+    +'<button class="btn btn-xs" id="btn-flujo-limpiar" style="font-size:.73rem">Limpiar</button>'
     +'</div>'
     +'<div id="flujo-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando flujo…</div></div>';
   fetch('/api/bod/reportes/flujo-bolson'+bodLicQuery(licId))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok||!d.movimientos||!d.movimientos.length){ var fc=document.getElementById('flujo-tabla-cont')||vistaEl; fc.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
+    .then(function(r){
+      return r.json().then(function(d){ return {httpOk:r.ok, status:r.status, d:d}; });
+    })
+    .then(function(res){
+      var d = res.d;
+      if(!res.httpOk || !d.ok || !d.movimientos || !d.movimientos.length){
+        var fc=document.getElementById('flujo-tabla-cont')||vistaEl;
+        var msg = !res.httpOk
+          ? 'Flujo Bolsón: HTTP '+res.status+' — '+(d&&d.error||'sin detalle')
+          : 'Sin movimientos.';
+        fc.innerHTML='<div style="color:#aaa;font-size:.82rem">'+escH(msg)+'</div>'; return;
+      }
       _bodDatosFlujo = d.movimientos;
       _bodRenderFlujoTbl();
       ['filtro-flujo-lichija','filtro-flujo-sku'].forEach(function(id){
         var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderFlujoTbl);}
       });
-    }).catch(function(){ var fc=document.getElementById('flujo-tabla-cont')||vistaEl; fc.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+      var bFF=document.getElementById('btn-flujo-filtrar');
+      if(bFF&&!bFF._bodWired){ bFF._bodWired=true; bFF.addEventListener('click',_bodRenderFlujoTbl); }
+      var bFL=document.getElementById('btn-flujo-limpiar');
+      if(bFL&&!bFL._bodWired){ bFL._bodWired=true; bFL.addEventListener('click',function(){
+        var f1=document.getElementById('filtro-flujo-lichija'); if(f1) f1.value='';
+        var f2=document.getElementById('filtro-flujo-sku'); if(f2) f2.value='';
+        _bodRenderFlujoTbl();
+      }); }
+    }).catch(function(e){ var fc=document.getElementById('flujo-tabla-cont')||vistaEl; fc.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error Flujo Bolsón: '+escH(e.message||'sin conexión')+'</div>'; });
 }
 function _bodRenderFlujoTbl() {
   var cont = document.getElementById('flujo-tabla-cont') || document.getElementById('bod-aud-vista');
@@ -11479,20 +11531,40 @@ function bodRenderRemanentes() {
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-rem-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-rem-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-rem-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-rem-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
+    +'<button class="btn btn-xs" id="btn-rem-filtrar"'
+    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
+    +'<button class="btn btn-xs" id="btn-rem-limpiar" style="font-size:.73rem">Limpiar</button>'
     +'</div>'
     +'<div id="rem-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando remanentes…</div></div>';
   fetch('/api/bod/reportes/remanentes'+bodLicQuery(licId))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok||!d.remanentes||!d.remanentes.length){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
+    .then(function(r){
+      return r.json().then(function(d){ return {httpOk:r.ok, status:r.status, d:d}; });
+    })
+    .then(function(res){
+      var d = res.d;
+      if(!res.httpOk || !d.ok || !d.remanentes || !d.remanentes.length){
+        var rc2=document.getElementById('rem-tabla-cont')||vistaEl;
+        var msg = !res.httpOk
+          ? 'Remanentes: HTTP '+res.status+' — '+(d&&d.error||'sin detalle')
+          : 'Sin remanentes.';
+        rc2.innerHTML='<div style="color:#aaa;font-size:.82rem">'+escH(msg)+'</div>'; return;
+      }
       _bodDatosRem = d.remanentes;
       _bodRenderRemTbl();
       ['filtro-rem-lichija','filtro-rem-sku'].forEach(function(id){
         var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderRemTbl);}
       });
-    }).catch(function(){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+      var bRF=document.getElementById('btn-rem-filtrar');
+      if(bRF&&!bRF._bodWired){ bRF._bodWired=true; bRF.addEventListener('click',_bodRenderRemTbl); }
+      var bRL=document.getElementById('btn-rem-limpiar');
+      if(bRL&&!bRL._bodWired){ bRL._bodWired=true; bRL.addEventListener('click',function(){
+        var f1=document.getElementById('filtro-rem-lichija'); if(f1) f1.value='';
+        var f2=document.getElementById('filtro-rem-sku'); if(f2) f2.value='';
+        _bodRenderRemTbl();
+      }); }
+    }).catch(function(e){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error Remanentes: '+escH(e.message||'sin conexión')+'</div>'; });
 }
 function _bodRenderRemTbl() {
   var cont = document.getElementById('rem-tabla-cont') || document.getElementById('bod-aud-vista');
