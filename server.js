@@ -4281,6 +4281,76 @@ app.post('/api/bod/sesion/:id/furgon/:furgon/finalizar', bodGuard, async (req, r
   }
 });
 
+// ── PATCH /api/bod/sesion/:id/carga-logistica/:cargaId ───────────────────
+app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { placa, marchamo, licencia_hija, destino_tr999, observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden editar cargas logísticas.' });
+
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Carga no encontrada en esta sesión.' });
+
+    var patch = {
+      placa:         String(placa         || '').trim().toUpperCase(),
+      marchamo:      String(marchamo      || '').trim().toUpperCase(),
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      observacion:   String(observacion   || '').trim()
+    };
+    await supabase('PATCH', 'bod_furgon_cierres', patch,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true, patch });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id/carga-logistica/:cargaId ──────────────────
+app.delete('/api/bod/sesion/:id/carga-logistica/:cargaId', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden eliminar cargas logísticas.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Carga no encontrada en esta sesión.' });
+
+    var carga  = rows[0];
+    var tarimas = Array.isArray(carga.tarimas) ? carga.tarimas : [];
+
+    // Eliminar la carga logística
+    await supabase('DELETE', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+
+    // Liberar tarimas en bod_tarima_furgon
+    if(tarimas.length) {
+      for(var i = 0; i < tarimas.length; i++) {
+        try {
+          await supabase('DELETE', 'bod_tarima_furgon', null,
+            '?sesion_id=eq.'+encodeURIComponent(sesId)+'&tarima=eq.'+encodeURIComponent(tarimas[i]));
+        } catch(e) { /* continuar si una tarima falla */ }
+      }
+    }
+    res.json({ ok:true, tarimas_liberadas: tarimas });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // BOD MODULE END
 // ══════════════════════════════════════════════════════════════════════════
