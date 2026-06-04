@@ -4315,20 +4315,29 @@ app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
 });
 
 // ── GET /api/bod/reportes/flujo-bolson ───────────────────────────────────
-// Entradas: tipo_movimiento=entrada_bolson de tipo_licencia=inicial (licencia_id activa)
-// Salidas: tipo_movimiento=salida_tr999 de licencias hija (licencia_padre=licencia activa)
+// Acepta: licencia_id=X | licencias=X,Y,Z
+// Entradas: tipo_movimiento=entrada_bolson de las licencias indicadas
+// Salidas: tipo_movimiento=salida_tr999 donde licencia_padre está en las licencias indicadas
 app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
   try {
-    var licId = String(req.query.licencia_id || '').trim().toUpperCase();
+    var licId   = String(req.query.licencia_id || '').trim().toUpperCase();
+    var licsRaw = String(req.query.licencias   || '').trim();
+    var lics    = licsRaw ? licsRaw.split(',').map(function(l){ return l.trim().toUpperCase(); }).filter(Boolean) : [];
+    if(licId && !lics.includes(licId)) lics.push(licId);
 
-    // Entradas: movimientos de la licencia activa con destino 952
-    var qEntradas = licId
-      ? '?licencia_id=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.entrada_bolson&limit=10000'
-      : '?tipo_movimiento=eq.entrada_bolson&limit=5000';
-    // Salidas: movimientos de licencias hija cuya licencia_padre es la activa
-    var qSalidas = licId
-      ? '?licencia_padre=eq.'+encodeURIComponent(licId)+'&tipo_movimiento=eq.salida_tr999&limit=10000'
-      : '?tipo_movimiento=eq.salida_tr999&limit=5000';
+    // Construir queries para entradas y salidas según cantidad de licencias
+    var qEntradas, qSalidas;
+    if(lics.length === 1) {
+      qEntradas = '?licencia_id=eq.'+encodeURIComponent(lics[0])+'&tipo_movimiento=eq.entrada_bolson&limit=10000';
+      qSalidas  = '?licencia_padre=eq.'+encodeURIComponent(lics[0])+'&tipo_movimiento=eq.salida_tr999&limit=10000';
+    } else if(lics.length > 1) {
+      var inClause = '('+lics.map(encodeURIComponent).join(',')+')';
+      qEntradas = '?licencia_id=in.'+inClause+'&tipo_movimiento=eq.entrada_bolson&limit=10000';
+      qSalidas  = '?licencia_padre=in.'+inClause+'&tipo_movimiento=eq.salida_tr999&limit=10000';
+    } else {
+      qEntradas = '?tipo_movimiento=eq.entrada_bolson&limit=5000';
+      qSalidas  = '?tipo_movimiento=eq.salida_tr999&limit=5000';
+    }
 
     var [movsEntrada, movsSalida] = await Promise.all([
       supabase('GET', 'bod_wms_movimientos', null, qEntradas),
@@ -4462,6 +4471,7 @@ app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
         causa = dias !== null && dias <= 2 ? 'Pendiente normal' : 'Atrasado';
 
       return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem,
+               entrada_952:d.entradas, app_entarimada:app, salida_tr999:d.salidas,
                licencia_origen:d.licencia_origen, licencia_salida:d.licencia_salida,
                furgon:furgon, fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha,
                dias_en_bolson:dias, estado_remanente:causa };
