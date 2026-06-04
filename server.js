@@ -4704,32 +4704,68 @@ app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
       qSalidas  = '?tipo_movimiento=eq.salida_tr999&limit=5000';
     }
 
-    var [movsEntrada, movsSalida, logMap] = await Promise.all([
+    var [movsEntrada, movsSalida, logMap, cierreRows] = await Promise.all([
       supabase('GET', 'bod_wms_movimientos', null, qEntradas),
       supabase('GET', 'bod_wms_movimientos', null, qSalidas),
-      bodGetSkuLogistica(lics)
+      bodGetSkuLogistica(lics),
+      // Leer cierres para mostrar SKUs de cargas aunque no haya salida WMS
+      (lics.length
+        ? supabase('GET', 'bod_sesiones', null,
+            lics.length === 1
+              ? '?licencia_id=eq.'+encodeURIComponent(lics[0])+'&limit=100'
+              : '?licencia_id=in.('+lics.map(encodeURIComponent).join(',')+')'+'&limit=100'
+          ).then(function(ses){
+              ses = Array.isArray(ses) ? ses : [];
+              var sids = ses.map(function(s){ return s.id; }).filter(Boolean);
+              if(!sids.length) return [];
+              var qIn = '('+sids.map(encodeURIComponent).join(',')+')';
+              return supabase('GET', 'bod_furgon_cierres', null, '?sesion_id=in.'+qIn+'&limit=1000');
+            })
+        : Promise.resolve([])
+      )
     ]);
-    movsEntrada = Array.isArray(movsEntrada) ? movsEntrada : [];
-    movsSalida  = Array.isArray(movsSalida)  ? movsSalida  : [];
+    movsEntrada  = Array.isArray(movsEntrada)  ? movsEntrada  : [];
+    movsSalida   = Array.isArray(movsSalida)   ? movsSalida   : [];
+    cierreRows   = Array.isArray(cierreRows)   ? cierreRows   : [];
 
     var skuData = {};
+    // skuData usa skuKey (uppercase) como llave para evitar duplicados por case
+    // pero guarda el SKU original de WMS para mostrar al usuario
     movsEntrada.forEach(function(m){
-      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'',
+      var skuKey = String(m.sku||'').trim().toUpperCase();
+      if(!skuKey) return;
+      if(!skuData[skuKey]) skuData[skuKey] = { sku:m.sku||skuKey, descripcion:m.descripcion||'',
         entradas_952:0, salidas_tr999:0, licencia_origen:'', licencias_hijas:[], furgones:[], destinos_tr999:[] };
-      var d = skuData[m.sku];
+      var d = skuData[skuKey];
       if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
       d.entradas_952 += Number(m.unidades);
       if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
     });
     movsSalida.forEach(function(m){
-      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'',
+      var skuKey = String(m.sku||'').trim().toUpperCase();
+      if(!skuKey) return;
+      if(!skuData[skuKey]) skuData[skuKey] = { sku:m.sku||skuKey, descripcion:m.descripcion||'',
         entradas_952:0, salidas_tr999:0, licencia_origen:'', licencias_hijas:[], furgones:[], destinos_tr999:[] };
-      var d = skuData[m.sku];
+      var d = skuData[skuKey];
       if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
       d.salidas_tr999 += Number(m.unidades);
-      if(m.licencia_id && !d.licencias_hijas.includes(m.licencia_id))      d.licencias_hijas.push(m.licencia_id);
+      if(m.licencia_id && !d.licencias_hijas.includes(m.licencia_id))        d.licencias_hijas.push(m.licencia_id);
       if(m.furgon_relacionado && !d.furgones.includes(m.furgon_relacionado)) d.furgones.push(m.furgon_relacionado);
-      if(m.destino && !d.destinos_tr999.includes(m.destino))                d.destinos_tr999.push(m.destino);
+      if(m.destino && !d.destinos_tr999.includes(m.destino))                 d.destinos_tr999.push(m.destino);
+    });
+
+    // Agregar SKUs desde cargas logísticas (aunque no haya salida WMS todavía)
+    cierreRows.forEach(function(c){
+      var skus = Array.isArray(c.resumen_skus) ? c.resumen_skus : [];
+      skus.forEach(function(s){
+        var skuRaw = String(s.sku||s||'').trim();
+        var skuKey = skuRaw.toUpperCase();
+        if(!skuKey) return;
+        if(!skuData[skuKey]) skuData[skuKey] = { sku:skuRaw||skuKey, descripcion:s.descripcion||'',
+          entradas_952:0, salidas_tr999:0, licencia_origen:'', licencias_hijas:[], furgones:[], destinos_tr999:[] };
+        // Enriquecer con datos del cierre si no vienen de WMS
+        if(!skuData[skuKey].descripcion && s.descripcion) skuData[skuKey].descripcion = s.descripcion;
+      });
     });
 
     var result = Object.values(skuData).map(function(d){
