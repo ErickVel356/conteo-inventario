@@ -10829,21 +10829,52 @@ function bodRenderDetalleAuditoria(data) {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !data) return;
   var lineas = data.lineas || [];
-  var sesion = data.sesion || {};
+  var usuario   = window.currentUser ? window.currentUser.name : '';
+  var esAuditor = isBodAuditor();
+
+  // Mapa tarima → licencia_hija desde cargas logísticas
+  var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+  var tarimaLicHija = {};
+  cargas.forEach(function(cg){
+    var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
+    ts.forEach(function(t){ tarimaLicHija[t] = cg.licencia_hija || ''; });
+  });
+
+  // Filtros en cliente
+  var filtLicHija = (document.getElementById('filtro-det-lichija') ? document.getElementById('filtro-det-lichija').value : '').trim().toUpperCase();
+  var filtSku     = (document.getElementById('filtro-det-sku')     ? document.getElementById('filtro-det-sku').value     : '').trim().toUpperCase();
+
+  // Render de filtros
+  var barraFiltros = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.78rem">'
+    +'<label>Filtrar:</label>'
+    +'<input type="text" id="filtro-det-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem" value="'+escH(filtLicHija)+'">'
+    +'<input type="text" id="filtro-det-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem" value="'+escH(filtSku)+'">'
+    +'</div>';
+
+  // Aplicar filtros a líneas
+  var lineasFilt = lineas.filter(function(l){
+    var lh = (tarimaLicHija[l.tarima||'']||'').toUpperCase();
+    if(filtLicHija && !lh.includes(filtLicHija)) return false;
+    if(filtSku && !(l.sku||'').toUpperCase().includes(filtSku)) return false;
+    return true;
+  });
+
   var porTarima = {};
-  lineas.forEach(function(l){
+  lineasFilt.forEach(function(l){
     var t = l.tarima||'?';
     if(!porTarima[t]) porTarima[t] = [];
     porTarima[t].push(l);
   });
-  var usuario   = window.currentUser ? window.currentUser.name : '';
-  var esAuditor = isBodAuditor();
-  var html = '';
+
+  var html = barraFiltros;
+  // Wire filtros en siguiente ciclo (para que el input exista en el DOM)
   bodSortTarimas(Object.keys(porTarima)).forEach(function(t){
     var items = porTarima[t];
-    html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)+'</div>';
+    var licHijaTarima = tarimaLicHija[t] || '—';
+    html += '<div style="font-size:.8rem;font-weight:700;margin:.75rem 0 .3rem;color:#1565c0">Tarima '+escH(t)
+      +'<span style="font-weight:400;color:#888;font-size:.75rem;margin-left:.5rem">Lic. hija: '+escH(licHijaTarima)+'</span></div>';
     html += '<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>SKU</th><th>Descripción</th>'
+      +'<th>SKU</th><th>Descripción</th><th>Lic. hija</th>'
       +'<th class="tc">Cant. captura</th>'
       +'<th class="tc">Cant. auditoría</th>'
       +'<th class="tc">Dif.</th>'
@@ -10896,6 +10927,7 @@ function bodRenderDetalleAuditoria(data) {
       html += '<tr>'
         +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
         +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
+        +'<td style="font-size:.73rem;color:#1565c0">'+escH(tarimaLicHija[l.tarima||'']||'—')+'</td>'
         +'<td class="tc">'+cantCap+'</td>'
         +cantAuditCell
         +difCell
@@ -10908,6 +10940,23 @@ function bodRenderDetalleAuditoria(data) {
     html += '</tbody></table></div>';
   });
   vistaEl.innerHTML = html;
+
+  // Wire filtros Detalle — re-render preservando foco y cursor
+  ['filtro-det-lichija','filtro-det-sku'].forEach(function(fid){
+    var el = document.getElementById(fid);
+    if(el && !el._bodWired){
+      el._bodWired = true;
+      el.addEventListener('input', function(){
+        var activeId  = document.activeElement ? document.activeElement.id : null;
+        var activeVal = document.activeElement ? document.activeElement.value : '';
+        bodRenderDetalleAuditoria(data);
+        if(activeId){
+          var el2 = document.getElementById(activeId);
+          if(el2){ el2.focus(); el2.value = activeVal; el2.setSelectionRange(activeVal.length, activeVal.length); }
+        }
+      });
+    }
+  });
 
   // Wire botones Auditar
   vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
@@ -11030,7 +11079,12 @@ function bodRenderManifiestoAuditoria() {
   // Solo mostrar "Cargando…" la primera vez (sin contenido previo)
   var tieneContenido = vistaEl.querySelector('.bod-furgon-bloque') || vistaEl.querySelector('table');
   if(!tieneContenido) {
-    vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando manifiesto…</div>';
+    vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
+      +'<label>Filtrar:</label>'
+      +'<input type="text" id="filtro-man-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
+      +'<input type="text" id="filtro-man-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
+      +'</div>'
+      +'<div id="manif-body"><div style="color:#888;font-size:.82rem">Cargando manifiesto…</div></div>';
   }
   bodManifestLoading = true;
 
@@ -11054,205 +11108,192 @@ function bodRenderManifiestoAuditoria() {
         }
         return;
       }
-      var html = '';
 
-      // Advertencia de tarimas sin asignar
+      // Advertencia de tarimas sin asignar (fuera de manifBody para no borrarse al filtrar)
+      var htmlAdv = '';
       if(d.tarimas_sin_asignar && d.tarimas_sin_asignar.length) {
-        html += '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;font-size:.82rem">'
+        htmlAdv = '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;font-size:.82rem">'
           +'⚠️ <strong>Tarimas sin asignar a furgón:</strong> '
           +d.tarimas_sin_asignar.map(function(t){ return escH(t); }).join(', ')
           +'</div>';
       }
 
       if(!d.furgones || !d.furgones.length) {
-        html += '<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin furgones asignados todavía.</div>';
-        vistaEl.innerHTML = html; return;
+        vistaEl.innerHTML = htmlAdv + '<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin furgones asignados todavía.</div>';
+        return;
       }
 
-      d.furgones.forEach(function(f){
-        // Estado: Finalizado > Pendiente > Auditado
-        var estado;
-        if(f.finalizado){
-          estado = '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:8px">🔒 Finalizado</span>';
-        } else if(f.tiene_pendientes){
-          estado = '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>';
-        } else {
-          estado = '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
-        }
-        var finInfo = f.finalizado
-          ? '<span style="font-size:.73rem;color:#1565c0;margin-left:2px">Lic. hija: <strong>'
-            +escH(f.licencia_hija||'—')+'</strong> · Destino: <strong>'+escH(f.destino_tr999||'—')+'</strong></span>'
-          : '';
-        var btnFinal = (!f.finalizado && esAud)
-          ? '<button class="btn btn-xs bod-btn-finalizar-furgon" data-furgon="'+escH(f.furgon)+'"'
-            +' style="background:#e3f2fd;color:#0d47a1;font-size:.73rem">🔒 Finalizar furgón</button>'
-          : '';
-        var tarimas = f.tarimas.join(', ');
-        html += '<div class="bod-furgon-bloque" style="margin-bottom:1.25rem">'
-          +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
-          +'<div style="font-weight:700;font-size:.92rem">Furgón '+escH(f.furgon)+'</div>'
-          +estado+finInfo
-          +'<span style="font-size:.78rem;color:#888">'+f.total_skus+' SKUs · '+f.total_unidades.toLocaleString('es-GT')+' unidades</span>'
-          +'<span style="font-size:.75rem;color:#aaa">Tarimas: '+escH(tarimas)+'</span>'
-          +btnFinal
-          +'<button class="btn btn-xs bod-btn-export-xlsx" data-furgon="'+escH(f.furgon)+'"'
-          +' style="margin-left:auto;background:#e8f5e9;color:#1b5e20;font-size:.73rem">📥 Exportar Excel</button>'
-          +'</div>'
-          +'<div class="tbl-wrap"><table><thead><tr>'
-          +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
-          +'</tr></thead><tbody>';
-        f.skus.forEach(function(s){
-          var skuEstado = s.pendientes === 0
-            ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
-            : '<span style="color:#e65100;font-size:.75rem">'+s.pendientes+' pend.</span>';
-          html += '<tr>'
-            +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
-            +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
-            +'<td class="tc">'+s.unidades.toLocaleString('es-GT')+'</td>'
-            +'<td>'+skuEstado+'</td>'
-            +'</tr>';
+      // Render filtrado — closure interna para re-usarse en listeners
+      function renderManifiestoFiltrado() {
+        var manifBody = document.getElementById('manif-body');
+        if(!manifBody) return;
+        var filtLicHija = (document.getElementById('filtro-man-lichija')||{value:''}).value.trim().toUpperCase();
+        var filtSku     = (document.getElementById('filtro-man-sku')    ||{value:''}).value.trim().toUpperCase();
+        var furgonesFilt = d.furgones.filter(function(f){
+          if(filtLicHija && !(f.licencia_hija||'').toUpperCase().includes(filtLicHija)) return false;
+          if(filtSku) {
+            var tieneSku = f.skus.some(function(s){ return (s.sku||'').toUpperCase().includes(filtSku); });
+            if(!tieneSku) return false;
+          }
+          return true;
         });
-        html += '</tbody></table></div></div>';
-      });
-
-      vistaEl.innerHTML = html;
-
-      // Wire botones Finalizar furgón
-      var _sesIdM   = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
-      var _usuarioM = window.currentUser ? window.currentUser.name : '';
-      vistaEl.querySelectorAll('.bod-btn-finalizar-furgon').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var furgon  = btn.dataset.furgon;
-          var licHija = (prompt('Licencia hija de salida (ej: U25-162400):')||'').trim().toUpperCase();
-          if(!licHija) return;
-          var destTR  = (prompt('Destino TR999 (formato TR999.xxx.xx):')||'').trim().toUpperCase();
-          if(!destTR) return;
-          if(!/^TR999\.\d{3}\.\d{2}$/i.test(destTR)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
-          var obs = (prompt('Observación (opcional):')||'').trim();
-          bodFetch('POST',
-            '/api/bod/sesion/'+encodeURIComponent(_sesIdM)+'/furgon/'+encodeURIComponent(furgon)+'/finalizar',
-            { licencia_hija:licHija, destino_tr999:destTR, observacion:obs,
-              usuario:_usuarioM, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-            .then(function(d){
-              if(d.ok){
-                alert('Furgón '+furgon+' finalizado.\nLicencia hija: '+licHija
-                  +'\nDestino: '+destTR+'\nUnidades: '+d.unidades_total);
-                bodRenderManifiestoAuditoria();
-              } else { alert(d.error||'Error al finalizar'); }
-            }).catch(function(){ alert('Sin conexión'); });
-        });
-      });
-
-      // Wire botones exportar XLSX con formato tipo Manifiesto_PRUEBA_BIANCA
-      vistaEl.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var furgon = btn.dataset.furgon;
-          var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
-          if(!fData) return;
-
-          // Buscar la carga logística para este furgón en bodAuditoriaData._cargas
-          var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-          var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
-
-          var fechaRaw = bodAuditoriaData && bodAuditoriaData.sesion
-            ? (bodAuditoriaData.sesion.fecha_trabajo || '') : '';
-          // Formatear fecha DD/MM/YYYY
-          var fechaDD = fechaRaw;
-          if(/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
-            var p = fechaRaw.split('-');
-            fechaDD = p[2]+'/'+p[1]+'/'+p[0];
+        var html = '';
+        furgonesFilt.forEach(function(f){
+          var skusFilt = filtSku
+            ? f.skus.filter(function(s){ return (s.sku||'').toUpperCase().includes(filtSku); })
+            : f.skus;
+          // Estado: Finalizado > Pendiente > Auditado
+          var estado;
+          if(f.finalizado){
+            estado = '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:8px">🔒 Finalizado</span>';
+          } else if(f.tiene_pendientes){
+            estado = '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>';
+          } else {
+            estado = '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
           }
-
-          var marchamo  = carga ? (carga.marchamo       || '') : '';
-          var ubicacion = carga ? (carga.destino_tr999   || '') : '';
-          var cargaNo   = carga ? (carga.licencia_hija   || '') : '';
-          var licId     = carga ? (carga.licencia_hija   || '') : '';
-
-          // Si faltan datos críticos de la carga, avisar en lugar de pedir con prompt
-          if(!carga) {
-            if(!confirm('No se encontró carga logística para el furgón '+furgon+'.\nEl Excel se exportará sin marchamo/licencia hija/destino.\n¿Continuar de todas formas?')) return;
-          }
-
-          var XLSX2 = (typeof XLSX !== 'undefined') ? XLSX : null;
-          if(!XLSX2){ alert('Librería Excel no disponible. Recargá la página.'); return; }
-
-          var wb2 = XLSX2.utils.book_new();
-          var ws2 = {};
-
-          // Helper sc: row y col son 1-based (igual que Excel A1=1,1)
-          function sc(row, col, v, t) {
-            var cell = { v: v };
-            cell.t = t || (typeof v === 'number' ? 'n' : 's');
-            ws2[XLSX2.utils.encode_cell({ r: row-1, c: col-1 })] = cell;
-          }
-
-          // ── Sección: título (igual que BIANCA) ──
-          sc(2, 4, 'CARGA ENVÍO A BODEGA');
-
-          // ── Sección: empresa y dirección (filas 5-9, cols B y F) ──
-          sc(6, 2, 'Herramientas Poderosas');
-          sc(7, 3, 'DIRECCIÓN:');
-          sc(7, 4, '27 Calle Bodega C 41-55 Zona 5 Calzada la Paz');
-          sc(8, 3, 'DIRECCIÓN DESTINO:');
-          sc(8, 4, 'BODEGA NODUS (Hamiltón)');
-          // Labels con valores de la carga logística (sin prompts)
-          sc(5, 6, 'Marchamo: ' + marchamo);
-          sc(6, 6, 'Licencia: ' + licId);
-          sc(7, 6, 'UBICACIÓN: ' + ubicacion);
-          sc(8, 6, 'Fecha: ' + fechaDD);
-          sc(9, 6, 'Carga No. ' + cargaNo);
-
-          // ── Sección: encabezados tabla (fila 11) ──
-          sc(11, 2, 'CODIGO');
-          sc(11, 3, 'ESTATUS');
-          sc(11, 4, 'DESCRIPCION');
-          sc(11, 5, 'CANTIDAD');
-          sc(11, 6, 'VALIDADO');
-          sc(11, 7, 'DIFERENCIA');
-
-          // ── Sección: datos SKU (filas 12+, footer siempre en fila 20) ──
-          var DATA_START = 12;
-          var FOOTER_ROW = 20;
-          fData.skus.forEach(function(s, i) {
-            var row = DATA_START + i;
-            if(row >= FOOTER_ROW) return;
-            var estatus = s.pendientes === 0 ? 'Auditado' : 'No auditado';
-            sc(row, 2, s.sku);
-            sc(row, 3, estatus);
-            sc(row, 4, s.descripcion || '');
-            sc(row, 5, s.unidades, 'n');
-            sc(row, 6, s.unidades, 'n');
-            sc(row, 7, 0, 'n');
+          var finInfo = f.finalizado
+            ? '<span style="font-size:.73rem;color:#1565c0;margin-left:2px">Lic. hija: <strong>'
+              +escH(f.licencia_hija||'—')+'</strong> · Destino: <strong>'+escH(f.destino_tr999||'—')+'</strong></span>'
+            : '';
+          var btnFinal = (!f.finalizado && esAud)
+            ? '<button class="btn btn-xs bod-btn-finalizar-furgon" data-furgon="'+escH(f.furgon)+'"'
+              +' style="background:#e3f2fd;color:#0d47a1;font-size:.73rem">🔒 Finalizar furgón</button>'
+            : '';
+          var tarimas = f.tarimas.join(', ');
+          html += '<div class="bod-furgon-bloque" style="margin-bottom:1.25rem">'
+            +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
+            +'<div style="font-weight:700;font-size:.92rem">Furgón '+escH(f.furgon)+'</div>'
+            +estado+finInfo
+            +'<span style="font-size:.78rem;color:#888">'+f.total_skus+' SKUs · '+f.total_unidades.toLocaleString('es-GT')+' unidades</span>'
+            +'<span style="font-size:.75rem;color:#aaa">Tarimas: '+escH(tarimas)+'</span>'
+            +btnFinal
+            +'<button class="btn btn-xs bod-btn-export-xlsx" data-furgon="'+escH(f.furgon)+'"'
+            +' style="margin-left:auto;background:#e8f5e9;color:#1b5e20;font-size:.73rem">📥 Exportar Excel</button>'
+            +'</div>'
+            +'<div class="tbl-wrap"><table><thead><tr>'
+            +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
+            +'</tr></thead><tbody>';
+          skusFilt.forEach(function(s){
+            var skuEstado = s.pendientes === 0
+              ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
+              : '<span style="color:#e65100;font-size:.75rem">No auditado</span>';
+            html += '<tr>'
+              +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
+              +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
+              +'<td class="tc">'+s.unidades.toLocaleString('es-GT')+'</td>'
+              +'<td>'+skuEstado+'</td>'
+              +'</tr>';
           });
-
-          // ── Sección: footer firma (filas 20-28) — igual que BIANCA ──
-          sc(20, 2, 'AUTORIZACIÓN DE ENVÍO');
-          sc(20, 5, 'NOMBRE Y FIRMA QUIEN RECIBE');
-          sc(26, 2, 'ENCARGADO DE PEDIDO');
-          sc(26, 5, 'AUDITOR / VALIDADOR');
-          sc(28, 4, 'ID DE CONTENEDOR');
-
-          ws2['!ref'] = 'A1:G28';
-          ws2['!cols'] = [
-            {},
-            { wch: 17 },  // B
-            { wch: 11 },  // C
-            { wch: 62 },  // D
-            { wch: 10 },  // E
-            { wch: 11 },  // F
-            { wch: 11 }   // G
-          ];
-          ws2['!merges'] = [
-            { s:{r:1,c:3}, e:{r:1,c:6} },  // D2:G2 título
-            { s:{r:1,c:1}, e:{r:4,c:1} }   // B2:B5 logo
-          ];
-
-          XLSX2.utils.book_append_sheet(wb2, ws2, 'Manifiesto');
-
-          var fechaFile = fechaRaw.replace(/-/g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
-          var licFile   = (licId || 'BOD').replace(/[^A-Z0-9]/gi,'_');
-          XLSX2.writeFile(wb2, 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.xlsx');
+          html += '</tbody></table></div></div>';
         });
+        if(!html) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
+        manifBody.innerHTML = html;
+        // Re-wiredear botones dentro del manifBody
+        var _sesIdM   = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
+        var _usuarioM = window.currentUser ? window.currentUser.name : '';
+        manifBody.querySelectorAll('.bod-btn-finalizar-furgon').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            var furgon  = btn.dataset.furgon;
+            var licHija = (prompt('Licencia hija de salida (ej: U25-162400):')||'').trim().toUpperCase();
+            if(!licHija) return;
+            var destTR  = (prompt('Destino TR999 (formato TR999.xxx.xx):')||'').trim().toUpperCase();
+            if(!destTR) return;
+            if(!/^TR999\.\d{3}\.\d{2}$/i.test(destTR)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
+            var obs = (prompt('Observación (opcional):')||'').trim();
+            bodFetch('POST',
+              '/api/bod/sesion/'+encodeURIComponent(_sesIdM)+'/furgon/'+encodeURIComponent(furgon)+'/finalizar',
+              { licencia_hija:licHija, destino_tr999:destTR, observacion:obs,
+                usuario:_usuarioM, auditor:isBodAuditor(), supervisor:isBodAuditor() })
+              .then(function(d){
+                if(d.ok){
+                  alert('Furgón '+furgon+' finalizado.\nLicencia hija: '+licHija
+                    +'\nDestino: '+destTR+'\nUnidades: '+d.unidades_total);
+                  bodRenderManifiestoAuditoria();
+                } else { alert(d.error||'Error al finalizar'); }
+              }).catch(function(){ alert('Sin conexión'); });
+          });
+        });
+        // Wire botones Exportar Excel (dentro de la closure para que persistan tras filtrar)
+        manifBody.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            var furgon = btn.dataset.furgon;
+            var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
+            if(!fData) return;
+
+            var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+            var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
+            var fechaRaw = bodAuditoriaData && bodAuditoriaData.sesion
+              ? (bodAuditoriaData.sesion.fecha_trabajo || '') : '';
+            var fechaDD = fechaRaw;
+            if(/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
+              var p = fechaRaw.split('-');
+              fechaDD = p[2]+'/'+p[1]+'/'+p[0];
+            }
+            var marchamo  = carga ? (carga.marchamo      || '') : '';
+            var ubicacion = carga ? (carga.destino_tr999  || '') : '';
+            var cargaNo   = carga ? (carga.licencia_hija  || '') : '';
+            var licId     = carga ? (carga.licencia_hija  || '') : '';
+            if(!carga) {
+              if(!confirm('No se encontró carga logística para el furgón '+furgon+'.\nEl Excel se exportará sin marchamo/licencia hija/destino.\n¿Continuar de todas formas?')) return;
+            }
+            var XLSX2 = (typeof XLSX !== 'undefined') ? XLSX : null;
+            if(!XLSX2){ alert('Librería Excel no disponible. Recargá la página.'); return; }
+            var wb2 = XLSX2.utils.book_new();
+            var ws2 = {};
+            function sc(row, col, v, t) {
+              var cell = { v: v };
+              cell.t = t || (typeof v === 'number' ? 'n' : 's');
+              ws2[XLSX2.utils.encode_cell({ r: row-1, c: col-1 })] = cell;
+            }
+            sc(2, 4, 'CARGA ENVÍO A BODEGA');
+            sc(6, 2, 'Herramientas Poderosas');
+            sc(7, 3, 'DIRECCIÓN:');
+            sc(7, 4, '27 Calle Bodega C 41-55 Zona 5 Calzada la Paz');
+            sc(8, 3, 'DIRECCIÓN DESTINO:');
+            sc(8, 4, 'BODEGA NODUS (Hamiltón)');
+            sc(5, 6, 'Marchamo: ' + marchamo);
+            sc(6, 6, 'Licencia: ' + licId);
+            sc(7, 6, 'UBICACIÓN: ' + ubicacion);
+            sc(8, 6, 'Fecha: ' + fechaDD);
+            sc(9, 6, 'Carga No. ' + cargaNo);
+            sc(11, 2, 'CODIGO'); sc(11, 3, 'ESTATUS'); sc(11, 4, 'DESCRIPCION');
+            sc(11, 5, 'CANTIDAD'); sc(11, 6, 'VALIDADO'); sc(11, 7, 'DIFERENCIA');
+            var DATA_START = 12, FOOTER_ROW = 20;
+            fData.skus.forEach(function(s, i) {
+              var row = DATA_START + i;
+              if(row >= FOOTER_ROW) return;
+              var estatus = s.pendientes === 0 ? 'Auditado' : 'No auditado';
+              sc(row, 2, s.sku); sc(row, 3, estatus); sc(row, 4, s.descripcion || '');
+              sc(row, 5, s.unidades, 'n'); sc(row, 6, s.unidades, 'n'); sc(row, 7, 0, 'n');
+            });
+            sc(20, 2, 'AUTORIZACIÓN DE ENVÍO'); sc(20, 5, 'NOMBRE Y FIRMA QUIEN RECIBE');
+            sc(26, 2, 'ENCARGADO DE PEDIDO'); sc(26, 5, 'AUDITOR / VALIDADOR');
+            sc(28, 4, 'ID DE CONTENEDOR');
+            ws2['!ref'] = 'A1:G28';
+            ws2['!cols'] = [{},{ wch:17 },{ wch:11 },{ wch:62 },{ wch:10 },{ wch:11 },{ wch:11 }];
+            ws2['!merges'] = [{ s:{r:1,c:3},e:{r:1,c:6} },{ s:{r:1,c:1},e:{r:4,c:1} }];
+            XLSX2.utils.book_append_sheet(wb2, ws2, 'Manifiesto');
+            var fechaFile = fechaRaw.replace(/-/g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
+            var licFile   = (licId || 'BOD').replace(/[^A-Z0-9]/gi,'_');
+            XLSX2.writeFile(wb2, 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.xlsx');
+          });
+        });
+      } // fin renderManifiestoFiltrado
+
+      // Asegurar que manifBody existe y poner advertencias fuera de él
+      var manifBody2 = document.getElementById('manif-body');
+      if(manifBody2 && htmlAdv) {
+        var advNode = document.getElementById('bod-manif-adv');
+        if(!advNode){ advNode = document.createElement('div'); advNode.id='bod-manif-adv'; manifBody2.before(advNode); }
+        advNode.innerHTML = htmlAdv;
+      }
+
+      renderManifiestoFiltrado();
+
+      // Listeners de filtros (idempotentes con _bodWired)
+      ['filtro-man-lichija','filtro-man-sku'].forEach(function(id){
+        var el = document.getElementById(id);
+        if(el && !el._bodWired){ el._bodWired = true; el.addEventListener('input', renderManifiestoFiltrado); }
       });
     })
     .catch(function(){
@@ -11272,15 +11313,86 @@ function bodRenderWmsVsApp() {
   var sesId   = sesion.id || '';
   var usuario = window.currentUser ? window.currentUser.name : '';
 
-  vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
+  vistaEl.innerHTML = '<div style="margin-bottom:.4rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<label class="btn btn-sm" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.75rem">'
+    +'📂 Cargar WMS teórico'
+    +'<input type="file" id="bod-wms-teorico-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
+    +'</label>'
+    +'<span id="bod-wms-teorico-msg" style="font-size:.78rem"></span>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-wms-furgon" class="field-inp" placeholder="Furgón" style="width:70px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-wms-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-wms-tarima" class="field-inp" placeholder="Tarima" style="width:75px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-wms-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-wms-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
     +'</div>'
     +'<div id="bod-wms-app-tabla"><div style="color:#888;font-size:.82rem">Cargando conciliación WMS vs App…</div></div>';
 
+  // Wire upload WMS teórico (licencia bolsón/padre, sin tipo hija)
+  var inpTeorico = document.getElementById('bod-wms-teorico-inp');
+  if(inpTeorico) inpTeorico.addEventListener('change', function(){
+    if(!this.files||!this.files[0]) return;
+    var archivo = this.files[0];
+    var msgT = document.getElementById('bod-wms-teorico-msg');
+    if(msgT) msgT.innerHTML = '<span style="color:#888">⏳ Subiendo '+escH(archivo.name)+'…</span>';
+    this.value = '';
+    var fd = new FormData();
+    fd.append('file', archivo);
+    fd.append('usuario', usuario);
+    fd.append('licencia_id', licId);
+    // No enviar tipo_licencia hija_salida ni licencia_padre — es el WMS teórico del bolsón
+    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!msgT) return;
+        if(!d.ok){ msgT.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
+        var col = d.advertencia ? '#e65100' : '#1e7e34';
+        var txt = '✅ '+d.procesadas+' filas · Entradas 952: '+((d.entradas_bolson)||0);
+        if(d.advertencia) txt += ' ⚠';
+        msgT.innerHTML = '<span style="color:'+col+'">'+txt+'</span>';
+        bodCargarWmsVsApp(licId, sesId);
+      }).catch(function(){ if(msgT) msgT.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
+  });
+
   if(licId) bodCargarWmsVsApp(licId, sesId);
+}
+
+function _bodRenderWmsTbl() {
+  var tbl = document.getElementById('bod-wms-app-tabla');
+  if(!tbl || !_bodDatosWms) return;
+  var colores = {
+    'Cuadrado':'#1e7e34', 'Pendiente de entarimar':'#e65100',
+    'Diferencia: faltante APP':'#c0392b', 'Diferencia: excedente APP':'#1565c0',
+    'Entarimado sin WMS':'#7b1fa2', 'Sin datos':'#aaa'
+  };
+  var filtLicHija = (document.getElementById('filtro-wms-lichija')||{value:''}).value.trim().toUpperCase();
+  var filtSku     = (document.getElementById('filtro-wms-sku')    ||{value:''}).value.trim().toUpperCase();
+  var skusFilt = _bodDatosWms.filter(function(s){
+    if(filtLicHija && !(s.licencia_hija||'').toUpperCase().includes(filtLicHija)) return false;
+    if(filtSku     && !(s.sku||'').toUpperCase().includes(filtSku)) return false;
+    return true;
+  });
+  if(!skusFilt.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>'; return; }
+  var html = '<div class="tbl-wrap"><table><thead><tr>'
+    +'<th>Licencia</th><th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th>'
+    +'<th>Estado</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
+    +'</tr></thead><tbody>';
+  skusFilt.forEach(function(s){
+    var col = colores[s.estado]||'#555';
+    html += '<tr><td style="font-size:.73rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
+      +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
+      +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
+      +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
+      +'<td class="tc">'+s.cantidad_app+'</td>'
+      +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
+      +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(s.tarimas||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(s.furgon||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(s.licencia_hija||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(s.destino_tr999||'—')+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table></div>';
+  tbl.innerHTML = html;
 }
 
 function bodCargarWmsVsApp(licId, sesId) {
@@ -11289,47 +11401,16 @@ function bodCargarWmsVsApp(licId, sesId) {
   fetch('/api/bod/reportes/wms-vs-app'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok||!d.skus||!d.skus.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>'; return; }
-      var colores = {
-        'Cuadrado':'#1e7e34',
-        'Pendiente de entarimar':'#e65100',
-        'Diferencia: faltante APP':'#c0392b',
-        'Diferencia: excedente APP':'#1565c0',
-        'Entarimado sin WMS':'#7b1fa2',
-        'Sin datos':'#aaa'
-      };
-      // Filtros de cliente
-      var filtFurgon  = (document.getElementById('filtro-wms-furgon')  ? document.getElementById('filtro-wms-furgon').value  : '').trim().toUpperCase();
-      var filtLicHija = (document.getElementById('filtro-wms-lichija') ? document.getElementById('filtro-wms-lichija').value : '').trim().toUpperCase();
-      var filtTarima  = (document.getElementById('filtro-wms-tarima')  ? document.getElementById('filtro-wms-tarima').value  : '').trim().toUpperCase();
-      var skusFilt = d.skus.filter(function(s){
-        if(filtFurgon  && !(s.furgon||'').toUpperCase().includes(filtFurgon)) return false;
-        if(filtLicHija && !(s.licencia_hija||'').toUpperCase().includes(filtLicHija)) return false;
-        if(filtTarima  && !(s.tarimas||'').toUpperCase().includes(filtTarima)) return false;
-        return true;
+      if(!d.ok||!d.skus||!d.skus.length){
+        _bodDatosWms = [];
+        tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>';
+        return;
+      }
+      _bodDatosWms = d.skus;
+      _bodRenderWmsTbl();
+      ['filtro-wms-lichija','filtro-wms-sku'].forEach(function(id){
+        var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderWmsTbl);}
       });
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>Licencia</th><th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th>'
-        +'<th>Estado</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
-        +'</tr></thead><tbody>';
-      skusFilt.forEach(function(s){
-        var col = colores[s.estado]||'#555';
-        html += '<tr><td style="font-size:.73rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
-          +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
-          +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
-          +'<td class="tc">'+s.cantidad_app+'</td>'
-          +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
-          +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(s.tarimas||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(s.furgon||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(s.licencia_hija||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(s.destino_tr999||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table></div>';
-      if(!skusFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-      tbl.innerHTML = html;
     }).catch(function(){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
 }
 
@@ -11340,50 +11421,55 @@ function bodRenderFlujoBolson() {
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-flujo-furgon" class="field-inp" placeholder="Furgón" style="width:70px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-flujo-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-flujo-tarima" class="field-inp" placeholder="Tarima" style="width:75px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-flujo-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-flujo-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
     +'</div>'
     +'<div id="flujo-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando flujo…</div></div>';
   fetch('/api/bod/reportes/flujo-bolson'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
-      var tblCont = document.getElementById('flujo-tabla-cont') || vistaEl;
-      var filtFurgonF  = (document.getElementById('filtro-flujo-furgon')  ? document.getElementById('filtro-flujo-furgon').value  : '').trim().toUpperCase();
-      var filtLicHijaF = (document.getElementById('filtro-flujo-lichija') ? document.getElementById('filtro-flujo-lichija').value : '').trim().toUpperCase();
-      var filtTarimaF  = (document.getElementById('filtro-flujo-tarima')  ? document.getElementById('filtro-flujo-tarima').value  : '').trim().toUpperCase();
-      var movFilt = d.movimientos.filter(function(m){
-        if(filtFurgonF  && !(m.furgon||'').toUpperCase().includes(filtFurgonF)) return false;
-        if(filtLicHijaF && !(m.licencia_hija||'').toUpperCase().includes(filtLicHijaF)) return false;
-        if(filtTarimaF  && !(m.tarimas||'').toUpperCase().includes(filtTarimaF)) return false;
-        return true;
+      if(!d.ok||!d.movimientos||!d.movimientos.length){ var fc=document.getElementById('flujo-tabla-cont')||vistaEl; fc.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
+      _bodDatosFlujo = d.movimientos;
+      _bodRenderFlujoTbl();
+      ['filtro-flujo-lichija','filtro-flujo-sku'].forEach(function(id){
+        var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderFlujoTbl);}
       });
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
-        +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th>'
-        +'<th>Tarimas</th><th>Placa</th><th>Marchamo</th><th>Destino TR999</th>'
-        +'</tr></thead><tbody>';
-      movFilt.forEach(function(m){
-        var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
-        html += '<tr><td style="font-weight:600">'+escH(m.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
-          +'<td class="tc">'+m.entradas_952+'</td>'
-          +'<td class="tc">'+m.salidas_tr999+'</td>'
-          +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.furgon||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.tarimas||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.placa||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.marchamo||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table></div>';
-      if(!movFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-      tblCont.innerHTML = html;
-    }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+    }).catch(function(){ var fc=document.getElementById('flujo-tabla-cont')||vistaEl; fc.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+}
+function _bodRenderFlujoTbl() {
+  var cont = document.getElementById('flujo-tabla-cont') || document.getElementById('bod-aud-vista');
+  if(!cont || !_bodDatosFlujo) return;
+  var filtLicHijaF = (document.getElementById('filtro-flujo-lichija')||{value:''}).value.trim().toUpperCase();
+  var filtSkuF     = (document.getElementById('filtro-flujo-sku')    ||{value:''}).value.trim().toUpperCase();
+  var movFilt = _bodDatosFlujo.filter(function(m){
+    if(filtLicHijaF && !(m.licencia_hija||'').toUpperCase().includes(filtLicHijaF)) return false;
+    if(filtSkuF     && !(m.sku||'').toUpperCase().includes(filtSkuF)) return false;
+    return true;
+  });
+  var html = '<div class="tbl-wrap"><table><thead><tr>'
+    +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
+    +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th>'
+    +'<th>Tarimas</th><th>Placa</th><th>Marchamo</th><th>Destino TR999</th>'
+    +'</tr></thead><tbody>';
+  movFilt.forEach(function(m){
+    var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
+    html += '<tr><td style="font-weight:600">'+escH(m.sku)+'</td>'
+      +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
+      +'<td class="tc">'+m.entradas_952+'</td>'
+      +'<td class="tc">'+m.salidas_tr999+'</td>'
+      +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.furgon||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.tarimas||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.placa||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.marchamo||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table></div>';
+  if(!movFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
+  cont.innerHTML = html;
 }
 
 // ── Vista Remanentes ─────────────────────────────────────────────────────
@@ -11393,64 +11479,63 @@ function bodRenderRemanentes() {
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-rem-furgon" class="field-inp" placeholder="Furgón" style="width:70px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-rem-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-rem-tarima" class="field-inp" placeholder="Tarima" style="width:75px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-rem-lichija" class="field-inp" placeholder="Lic. hija" style="width:120px;padding:3px 7px;font-size:.76rem">'
+    +'<input type="text" id="filtro-rem-sku" class="field-inp" placeholder="SKU" style="width:90px;padding:3px 7px;font-size:.76rem">'
     +'</div>'
     +'<div id="rem-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando remanentes…</div></div>';
   fetch('/api/bod/reportes/remanentes'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok||!d.remanentes||!d.remanentes.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
-      var estadoCol = {
-        'Pendiente de entarimar':'#e65100',
-        'Pendiente de asignación de furgón':'#6a1b9a',
-        'Pendiente de licencia hija':'#ad1457',
-        'Pendiente de movimiento WMS salida':'#1565c0',
-        'Pendiente por ubicación distinta a 952':'#f57c00',
-        'Remanente operativo':'#c0392b',
-        'Entarimado sin WMS':'#7b1fa2',
-        'Pendiente de traslado':'#1565c0',
-        'Pendiente normal':'#e65100',
-        'Atrasado':'#c0392b',
-        'Sin fecha':'#888'
-      };
-      var tblContR = document.getElementById('rem-tabla-cont') || vistaEl;
-      var filtFurgonR  = (document.getElementById('filtro-rem-furgon')  ? document.getElementById('filtro-rem-furgon').value  : '').trim().toUpperCase();
-      var filtLicHijaR = (document.getElementById('filtro-rem-lichija') ? document.getElementById('filtro-rem-lichija').value : '').trim().toUpperCase();
-      var filtTarimaR  = (document.getElementById('filtro-rem-tarima')  ? document.getElementById('filtro-rem-tarima').value  : '').trim().toUpperCase();
-      var remFilt = d.remanentes.filter(function(r){
-        if(filtFurgonR  && !(r.furgon||'').toUpperCase().includes(filtFurgonR)) return false;
-        if(filtLicHijaR && !(r.licencia_hija||'').toUpperCase().includes(filtLicHijaR)) return false;
-        if(filtTarimaR  && !(r.tarimas||'').toUpperCase().includes(filtTarimaR)) return false;
-        return true;
+      if(!d.ok||!d.remanentes||!d.remanentes.length){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
+      _bodDatosRem = d.remanentes;
+      _bodRenderRemTbl();
+      ['filtro-rem-lichija','filtro-rem-sku'].forEach(function(id){
+        var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderRemTbl);}
       });
-      var html = '<div class="tbl-wrap"><table><thead><tr>'
-        +'<th>SKU</th><th>Descripción</th>'
-        +'<th class="tc">Entrada 952</th><th class="tc">App</th><th class="tc">Salida TR999</th><th class="tc">Remanente</th>'
-        +'<th>Causa</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Placa</th><th>Marchamo</th><th>Destino</th>'
-        +'</tr></thead><tbody>';
-      remFilt.forEach(function(r){
-        var col = estadoCol[r.estado_remanente]||'#555';
-        html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
-          +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
-          +'<td class="tc">'+Number(r.entrada_952||0)+'</td>'
-          +'<td class="tc">'+Number(r.app_entarimada||0)+'</td>'
-          +'<td class="tc">'+Number(r.salida_tr999||0)+'</td>'
-          +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
-          +'<td><span style="font-size:.71rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.tarimas||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.furgon||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.licencia_hija||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.placa||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.marchamo||'—')+'</td>'
-          +'<td style="font-size:.73rem;color:#888">'+escH(r.destino_tr999||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table></div>';
-      if(!remFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-      tblContR.innerHTML = html;
-    }).catch(function(){ vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+    }).catch(function(){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar.</div>'; });
+}
+function _bodRenderRemTbl() {
+  var cont = document.getElementById('rem-tabla-cont') || document.getElementById('bod-aud-vista');
+  if(!cont || !_bodDatosRem) return;
+  var estadoCol = {
+    'Pendiente de entarimar':'#e65100', 'Pendiente de asignación de furgón':'#6a1b9a',
+    'Pendiente de licencia hija':'#ad1457', 'Pendiente de movimiento WMS salida':'#1565c0',
+    'Pendiente por ubicación distinta a 952':'#f57c00', 'Remanente operativo':'#c0392b',
+    'Entarimado sin WMS':'#7b1fa2', 'Pendiente de traslado':'#1565c0',
+    'Pendiente normal':'#e65100', 'Atrasado':'#c0392b', 'Sin fecha':'#888'
+  };
+  var filtLicHijaR = (document.getElementById('filtro-rem-lichija')||{value:''}).value.trim().toUpperCase();
+  var filtSkuR     = (document.getElementById('filtro-rem-sku')    ||{value:''}).value.trim().toUpperCase();
+  var remFilt = _bodDatosRem.filter(function(r){
+    if(filtLicHijaR && !(r.licencia_hija||'').toUpperCase().includes(filtLicHijaR)) return false;
+    if(filtSkuR     && !(r.sku||'').toUpperCase().includes(filtSkuR)) return false;
+    return true;
+  });
+  var html = '<div class="tbl-wrap"><table><thead><tr>'
+    +'<th>SKU</th><th>Descripción</th>'
+    +'<th class="tc">Entrada 952</th><th class="tc">App</th><th class="tc">Salida TR999</th><th class="tc">Remanente</th>'
+    +'<th>Causa</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Placa</th><th>Marchamo</th><th>Destino</th>'
+    +'</tr></thead><tbody>';
+  remFilt.forEach(function(r){
+    var col = estadoCol[r.estado_remanente]||'#555';
+    html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
+      +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
+      +'<td class="tc">'+Number(r.entrada_952||0)+'</td>'
+      +'<td class="tc">'+Number(r.app_entarimada||0)+'</td>'
+      +'<td class="tc">'+Number(r.salida_tr999||0)+'</td>'
+      +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
+      +'<td><span style="font-size:.71rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.tarimas||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.furgon||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.licencia_hija||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.placa||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.marchamo||'—')+'</td>'
+      +'<td style="font-size:.73rem;color:#888">'+escH(r.destino_tr999||'—')+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table></div>';
+  if(!remFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
+  cont.innerHTML = html;
 }
 
 // ── Reporte Consolidado Excel ─────────────────────────────────────────────
