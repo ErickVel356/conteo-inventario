@@ -10395,6 +10395,7 @@ function bodRenderAuditoria(data) {
     +' style="width:130px;padding:3px 7px;font-size:.78rem;text-transform:uppercase">'
     +'<button class="btn btn-xs" id="bod-btn-adic-add" style="background:#e3f2fd;color:#1565c0;font-size:.72rem">Añadir</button>'
     +'<span id="bod-adic-lista" style="font-size:.73rem;color:#555"></span>'
+    +'<span id="bod-adic-msg" style="font-size:.73rem;margin-left:4px"></span>'
     +'</div>'
     +'</div>';
   // Tabs
@@ -10413,17 +10414,33 @@ function bodRenderAuditoria(data) {
 
   // Wire añadir licencia adicional
   var btnAdic = document.getElementById('bod-btn-adic-add');
+  var adicMsgEl = document.getElementById('bod-adic-msg');
   if(btnAdic) btnAdic.addEventListener('click', function(){
     var inp = document.getElementById('bod-adic-licencia');
     var lic = (inp ? inp.value : '').trim().toUpperCase();
-    if(!lic) return;
+    if(!lic){ if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">Ingresá una licencia.</span>'; return; }
     var licBase = (bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.licencia_id) || '';
     if(lic === licBase || bodLicenciasAdicionales.includes(lic)){
-      alert('Esa licencia ya está incluida.'); return;
+      if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#e65100">Esa licencia ya está incluida.</span>'; return;
     }
-    bodLicenciasAdicionales.push(lic);
-    if(inp) inp.value = '';
-    bodActualizarListaAdicionales();
+    var fecha = bodAuditoriaData && bodAuditoriaData.sesion ? (bodAuditoriaData.sesion.fecha_trabajo||'') : '';
+    if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#888">Verificando…</span>';
+    fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok || !d.sesion){
+          if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">No se encontró sesión para <strong>'+escH(lic)+'</strong> en esta fecha.</span>';
+          return;
+        }
+        bodLicenciasAdicionales.push(lic);
+        if(inp) inp.value = '';
+        if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#1e7e34">✅ '+escH(lic)+' agregada.</span>';
+        bodActualizarListaAdicionales();
+        // Refrescar vista activa si aplica
+        if(bodAudVista==='wms-app')    bodCargarWmsVsApp(licBase, bodAuditoriaData&&bodAuditoriaData.sesion?bodAuditoriaData.sesion.id:'');
+        else if(bodAudVista==='flujo') bodRenderFlujoBolson();
+        else if(bodAudVista==='remanentes') bodRenderRemanentes();
+      }).catch(function(){ if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
   });
 
   bodActualizarListaAdicionales();
@@ -10518,8 +10535,12 @@ function bodRenderTarimasAuditoria() {
         +'🔒 Carga '+escH(carga.furgon)+'</span>';
       checkCell = esAud ? '<td></td>' : '';
     } else if(furg){
+      var btnLiberar = esAud
+        ? '<button class="btn btn-xs bod-btn-liberar-herencia" data-tarima="'+escH(t)+'" data-furgon="'+escH(furg)+'"'
+          +' style="background:#fdecea;color:#c0392b;font-size:.71rem;margin-left:4px">Liberar</button>'
+        : '';
       estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-        +'Furgón '+escH(furg)+' (herencia)</span>';
+        +'Furgón '+escH(furg)+' (herencia)</span>'+btnLiberar;
       checkCell = esAud ? '<td></td>' : '';
     } else {
       estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
@@ -10615,7 +10636,28 @@ function bodRenderTarimasAuditoria() {
     });
   });
 
-  // Wire Editar carga logística
+  // Wire Liberar herencia (tarimas asignadas por viejo flujo, sin carga logística)
+  if(esAud) {
+    vistaEl.querySelectorAll('.bod-btn-liberar-herencia').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tarima = btn.dataset.tarima;
+        var furg   = btn.dataset.furgon;
+        if(!confirm('Esto eliminará la asignación heredada de la tarima '+tarima+' al furgón '+furg+'. ¿Continuar?')) return;
+        bodFetch('DELETE', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon/'+encodeURIComponent(tarima),
+          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
+          .then(function(d){
+            if(!d.ok){ alert(d.error||'Error al liberar'); return; }
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+              .then(function(r){ return r.json(); })
+              .then(function(f){
+                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+                bodRenderTarimasAuditoria();
+              });
+          }).catch(function(){ alert('Sin conexión'); });
+      });
+    });
+  }
   if(esAud) {
     vistaEl.querySelectorAll('.bod-btn-editar-carga').forEach(function(btn){
       btn.addEventListener('click', function(){
@@ -11564,6 +11606,11 @@ function bodActualizarListaAdicionales() {
     btn.addEventListener('click', function(){
       bodLicenciasAdicionales.splice(Number(btn.dataset.idx), 1);
       bodActualizarListaAdicionales();
+      // Refrescar vista activa al quitar licencia
+      var licBase = (bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.licencia_id) || '';
+      if(bodAudVista==='wms-app')    bodCargarWmsVsApp(licBase, bodAuditoriaData&&bodAuditoriaData.sesion?bodAuditoriaData.sesion.id:'');
+      else if(bodAudVista==='flujo') bodRenderFlujoBolson();
+      else if(bodAudVista==='remanentes') bodRenderRemanentes();
     });
   });
 }
