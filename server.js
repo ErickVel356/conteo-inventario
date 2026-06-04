@@ -4547,8 +4547,7 @@ app.post('/api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton', bodGuar
       'Carga '+cargaId+' → Hamilton contenedor '+licHija+' ('+items.length+' SKUs, '+tarimas.join(',')+')');
 
     try {
-      var saved = await saveDailyStateStrict('enviado_hamilton '+licHija);
-      if(!saved) throw new Error('saveDailyStateStrict devolvió respuesta vacía');
+      await saveDailyStateStrict('enviado_hamilton '+licHija);
     } catch(saveErr) {
       if(snapTeorico === null) delete state.teorico[licHija]; else state.teorico[licHija] = snapTeorico;
       if(snapFisico  === null) delete state.fisico[licHija];  else state.fisico[licHija]  = snapFisico;
