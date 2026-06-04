@@ -10276,6 +10276,7 @@ var bodFurgonDraft              = '';   // persiste el valor del campo furgón e
 var bodManifestLoading          = false; // evita fetches simultáneos del manifiesto
 var bodTarimasSeleccionadasDraft = {};   // tarimas con checkbox marcado entre renders
 var bodUltimaInteraccionTarimas  = 0;   // timestamp de última interacción con checkbox
+var bodLicenciasAdicionales     = [];   // licencias bolsón adicionales para reportes
 
 function bodAuditoriaActiva(){
   var pg = document.getElementById('pg-bod-auditoria');
@@ -10376,10 +10377,22 @@ function bodRenderAuditoria(data) {
   var el = document.getElementById('bod-aud-contenido');
   if(!el) return;
   var sesion = (data && data.sesion) || {};
-  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'
+  // Construir badge de licencias adicionales para mostrar en el header
+  var licAdicBadges = bodLicenciasAdicionales.length
+    ? ' <span style="font-size:.7rem;background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px">+'+bodLicenciasAdicionales.join(', +')+'</span>' : '';
+  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem">'
+    +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">'
     +'<span>Sesión <strong>'+escH(sesion.id||'')+'</strong>'
-    +' · '+escH(sesion.licencia_id||'')+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
+    +' · '+escH(sesion.licencia_id||'')+licAdicBadges+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
     +'<button class="btn btn-xs" id="bod-btn-consolidado" style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;margin-left:auto">📥 Consolidado Excel</button>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    +'<label style="font-size:.73rem;color:#888">+ Licencia bolsón:</label>'
+    +'<input type="text" id="bod-adic-licencia" class="field-inp" placeholder="Ej: U25-162300"'
+    +' style="width:130px;padding:3px 7px;font-size:.78rem;text-transform:uppercase">'
+    +'<button class="btn btn-xs" id="bod-btn-adic-add" style="background:#e3f2fd;color:#1565c0;font-size:.72rem">Añadir</button>'
+    +'<span id="bod-adic-lista" style="font-size:.73rem;color:#555"></span>'
+    +'</div>'
     +'</div>';
   // Tabs
   var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
@@ -10394,6 +10407,24 @@ function bodRenderAuditoria(data) {
   // Wire botón consolidado
   var btnCons = document.getElementById('bod-btn-consolidado');
   if(btnCons) btnCons.addEventListener('click', bodDescargarConsolidado);
+
+  // Wire añadir licencia adicional
+  var btnAdic = document.getElementById('bod-btn-adic-add');
+  if(btnAdic) btnAdic.addEventListener('click', function(){
+    var inp = document.getElementById('bod-adic-licencia');
+    var lic = (inp ? inp.value : '').trim().toUpperCase();
+    if(!lic) return;
+    var licBase = (bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.licencia_id) || '';
+    if(lic === licBase || bodLicenciasAdicionales.includes(lic)){
+      alert('Esa licencia ya está incluida.'); return;
+    }
+    bodLicenciasAdicionales.push(lic);
+    if(inp) inp.value = '';
+    bodActualizarListaAdicionales();
+  });
+
+  bodActualizarListaAdicionales();
+
   // Wire tabs sin onclick — manejados todos por el forEach de _switchTab más abajo
   var btnTarimas = document.getElementById('bod-tab-tarimas');
   var btnDetalle = document.getElementById('bod-tab-detalle');
@@ -11106,7 +11137,7 @@ function bodRenderWmsVsApp() {
 function bodCargarWmsVsApp(licId, sesId) {
   var tbl = document.getElementById('bod-wms-app-tabla');
   if(!tbl) return;
-  fetch('/api/bod/reportes/wms-vs-app?licencia_id='+encodeURIComponent(licId))
+  fetch('/api/bod/reportes/wms-vs-app'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok||!d.skus||!d.skus.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos WMS para esta licencia.</div>'; return; }
@@ -11142,7 +11173,7 @@ function bodRenderFlujoBolson() {
   if(!vistaEl || !bodAuditoriaData) return;
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando flujo…</div>';
-  fetch('/api/bod/reportes/flujo-bolson?licencia_id='+encodeURIComponent(licId))
+  fetch('/api/bod/reportes/flujo-bolson'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok||!d.movimientos||!d.movimientos.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin movimientos.</div>'; return; }
@@ -11174,7 +11205,7 @@ function bodRenderRemanentes() {
   if(!vistaEl || !bodAuditoriaData) return;
   var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
   vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando remanentes…</div>';
-  fetch('/api/bod/reportes/remanentes?licencia_id='+encodeURIComponent(licId))
+  fetch('/api/bod/reportes/remanentes'+bodLicQuery(licId))
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(!d.ok||!d.remanentes||!d.remanentes.length){ vistaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin remanentes.</div>'; return; }
@@ -11214,70 +11245,172 @@ function bodRenderRemanentes() {
 
 // ── Reporte Consolidado Excel ─────────────────────────────────────────────
 function bodDescargarConsolidado() {
-  var sesion   = bodAuditoriaData && bodAuditoriaData.sesion;
+  var sesion = bodAuditoriaData && bodAuditoriaData.sesion;
   if(!sesion){ alert('Cargá una sesión primero.'); return; }
-  var licId    = sesion.licencia_id || '';
-  var sesId    = sesion.id || '';
-  var fecha    = sesion.fecha_trabajo || '';
-  var XLSX2    = (typeof XLSX !== 'undefined') ? XLSX : null;
+  var licId  = sesion.licencia_id || '';
+  var sesId  = sesion.id          || '';
+  var fecha  = sesion.fecha_trabajo || '';
+  var XLSX2  = (typeof XLSX !== 'undefined') ? XLSX : null;
   if(!XLSX2){ alert('Librería Excel no disponible.'); return; }
 
-  var q = licId ? '?licencia_id=eq.'+encodeURIComponent(licId) : '';
+  // Usar helper bodLicQuery para incluir licencias adicionales
+  var q = bodLicQuery(licId);  // ?licencia_id=X  o  ?licencias=X,Y,Z
   var msgEl = document.getElementById('bod-aud-msg');
   if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Generando consolidado…</span>';
 
+  // Fetch en paralelo — usando los mismos endpoints que las pestañas visibles
   Promise.all([
+    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)).then(function(r){ return r.json(); }),
+    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto').then(function(r){ return r.json(); }),
     fetch('/api/bod/reportes/wms-vs-app'+q).then(function(r){ return r.json(); }),
     fetch('/api/bod/reportes/flujo-bolson'+q).then(function(r){ return r.json(); }),
     fetch('/api/bod/reportes/remanentes'+q).then(function(r){ return r.json(); }),
-    fetch('/api/bod/reportes/furgones?sesion_id='+encodeURIComponent(sesId)).then(function(r){ return r.json(); }),
-    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto').then(function(r){ return r.json(); })
+    fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){ return r.json(); })
   ]).then(function(results){
-    var wmsApp = results[0], flujo = results[1], rems = results[2], furgones = results[3], manif = results[4];
+    var sesRes = results[0], manif = results[1], wmsApp = results[2],
+        flujo  = results[3], rems  = results[4], furgAsig = results[5];
     var wb = XLSX2.utils.book_new();
+    function fallback(data){ return data && data.length > 1 ? data : data.concat([['Sin datos para esta sección']]); }
 
-    // Hoja 1: WMS_vs_APP
-    var wmsData = [['Licencia','SKU','Descripción','WMS Teórico','APP','Diferencia','Estado']];
-    if(wmsApp.ok && wmsApp.skus) wmsApp.skus.forEach(function(s){
-      wmsData.push([s.licencia_id||'',s.sku,s.descripcion,s.cantidad_teorica_wms,s.cantidad_app,s.diferencia,s.estado]);
+    // Helper: construir filas de tarimas/detalle/manifiesto para una sesión
+    function buildSesRows(sRes, fRes, mRes, licLabel) {
+      var asigM = {};
+      if(fRes && fRes.ok && fRes.asignaciones) fRes.asignaciones.forEach(function(a){ asigM[a.tarima] = a.furgon; });
+      var lineas = sRes && sRes.ok && sRes.lineas ? sRes.lineas : [];
+      var resT = {};
+      lineas.forEach(function(l){
+        var t = l.tarima||'?';
+        if(!resT[t]) resT[t] = { tarima:t, lineas:0, unidades:0 };
+        resT[t].lineas++; resT[t].unidades += Number(l.cantidad)||0;
+      });
+      var tRows = [], dRows = [], mRows = [];
+      Object.keys(resT).sort().forEach(function(t){
+        var r = resT[t]; var furg = asigM[t] || '';
+        tRows.push([licLabel, t, r.lineas, r.unidades, furg ? 'Furgón '+furg : 'Sin asignar', furg]);
+      });
+      lineas.forEach(function(l){
+        var estado = l.auditado ? 'Auditado' : 'Pendiente';
+        dRows.push([licLabel, l.tarima||'', l.sku||'', l.descripcion||'', Number(l.cantidad),
+          l.cantidad_audit!=null ? Number(l.cantidad_audit) : '',
+          l.operador||'', estado, l.auditado_por||'',
+          l.ts_captura ? l.ts_captura.slice(0,16) : '',
+          l.ts_auditado ? l.ts_auditado.slice(0,16) : '']);
+      });
+      if(mRes && mRes.ok && mRes.furgones) mRes.furgones.forEach(function(f){
+        f.skus.forEach(function(s){
+          var est = s.pendientes===0 ? 'Auditado' : 'Pendiente ('+s.pendientes+')';
+          mRows.push([licLabel, f.furgon, s.sku, s.descripcion, s.unidades, est, f.tarimas.join(', '), s.pendientes]);
+        });
+      });
+      return { tRows:tRows, dRows:dRows, mRows:mRows };
+    }
+
+    // Datos de la sesión principal
+    var mainRows = buildSesRows(sesRes, furgAsig, manif, licId);
+    var tData = [['Licencia','Tarima','Líneas','Unidades','Estado','Furgón']].concat(mainRows.tRows);
+    var dData = [['Licencia','Tarima','SKU','Descripción','Cant. capturada','Cant. auditada','Operador','Estado','Auditor','Fecha captura','Fecha auditoría']].concat(mainRows.dRows);
+    var mData = [['Licencia','Furgón','SKU','Descripción','Unidades','Estado','Tarimas','Pendientes']].concat(mainRows.mRows);
+
+    // Si hay licencias adicionales, agregar sus datos en paralelo
+    var licsAdic = bodLicenciasAdicionales.slice();
+    var extraFetches = licsAdic.map(function(lic){
+      return fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
+        .then(function(r){ return r.json(); })
+        .then(function(sesD){
+          if(!sesD.ok || !sesD.sesion) return null;
+          var sid = sesD.sesion.id;
+          return Promise.all([
+            fetch('/api/bod/sesion/'+encodeURIComponent(sid)).then(function(r){ return r.json(); }),
+            fetch('/api/bod/sesion/'+encodeURIComponent(sid)+'/furgones').then(function(r){ return r.json(); }),
+            fetch('/api/bod/sesion/'+encodeURIComponent(sid)+'/manifiesto').then(function(r){ return r.json(); })
+          ]).then(function(sub){ return { lic:lic, sRes:sub[0], fRes:sub[1], mRes:sub[2] }; });
+        }).catch(function(){ return null; });
     });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(wmsData), 'WMS_vs_APP');
 
-    // Hoja 2: Flujo_Bolson
-    var flujoData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente','Lic. Origen','Lic. Salida','Destino TR999']];
-    if(flujo.ok && flujo.movimientos) flujo.movimientos.forEach(function(m){
-      flujoData.push([m.sku,m.descripcion,m.entradas_952,m.salidas_tr999,m.remanente,m.licencia_origen||'',m.licencia_salida||'',m.destino_tr999||'']);
+    Promise.all(extraFetches).then(function(extras){
+      extras.forEach(function(ex){
+        if(!ex) return;
+        var rows = buildSesRows(ex.sRes, ex.fRes, ex.mRes, ex.lic);
+        tData = tData.concat(rows.tRows);
+        dData = dData.concat(rows.dRows);
+        mData = mData.concat(rows.mRows);
+      });
+
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(tData)), 'Tarimas');
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(dData)), 'Detalle');
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(mData)), 'Manifiesto');
+
+      // ── Hoja 4: WMS_vs_APP ────────────────────────────────────────────────
+      var wData = [['Licencia','SKU','Descripción','WMS','App','Diferencia','Estado']];
+      if(wmsApp.ok && wmsApp.skus) wmsApp.skus.forEach(function(s){
+        wData.push([s.licencia_id||'', s.sku, s.descripcion||'',
+          s.cantidad_teorica_wms, s.cantidad_app, s.diferencia, s.estado]);
+      });
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(wData)), 'WMS_vs_APP');
+
+      // ── Hoja 5: Flujo_Bolson ─────────────────────────────────────────────
+      var fData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente','Lic. Origen','Lic. Hija','Furgón','Destino TR999']];
+      if(flujo.ok && flujo.movimientos) flujo.movimientos.forEach(function(m){
+        fData.push([m.sku, m.descripcion||'', m.entradas_952, m.salidas_tr999, m.remanente,
+          m.licencia_origen||'', m.licencia_hija||'', m.furgon||'', m.destino_tr999||'']);
+      });
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(fData)), 'Flujo_Bolson');
+
+      // ── Hoja 6: Remanentes ───────────────────────────────────────────────
+      var rData = [['SKU','Descripción','Entrada 952','App entarimada','Salida TR999','Remanente',
+        'Lic. Origen','Lic. Hija','Furgón','Primer Ingreso','Último Mov.','Días en Bolsón','Causa']];
+      if(rems.ok && rems.remanentes) rems.remanentes.forEach(function(r){
+        rData.push([r.sku, r.descripcion||'',
+          Number(r.entrada_952 || 0),
+          Number(r.app_entarimada || 0),
+          Number(r.salida_tr999 || 0),
+          r.cantidad_remanente,
+          r.licencia_origen||'', r.licencia_salida||'', r.furgon||'',
+          r.fecha_primer_ingreso||'', r.ultimo_movimiento||'',
+          r.dias_en_bolson!=null ? r.dias_en_bolson : '',
+          r.estado_remanente||'']);
+      });
+      XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(rData)), 'Remanentes');
+
+      var fechaFile = fecha.replace(/-/g,'')||new Date().toISOString().slice(0,10).replace(/-/g,'');
+      var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
+      var licsExtra2 = bodLicenciasAdicionales.length ? '_+'+bodLicenciasAdicionales.length+'mas' : '';
+      XLSX2.writeFile(wb, 'Consolidado_'+licFile+licsExtra2+'_'+fechaFile+'.xlsx');
+      if(msgEl) msgEl.innerHTML = '<span style="color:#1e7e34">✅ Consolidado con 6 hojas descargado.</span>';
+    }).catch(function(err){
+      console.error('bodDescargarConsolidado extras error:', err);
+      if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">❌ Error en licencias adicionales: '+escH(err.message||'')+'</span>';
     });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(flujoData), 'Flujo_Bolson');
-
-    // Hoja 3: Remanentes
-    var remData = [['SKU','Descripción','Remanente','Lic. Origen','Lic. Hija','Furgón','Primer Ingreso','Días','Causa']];
-    if(rems.ok && rems.remanentes) rems.remanentes.forEach(function(r){
-      remData.push([r.sku,r.descripcion,r.cantidad_remanente,r.licencia_origen||'',r.licencia_salida||'',r.furgon||'',r.fecha_primer_ingreso||'',r.dias_en_bolson,r.estado_remanente]);
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(remData), 'Remanentes');
-
-    // Hoja 4: Por_Furgon
-    var furgData = [['Furgón','SKU','Descripción','Cantidad','Tarimas']];
-    if(furgones.ok && furgones.furgones) furgones.furgones.forEach(function(f){
-      f.skus.forEach(function(s){ furgData.push([f.furgon,s.sku,s.descripcion,s.cantidad,(s.tarimas_relacionadas||[]).join(', ')]); });
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(furgData), 'Por_Furgon');
-
-    // Hoja 5: Movimientos_WMS (desde manifiesto — datos del manifiesto por furgon)
-    var movData = [['Furgón','SKU','Descripción','Unidades','Pendientes']];
-    if(manif.ok && manif.furgones) manif.furgones.forEach(function(f){
-      f.skus.forEach(function(s){ movData.push([f.furgon,s.sku,s.descripcion,s.unidades,s.pendientes]); });
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(movData), 'Movimientos_WMS');
-
-    var fechaFile = fecha.replace(/-/g,'')||new Date().toISOString().slice(0,10).replace(/-/g,'');
-    var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
-    XLSX2.writeFile(wb, 'Consolidado_'+licFile+'_'+fechaFile+'.xlsx');
-    if(msgEl) msgEl.innerHTML = '<span style="color:#1e7e34">✅ Consolidado descargado.</span>';
-  }).catch(function(e){
-    if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">❌ Error al generar consolidado.</span>';
+  }).catch(function(err){
+    console.error('bodDescargarConsolidado error:', err);
+    if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">❌ Error al generar consolidado: '+escH(err.message||'')+'</span>';
   });
+}
+
+// Actualizar badge/lista de licencias adicionales en el header
+function bodActualizarListaAdicionales() {
+  var el = document.getElementById('bod-adic-lista');
+  if(!el) return;
+  if(!bodLicenciasAdicionales.length){ el.textContent = ''; return; }
+  el.innerHTML = bodLicenciasAdicionales.map(function(l, i){
+    return '<span style="background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px;margin-right:3px">'
+      +escH(l)
+      +'<span class="bod-btn-rm-adic" data-idx="'+i+'" style="cursor:pointer;margin-left:3px;color:#c0392b;font-weight:700">×</span>'
+      +'</span>';
+  }).join('');
+  el.querySelectorAll('.bod-btn-rm-adic').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      bodLicenciasAdicionales.splice(Number(btn.dataset.idx), 1);
+      bodActualizarListaAdicionales();
+    });
+  });
+}
+
+// Construir query string para endpoints de reportes incluyendo licencias adicionales
+function bodLicQuery(licBase) {
+  var todas = [licBase].concat(bodLicenciasAdicionales).filter(Boolean);
+  if(todas.length === 1) return '?licencia_id='+encodeURIComponent(todas[0]);
+  return '?licencias='+encodeURIComponent(todas.join(','));
 }
 
 })(); // FIN IIFE BOD MODULE
