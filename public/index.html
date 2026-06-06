@@ -11314,6 +11314,8 @@ function bodRenderManifiestoAuditoria() {
             +' style="margin-left:auto;background:#e8f5e9;color:#1b5e20;font-size:.73rem">📥 Exportar Excel</button>'
             +' <button class="btn btn-xs bod-btn-export-word" data-furgon="'+escH(f.furgon)+'"'
             +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">📄 Word</button>'
+            +' <button class="btn btn-xs bod-btn-export-pdf" data-furgon="'+escH(f.furgon)+'"'
+            +' style="background:#fce4ec;color:#b71c1c;font-size:.73rem">📕 PDF</button>'
             +'</div>'
             +'<div class="tbl-wrap"><table><thead><tr>'
             +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
@@ -11464,11 +11466,89 @@ function bodRenderManifiestoAuditoria() {
         manifBody.querySelectorAll('.bod-btn-export-word').forEach(function(btnW){
           btnW.addEventListener('click', function(){
             var furgon = btnW.dataset.furgon;
-            var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
-            if(!fData) return;
             var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
             var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
-            bodExportarManifiestoWord(furgon, fData, carga);
+            if(!carga || !carga.id){
+              alert('No se encontró la carga logística para el furgón '+furgon+'. Verificá que la carga existe.');
+              return;
+            }
+            // Llamar al endpoint backend que genera el .docx real
+            var url = '/api/bod/sesion/'+encodeURIComponent(sesId)
+              +'/carga-logistica/'+encodeURIComponent(carga.id)
+              +'/manifiesto-word'
+              +(currentUser ? '?usuario='+encodeURIComponent(currentUser.name) : '');
+            btnW.disabled = true;
+            btnW.textContent = '⏳ Generando...';
+            fetch(url)
+              .then(function(r){
+                if(!r.ok) return r.json().then(function(d){ throw new Error(d.error||'Error '+r.status); });
+                return r.blob();
+              })
+              .then(function(blob){
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                // Construir nombre desde datos disponibles
+                var licF = (carga.licencia_hija||'BOD').replace(/[^A-Z0-9]/gi,'_');
+                var fec  = (bodAuditoriaData&&bodAuditoriaData.sesion&&bodAuditoriaData.sesion.fecha_trabajo||'').replace(/-/g,'');
+                a.download = 'Manifiesto_'+licF+'_Furgon'+furgon+'_'+(fec||'')+'.docx';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+              })
+              .catch(function(err){
+                alert('Error al generar el Word: '+err.message);
+              })
+              .finally(function(){
+                btnW.disabled = false;
+                btnW.textContent = '📄 Word';
+              });
+          });
+        });
+
+        // Wire Exportar PDF
+        manifBody.querySelectorAll('.bod-btn-export-pdf').forEach(function(btnP){
+          btnP.addEventListener('click', function(){
+            var furgon = btnP.dataset.furgon;
+            var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+            var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
+            if(!carga || !carga.id){
+              alert('No se encontró la carga logística para el furgón '+furgon+'.');
+              return;
+            }
+            var url = '/api/bod/sesion/'+encodeURIComponent(sesId)
+              +'/carga-logistica/'+encodeURIComponent(carga.id)
+              +'/manifiesto-pdf'
+              +(currentUser ? '?usuario='+encodeURIComponent(currentUser.name) : '');
+            btnP.disabled = true;
+            btnP.textContent = '⏳ PDF...';
+            fetch(url)
+              .then(function(r){
+                if(!r.ok) return r.json().then(function(d){ throw new Error(d.error||'Error '+r.status); });
+                return r.blob();
+              })
+              .then(function(blob){
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                var licF = (carga.licencia_hija||'BOD').replace(/[^A-Z0-9]/gi,'_');
+                var fec  = (bodAuditoriaData&&bodAuditoriaData.sesion&&bodAuditoriaData.sesion.fecha_trabajo||'').replace(/-/g,'');
+                a.download = 'Manifiesto_'+licF+'_Furgon'+furgon+'_'+(fec||'')+'.pdf';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+              })
+              .catch(function(err){
+                var msg = err.message||'';
+                if(msg.indexOf('WKHTMLTOPDF_NOT_FOUND')>=0 || msg.indexOf('wkhtmltopdf')>=0 ||
+                   msg.indexOf('no disponible')>=0) {
+                  alert('PDF no disponible en este servidor.\n\nEl export Word (📄) sigue funcionando normalmente.\nPara habilitar PDF, configurar wkhtmltopdf en Render (ver documentación de deploy).');
+                } else {
+                  alert('Error al generar el PDF: '+msg);
+                }
+              })
+              .finally(function(){
+                btnP.disabled = false;
+                btnP.textContent = '📕 PDF';
+              });
           });
         });
       } // fin renderManifiestoFiltrado
