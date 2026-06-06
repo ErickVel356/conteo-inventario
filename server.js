@@ -3519,6 +3519,64 @@ app.get('/api/bod/status', function(req, res) {
   res.json({ ok: true, enabled: BOD_ENABLED });
 });
 
+// ── GET /api/bod/sesiones-activas ─────────────────────────────────────────
+// Lista de sesiones bolsón activas + resumen de líneas y furgones.
+// Ordenadas: abiertas primero, luego por fecha desc.
+// FIX (vie 06-jun-2026): endpoint sesiones activas para vista de licencias bolsón
+app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
+  try {
+    var sesiones = await supabase('GET', 'bod_sesiones', null,
+      '?tipo=eq.recoleccion&order=fecha_trabajo.desc,ts_creacion.desc&limit=50');
+    if(!Array.isArray(sesiones) || !sesiones.length)
+      return res.json({ ok:true, sesiones:[] });
+
+    // Para cada sesión: contar líneas y furgones (en paralelo, máximo 8 a la vez)
+    var results = await Promise.all(sesiones.map(async function(ses){
+      var [lineas, cierres] = await Promise.all([
+        supabase('GET', 'bod_lineas', null,
+          '?sesion_id=eq.'+encodeURIComponent(ses.id)
+          +'&eliminada=eq.false&select=id,tarima,sku,auditado&limit=1000'
+        ).catch(function(){ return []; }),
+        supabase('GET', 'bod_furgon_cierres', null,
+          '?sesion_id=eq.'+encodeURIComponent(ses.id)+'&select=furgon,estado,licencia_hija'
+        ).catch(function(){ return []; }),
+      ]);
+      lineas  = Array.isArray(lineas)  ? lineas  : [];
+      cierres = Array.isArray(cierres) ? cierres : [];
+
+      var skusUnicos = {};
+      lineas.forEach(function(l){ if(l.sku) skusUnicos[l.sku]=true; });
+
+      return {
+        id:              ses.id,
+        licencia_id:     ses.licencia_id,
+        fecha_trabajo:   ses.fecha_trabajo,
+        estado:          ses.estado || 'abierta',
+        creado_por:      ses.creado_por || '',
+        ts_creacion:     ses.ts_creacion || '',
+        ts_actualizacion: ses.ts_actualizacion || ses.ts_creacion || '',
+        total_lineas:    lineas.length,
+        total_skus:      Object.keys(skusUnicos).length,
+        lineas_auditadas: lineas.filter(function(l){ return l.auditado; }).length,
+        total_furgones:  cierres.length,
+        furgones:        cierres.map(function(c){ return { furgon:c.furgon, estado:c.estado, licencia_hija:c.licencia_hija }; })
+      };
+    }));
+
+    // Ordenar: abiertas primero
+    results.sort(function(a,b){
+      if(a.estado==='abierta' && b.estado!=='abierta') return -1;
+      if(a.estado!=='abierta' && b.estado==='abierta') return  1;
+      return 0;
+    });
+
+    res.json({ ok:true, sesiones:results });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+
 // ── POST /api/bod/sesion ───────────────────────────────────────────────────
 // Crear o devolver sesión existente (idempotente por licencia_id+fecha+tipo).
 app.post('/api/bod/sesion', bodGuard, async (req, res) => {
@@ -5159,7 +5217,31 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-word', bodGuard
       }
       return '';
     }
-    var resSkus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+
+    // ── Fuente de datos: bod_lineas (misma que pantalla y PDF) ───────────────
+    // cg.resumen_skus no tiene estado de auditoría real; bod_lineas sí.
+    var bodLineasWord = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc');
+    bodLineasWord = Array.isArray(bodLineasWord) ? bodLineasWord : [];
+    var asigWordRows = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var tarimaFurgonWord = {};
+    (Array.isArray(asigWordRows)?asigWordRows:[]).forEach(function(a){
+      tarimaFurgonWord[a.tarima] = a.furgon;
+    });
+    var porSkuWord = {};
+    bodLineasWord.forEach(function(l){
+      if(tarimaFurgonWord[l.tarima] !== furgon) return;
+      var sku=l.sku||'?', desc=l.descripcion||'';
+      if(!porSkuWord[sku]) porSkuWord[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
+      var e=porSkuWord[sku];
+      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+      if(!l.auditado){ e.pendientes++; }
+      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+      if(!e.descripcion&&desc) e.descripcion=desc;
+    });
+    Object.values(porSkuWord).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+    var resSkus = Object.values(porSkuWord);
 
     // ── Construir DOCX con librería docx ────────────────────────────────────
     var docx;
@@ -5412,8 +5494,29 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard,
     var encargado   = String(cg.encargado_pedido||cg.creado_por||'');
     var auditorVal  = String(cg.auditado_por||cg.validado_por||req.query.usuario||'');
     var recibidoPor = String(cg.recibido_por||'');
-    var idCont      = String(cg.hamilton_contenedor||cg.id_contenedor||cg.contenedor||'');
-    var resSkus     = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+    var idCont      = String(cg.hamilton_contenedor||cg.id_contenedor||cg.contenedor||''); // NO usar licencia_hija
+
+    // ── Obtener datos reales de auditoría desde bod_lineas (igual que Word y manifiesto) ──
+    var bodLineasPdf = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc');
+    bodLineasPdf = Array.isArray(bodLineasPdf) ? bodLineasPdf : [];
+    var asigPdfRows = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var tarimaFurgonPdf = {};
+    (Array.isArray(asigPdfRows)?asigPdfRows:[]).forEach(function(a){ tarimaFurgonPdf[a.tarima]=a.furgon; });
+    var porSkuPdf = {};
+    bodLineasPdf.forEach(function(l){
+      if(tarimaFurgonPdf[l.tarima] !== furgon) return;
+      var sku=l.sku||'?', desc=l.descripcion||'';
+      if(!porSkuPdf[sku]) porSkuPdf[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
+      var e=porSkuPdf[sku];
+      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+      if(!l.auditado){ e.pendientes++; }
+      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+      if(!e.descripcion&&desc) e.descripcion=desc;
+    });
+    Object.values(porSkuPdf).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+    var resSkus = Object.values(porSkuPdf);
 
     function fd() {
       for(var _i=0;_i<arguments.length;_i++){
