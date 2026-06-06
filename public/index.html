@@ -376,7 +376,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="gate-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-gate-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Continuar</button>
     <div id="gate-loading" style="display:none;text-align:center;margin-top:1rem;font-size:.8rem;color:#888">Verificando…</div>
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.25 · 27-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.30 · 06-jun</div>
   </div>
 </div>
 
@@ -417,7 +417,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
     <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
     <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.25 · 27-may</div>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.30 · 06-jun</div>
   </div>
 </div>
 
@@ -432,7 +432,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <h1 id="topbar-title">📦 Conteo de Inventario</h1>
     <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
          el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.27 · 30-may</span>
+    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.30 · 06-jun</span>
     <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
     <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
   </div>
@@ -501,8 +501,15 @@ textarea.field-inp{resize:vertical;min-height:72px}
     ──────────────────────────────────────────────────────── -->
     <div id="pg-bod-menu" class="page">
       <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
+      <!-- Lista de licencias bolsón activas -->
+      <div id="bod-sesiones-activas-wrap" style="margin-bottom:1rem;background:#f8f9fa;border-radius:8px;padding:.65rem .8rem">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">
+          <span style="font-weight:600;font-size:.82rem;color:#333">📋 Licencias bolsón activas</span>
+          <button id="btn-bod-refresh-activas" class="btn btn-xs" style="font-size:.72rem;background:#e8f4ff;color:#1565c0;padding:2px 8px">↻</button>
+        </div>
+        <div id="bod-sesiones-activas-list" style="font-size:.78rem;color:#888">Cargando…</div>
+      </div>
       <div class="submenu-list">
-        <div class="submenu-item" id="sm-bod-captura">
           <div class="si-icon">📦</div>
           <div class="si-text">
             <div class="si-title">Capturar tarima</div>
@@ -12300,6 +12307,109 @@ function bodExportarManifiestoWord(furgon, fData, carga) {
     a.click();
   }
 }
+
+
+// ── Vista: Licencias bolsón activas ────────────────────────────────────────
+function bodCargarSesionesActivas() {
+  var listEl = document.getElementById('bod-sesiones-activas-list');
+  if(!listEl) return;
+  listEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+  fetch('/api/bod/sesiones-activas')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok || !d.sesiones || !d.sesiones.length) {
+        listEl.innerHTML = '<span style="color:#aaa;font-style:italic">No hay licencias bolsón activas en este momento.</span>';
+        return;
+      }
+      var html = '<table style="width:100%;border-collapse:collapse;font-size:.76rem">'
+        +'<thead><tr style="background:#e8ecf0">'
+        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Licencia</th>'
+        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Fecha</th>'
+        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Estado</th>'
+        +'<th style="padding:3px 6px;text-align:center;font-weight:600">SKUs</th>'
+        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Audit.</th>'
+        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Furgones</th>'
+        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Creado por</th>'
+        +'</tr></thead><tbody>';
+      d.sesiones.forEach(function(s){
+        var esAbierta = s.estado === 'abierta';
+        var estadoBadge = esAbierta
+          ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px">Abierta</span>'
+          : '<span style="background:#eeeeee;color:#555;padding:1px 6px;border-radius:8px">Cerrada</span>';
+        var rowBg = esAbierta ? '' : 'background:#fafafa;opacity:.7';
+        var licLink = esAbierta
+          ? '<button class="bod-btn-abrir-sesion-activa" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
+            +' style="background:none;border:none;color:#1565c0;cursor:pointer;font-size:.76rem;font-weight:600;padding:0;text-decoration:underline">'
+            +escH(s.licencia_id)+'</button>'
+          : '<span>'+escH(s.licencia_id)+'</span>';
+        html += '<tr style="border-top:1px solid #e8e8e8;'+rowBg+'">'
+          +'<td style="padding:3px 6px">'+licLink+'</td>'
+          +'<td style="padding:3px 6px">'+escH(s.fecha_trabajo||'—')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+estadoBadge+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+s.total_skus+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+s.total_furgones+'</td>'
+          +'<td style="padding:3px 6px;color:#666">'+escH(s.creado_por||'—')+'</td>'
+          +'</tr>';
+      });
+      html += '</tbody></table>';
+      listEl.innerHTML = html;
+      // Wire: clic en licencia abre la sesión directamente sin pasar por el buscador
+      listEl.querySelectorAll('.bod-btn-abrir-sesion-activa').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var sesId = btn.dataset.id;
+          var lic   = btn.dataset.lic;
+          var fecha = btn.dataset.fecha;
+          // Rellenar el buscador (para contexto visual)
+          var licInp = document.getElementById('bod-licencia');
+          var fecInp = document.getElementById('bod-fecha');
+          if(licInp) licInp.value = lic;
+          if(fecInp) fecInp.value = fecha;
+          // Navegar a captura y cargar la sesión por ID
+          navTo('pg-bod-captura');
+          var msgEl = document.getElementById('bod-sesion-msg');
+          if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              if(!d.ok || !d.sesion){
+                if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error al cargar sesión')+'</span>';
+                return;
+              }
+              bodSesionActual = d.sesion;
+              if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(d.sesion.licencia_id)+'</span>';
+              var infoEl = document.getElementById('bod-sesion-info');
+              if(infoEl) infoEl.textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
+              var formEl = document.getElementById('bod-form-captura');
+              if(formEl) formEl.style.display = '';
+              bodPoblarTarimas();
+              bodCargarLineas(d.sesion.id);
+              var barraEl = document.getElementById('bod-barra');
+              if(barraEl) barraEl.focus();
+            })
+            .catch(function(){
+              if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
+            });
+        });
+      });
+    })
+    .catch(function(){
+      listEl.innerHTML = '<span style="color:#c0392b;font-size:.75rem">No se pudo cargar la lista.</span>';
+    });
+}
+
+// Cargar al entrar a pg-bod-menu y al presionar el botón ↻
+var _bodRefreshBtn = document.getElementById('btn-bod-refresh-activas');
+if(_bodRefreshBtn) _bodRefreshBtn.addEventListener('click', bodCargarSesionesActivas);
+
+// Cargar automáticamente cuando se navega al menú BOD
+(function(){
+  var _origNav = window.navTo;
+  window.navTo = function(page, title) {
+    _origNav.apply(this, arguments);
+    if(page === 'pg-bod-menu') bodCargarSesionesActivas();
+  };
+})();
 
 })(); // FIN IIFE BOD MODULE
 </script>
