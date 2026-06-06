@@ -506,6 +506,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">
           <span style="font-weight:600;font-size:.82rem;color:#333">📋 Licencias bolsón activas</span>
           <button id="btn-bod-refresh-activas" class="btn btn-xs" style="font-size:.72rem;background:#e8f4ff;color:#1565c0;padding:2px 8px">↻</button>
+          <button id="btn-bod-nueva-licencia" class="btn btn-xs" style="font-size:.72rem;background:#1565c0;color:#fff;padding:2px 10px;margin-left:auto">+ Nueva licencia bolsón</button>
         </div>
         <div id="bod-sesiones-activas-list" style="font-size:.78rem;color:#888">Cargando…</div>
       </div>
@@ -12401,6 +12402,22 @@ function bodCargarSesionesActivas() {
 // Cargar al entrar a pg-bod-menu y al presionar el botón ↻
 var _bodRefreshBtn = document.getElementById('btn-bod-refresh-activas');
 if(_bodRefreshBtn) _bodRefreshBtn.addEventListener('click', bodCargarSesionesActivas);
+
+var _bodNuevaLicBtn = document.getElementById('btn-bod-nueva-licencia');
+if(_bodNuevaLicBtn) _bodNuevaLicBtn.addEventListener('click', function(){
+  // Limpiar licencia, poner fecha de hoy, navegar a captura y enfocar
+  var licInp = document.getElementById('bod-licencia');
+  var fecInp = document.getElementById('bod-fecha');
+  if(licInp) { licInp.value = ''; }
+  if(fecInp) {
+    var hoy = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    fecInp.value = hoy;
+  }
+  var msgEl = document.getElementById('bod-sesion-msg');
+  if(msgEl) msgEl.innerHTML = '';
+  navTo('pg-bod-captura');
+  setTimeout(function(){ if(licInp) licInp.focus(); }, 80);
+});
 
 // Cargar automáticamente cuando se navega al menú BOD
 (function(){
