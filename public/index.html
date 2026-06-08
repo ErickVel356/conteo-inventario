@@ -5224,6 +5224,15 @@ function pollNow() {
     })
     .then(function(s) {
       if(s === null) return; // 304 — sin cambios en state.version
+
+      // Actualizar lastVersion PRIMERO — antes de activeUsers, locks, merges o cualquier return.
+      // Garantiza que el segundo poll ya lleve ?version=<número> aunque falle cualquier cosa después.
+      var incomingVersion = (s && s.version !== undefined) ? Number(s.version) : -1;
+      var sameVersion = incomingVersion >= 0 && incomingVersion === lastVersion;
+      if(incomingVersion >= 0) lastVersion = incomingVersion;
+      isSyncing = false;
+      if(sameVersion) return; // ya teníamos esta versión — no re-renderizar
+
       // NOTA locks: s.locks solo se actualiza con 200 (state.version cambió).
       // Si el lock expiró por tiempo (ACTIVE_TIMEOUT) pero state.version no cambió,
       // el lock local persiste hasta el próximo 200. Riesgo bajo: ACTIVE_TIMEOUT=15s,
@@ -5250,9 +5259,6 @@ function pollNow() {
           }
         });
       }
-
-      if(s.version === lastVersion) return;
-      lastVersion = s.version;
 
       // Merge server state into local
       if(s.teorico && Object.keys(s.teorico).length > 0) teorico = s.teorico;
