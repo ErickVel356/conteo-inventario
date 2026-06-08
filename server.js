@@ -303,15 +303,6 @@ app.get('/api/state', (req, res) => {
 
   // 304 por ?version (clientes nuevos) O por If-None-Match (clientes viejos/navegador)
   var clientVersion = req.query.version !== undefined ? Number(req.query.version) : -1;
-  // [STATE-CHECK] diagnóstico temporal — muestra si el cliente envía ?version= y si coincide
-  console.log('[STATE-CHECK]', JSON.stringify({
-    url:           req.originalUrl,
-    clientVersion: clientVersion,
-    serverVersion: state.version,
-    ifNoneMatch:   req.headers['if-none-match'] || null,
-    match:         (clientVersion >= 0 && clientVersion === state.version) ||
-                   req.headers['if-none-match'] === stateTag
-  }));
   if((clientVersion >= 0 && clientVersion === state.version) ||
      req.headers['if-none-match'] === stateTag) {
     return res.status(304).end();
