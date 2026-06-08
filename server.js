@@ -297,16 +297,23 @@ app.post('/api/heartbeat', (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
-  // 304 si el cliente ya tiene la versión actual — evita transferir ~2.8MB sin cambios
+  var stateTag = '"state-' + state.version + '"';
+  res.set('ETag', stateTag);
+  res.set('Cache-Control', 'no-cache');
+
+  // 304 por ?version (clientes nuevos) O por If-None-Match (clientes viejos/navegador)
   var clientVersion = req.query.version !== undefined ? Number(req.query.version) : -1;
   // [STATE-CHECK] diagnóstico temporal — muestra si el cliente envía ?version= y si coincide
   console.log('[STATE-CHECK]', JSON.stringify({
     url:           req.originalUrl,
     clientVersion: clientVersion,
     serverVersion: state.version,
-    match:         clientVersion === state.version
+    ifNoneMatch:   req.headers['if-none-match'] || null,
+    match:         (clientVersion >= 0 && clientVersion === state.version) ||
+                   req.headers['if-none-match'] === stateTag
   }));
-  if(clientVersion >= 0 && clientVersion === state.version) {
+  if((clientVersion >= 0 && clientVersion === state.version) ||
+     req.headers['if-none-match'] === stateTag) {
     return res.status(304).end();
   }
   var ps = publicState();
