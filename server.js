@@ -4221,17 +4221,30 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
         ? Number(l.cantidad_audit) : Number(l.cantidad);
       var desc = l.descripcion || '';
       if(!porFurgon[furgon][sku]) {
-        porFurgon[furgon][sku] = { sku:sku, descripcion:desc, unidades:0, lineasCount:0, pendientes:0 };
+        porFurgon[furgon][sku] = { sku:sku, descripcion:desc, unidades:0, lineasCount:0, pendientes:0,
+          cantidad_auditada:null, _auditSum:0, _auditCount:0 };
       }
       var entry = porFurgon[furgon][sku];
-      entry.unidades    += cant;
+      entry.unidades    += Number(l.cantidad)||0;
       entry.lineasCount += 1;
-      if(!l.auditado) entry.pendientes += 1;
+      if(!l.auditado) { entry.pendientes += 1; }
+      else if(l.cantidad_audit != null) {
+        entry._auditSum   += Number(l.cantidad_audit)||0;
+        entry._auditCount += 1;
+      }
       if(!entry.descripcion && desc) entry.descripcion = desc;
     });
 
     var furgonesKeys = Object.keys(porFurgon).sort(function(a,b){
       return String(a).localeCompare(String(b), undefined, { numeric:true });
+    });
+
+    // Calcular cantidad_auditada total por SKU y limpiar campos internos
+    furgonesKeys.forEach(function(fg){
+      Object.values(porFurgon[fg]).forEach(function(e){
+        if(e._auditCount > 0) e.cantidad_auditada = e._auditSum;
+        delete e._auditSum; delete e._auditCount;
+      });
     });
 
     var furgonesRes = furgonesKeys.map(function(furgon){
@@ -5684,6 +5697,68 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard,
 
   } catch(e) {
     console.error('manifiesto-pdf error:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id ─────────────────────────────────────────────
+// Borra (soft delete) una sesión bolsón y todos sus datos relacionados.
+// Solo Erick Vela puede ejecutarlo — validado en BACKEND.
+// Soft delete: marca eliminada=true en bod_sesiones, bod_lineas, bod_tarima_furgon.
+// bod_furgon_cierres no tiene columna eliminada → se borra físico (no contiene datos críticos de Hamilton).
+// FIX (vie 06-jun-2026): borrar sesión bolsón por Erick Vela
+app.delete('/api/bod/sesion/:id', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var usuario = String((req.body && req.body.usuario) || '').trim();
+
+    // Validar en BACKEND que solo Erick Vela puede borrar
+    if(usuario !== 'Erick Vela') {
+      return res.status(403).json({ ok:false, error:'Solo Erick Vela puede eliminar sesiones bolsón.' });
+    }
+
+    // Verificar que la sesión existe
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length)
+      return res.status(404).json({ ok:false, error:'Sesión no encontrada.' });
+    var ses = sesRows[0];
+
+    var now = new Date().toISOString();
+
+    // 1. Soft delete en bod_lineas
+    await supabase('PATCH', 'bod_lineas',
+      { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+    ).catch(function(){});  // ignorar si falla (puede no tener filas)
+
+    // 2. bod_tarima_furgon — borrar físico (no tiene soft delete)
+    await supabase('DELETE', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+    ).catch(function(){});
+
+    // 3. bod_furgon_cierres — borrar físico
+    await supabase('DELETE', 'bod_furgon_cierres', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+    ).catch(function(){});
+
+    // 4. Soft delete en bod_sesiones
+    // Si la tabla tiene columna eliminada: soft delete; si no, borrar físico
+    var patchSes = await supabase('PATCH', 'bod_sesiones',
+      { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+      '?id=eq.'+encodeURIComponent(sesId)
+    ).catch(function(){ return null; });
+
+    if(!patchSes) {
+      // Fallback: borrar físico si no hay columna eliminada
+      await supabase('DELETE', 'bod_sesiones', null,
+        '?id=eq.'+encodeURIComponent(sesId)
+      ).catch(function(){});
+    }
+
+    res.json({ ok:true, sesion_id:sesId, licencia_id:ses.licencia_id,
+               mensaje:'Sesión '+ses.licencia_id+' eliminada por '+usuario+'.' });
+  } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
 });
