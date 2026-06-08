@@ -1,14 +1,15 @@
 {
   "name": "conteo-inventario",
   "version": "1.0.0",
+  "description": "App de conteo f\u00edsico de inventario \u2014 Herramientas Poderosas Guatemala",
   "main": "server.js",
   "scripts": {
-    "start": "node --max-old-space-size=460 server.js"
+    "start": "node --max-old-space-size=1800 server.js"
   },
   "dependencies": {
+    "compression": "^1.7.4",
     "docx": "^9.7.1",
     "express": "^4.18.2",
-    "ws": "^8.14.2",
     "multer": "^1.4.5-lts.1",
     "xlsx": "^0.18.5"
   }
