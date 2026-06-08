@@ -478,7 +478,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <!-- ── PÁGINA: MENÚ PRINCIPAL ─────────────────────────────── -->
     <div id="pg-menu" class="page active">
       <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Qué vas a contar hoy?</p>
-      <div class="menu-grid">
+      <div id="menu-grid-cards" class="menu-grid" style="visibility:hidden">
         <div class="menu-card" id="mc-hamilton">
           <div class="mc-icon">🏭</div>
           <div class="mc-title">Conteos Hamilton</div>
@@ -1993,6 +1993,9 @@ function afterLogin(){
     return;
   }
   navTo('pg-menu','📦 Conteo de Inventario');
+  // Revelar cards del menú — permisos ya resueltos, sin parpadeo
+  var _mgc = document.getElementById('menu-grid-cards');
+  if(_mgc) _mgc.style.visibility = '';
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
   if(currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'contador')) {
     fetch('/api/bod/status').then(function(r){ return r.json(); })
@@ -11423,18 +11426,17 @@ function bodRenderManifiestoAuditoria() {
             // Tabla encabezado
             sc(12, 2, 'CODIGO'); sc(12, 3, 'ESTATUS'); sc(12, 4, '% AUDITADO');
             sc(12, 5, 'DESCRIPCION'); sc(12, 6, 'CANTIDAD'); sc(12, 7, 'VALIDADO'); sc(12, 8, 'DIFERENCIA');
-            // Filas SKU — sin límite de filas, todas las que haya
+            // Filas SKU — usa cantidad_auditada del endpoint (misma fuente que Word/PDF/Pantalla)
             var DATA_START = 13;
             fData.skus.forEach(function(s, i) {
               var row = DATA_START + i;
-              var cantVal = _fd(s.cantidad_auditada, s.cantidad_audit, s.auditada, s.cantidad_validada,
-                                  s.validado, s.unidades_auditadas);
+              var cantVal = s.cantidad_auditada !== null && s.cantidad_auditada !== undefined
+                ? s.cantidad_auditada : '';
               var tieneValidacion = cantVal !== '' && cantVal !== null && cantVal !== undefined;
               var estatus = tieneValidacion ? 'Auditado' : 'No auditado';
               var desc = s.descripcion_completa||s.descripcion_larga||s.descripcion||s.desc||s.nombre||s.sku_desc||'';
               // Validado: firstDefined con respeto de 0 (cantVal ya calculado arriba)
-              var validado = cantVal;
-              if(validado === '') validado = s.unidades; // fallback: usar unidades (comportamiento previo)
+              var validado = cantVal; // vacío si no hay auditoría real
               var dif = (validado !== '' && validado !== null && validado !== undefined)
                 ? (Number(validado) - Number(s.unidades)) : '';
               // % AUDITADO (usa cantVal ya calculado)
@@ -11450,17 +11452,21 @@ function bodRenderManifiestoAuditoria() {
               sc(row, 4, pctAuditado);
               sc(row, 5, desc);
               sc(row, 6, s.unidades, 'n');
-              sc(row, 7, typeof validado === 'number' ? validado : Number(validado), 'n');
+              if(validado !== '' && validado !== null && validado !== undefined) {
+                sc(row, 7, typeof validado === 'number' ? validado : Number(validado), 'n');
+              }
               if(dif !== '') sc(row, 8, Number(dif), 'n');
             });
             // Footer — posición dinámica tras los datos
             var FOOTER = DATA_START + fData.skus.length + 2;
             sc(FOOTER,   2, 'AUTORIZACIÓN DE ENVÍO'); sc(FOOTER,   6, 'NOMBRE Y FIRMA QUIEN RECIBE');
-            sc(FOOTER+1, 2, autorizador);                      sc(FOOTER+1, 6, recibidoPor);
-            sc(FOOTER+4, 2, 'ENCARGADO DE PEDIDO');            sc(FOOTER+4, 6, 'AUDITOR / VALIDADOR');
-            sc(FOOTER+5, 2, encargado);                        sc(FOOTER+5, 6, auditorVal);
+            sc(FOOTER+1, 2, 'ASTRID DUARTE');
+            sc(FOOTER+2, 2, 'CINTYA RIVERA');
+            sc(FOOTER+3, 2, 'HUVALDO PEREZ');           sc(FOOTER+3, 6, recibidoPor);
+            sc(FOOTER+5, 2, 'ENCARGADO DE PEDIDO');            sc(FOOTER+5, 6, 'AUDITOR / VALIDADOR');
+            sc(FOOTER+6, 2, encargado);                        sc(FOOTER+6, 6, auditorVal);
             sc(FOOTER+7, 5, 'ID DE CONTENEDOR: '+idCont);
-            var lastRow = FOOTER + 8;
+            var lastRow = FOOTER + 9; // +1 por las 3 filas de AUTORIZACIÓN
             ws2['!ref'] = 'A1:H'+lastRow;
             ws2['!cols'] = [{},{ wch:17 },{ wch:11 },{ wch:8 },{ wch:55 },{ wch:10 },{ wch:11 },{ wch:11 }];
             ws2['!merges'] = [{ s:{r:1,c:3},e:{r:1,c:7} },{ s:{r:1,c:1},e:{r:4,c:1} }];
@@ -11548,7 +11554,7 @@ function bodRenderManifiestoAuditoria() {
                 var msg = err.message||'';
                 if(msg.indexOf('WKHTMLTOPDF_NOT_FOUND')>=0 || msg.indexOf('wkhtmltopdf')>=0 ||
                    msg.indexOf('no disponible')>=0) {
-                  alert('PDF no disponible en este servidor.\n\nEl export Word (📄) sigue funcionando normalmente.\nPara habilitar PDF, configurar wkhtmltopdf en Render (ver documentación de deploy).');
+                  alert('📕 PDF no disponible todavía.\n\nEl servidor no tiene wkhtmltopdf instalado.\nPodés descargar el mismo manifiesto en Word (📄) o Excel (📥).\n\nErick debe configurar wkhtmltopdf en Render para habilitarlo.');
                 } else {
                   alert('Error al generar el PDF: '+msg);
                 }
@@ -12174,8 +12180,7 @@ function bodExportarManifiestoWord(furgon, fData, carga) {
                         s.validado, s.unidades_auditadas);
     var tieneValidacion = cantVal !== '' && cantVal !== null && cantVal !== undefined;
     estatus = tieneValidacion ? 'Auditado' : 'No auditado';
-    var validado = cantVal;
-    if(validado === '') validado = s.unidades; // fallback comportamiento previo
+    var validado = cantVal; // vacío si no hay auditoría real
     var dif = (validado !== '' && validado !== null && validado !== undefined)
       ? (Number(validado) - Number(s.unidades)) : '';
     // % AUDITADO (usa cantVal/tieneValidacion ya calculados)
@@ -12343,8 +12348,13 @@ function bodCargarSesionesActivas() {
             +' style="background:none;border:none;color:#1565c0;cursor:pointer;font-size:.76rem;font-weight:600;padding:0;text-decoration:underline">'
             +escH(s.licencia_id)+'</button>'
           : '<span>'+escH(s.licencia_id)+'</span>';
+        var esErick = window.currentUser && window.currentUser.name === 'Erick Vela';
+        var btnBorrar = esErick
+          ? ' <button class="bod-btn-borrar-sesion" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'"'
+            +' style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:.72rem;padding:0;margin-left:4px" title="Eliminar sesión">🗑</button>'
+          : '';
         html += '<tr style="border-top:1px solid #e8e8e8;'+rowBg+'">'
-          +'<td style="padding:3px 6px">'+licLink+'</td>'
+          +'<td style="padding:3px 6px">'+licLink+btnBorrar+'</td>'
           +'<td style="padding:3px 6px">'+escH(s.fecha_trabajo||'—')+'</td>'
           +'<td style="padding:3px 6px;text-align:center">'+estadoBadge+'</td>'
           +'<td style="padding:3px 6px;text-align:center">'+s.total_skus+'</td>'
@@ -12391,6 +12401,30 @@ function bodCargarSesionesActivas() {
             .catch(function(){
               if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
             });
+        });
+      });
+      // Wire borrar sesión — solo Erick Vela (validado también en backend)
+      listEl.querySelectorAll('.bod-btn-borrar-sesion').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var sesId = btn.dataset.id;
+          var lic   = btn.dataset.lic;
+          if(window.currentUser && window.currentUser.name !== 'Erick Vela') {
+            alert('Solo Erick Vela puede eliminar sesiones.'); return;
+          }
+          if(!confirm('⚠️ BORRAR SESIÓN BOLSÓN\n\nLicencia: '+lic+'\n\nEsto eliminará:\n• Todas las líneas capturadas\n• Asignaciones de tarimas\n• Cargas logísticas del manifiesto\n\n¿Estás seguro?')) return;
+          if(!confirm('Segunda confirmación.\n¿Borrar definitivamente la sesión '+lic+'?')) return;
+          fetch('/api/bod/sesion/'+encodeURIComponent(sesId), {
+            method:'DELETE',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ usuario: window.currentUser ? window.currentUser.name : '' })
+          })
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              if(!d.ok){ alert('Error al borrar: '+(d.error||'Error desconocido')); return; }
+              alert('✅ Sesión '+lic+' eliminada.');
+              bodCargarSesionesActivas();
+            })
+            .catch(function(){ alert('Sin conexión al intentar borrar.'); });
         });
       });
     })
