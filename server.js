@@ -1,8 +1,9 @@
-const express = require('express');
-const multer  = require('multer');
-const XLSX    = require('xlsx');
-const path    = require('path');
-const https   = require('https');
+const express     = require('express');
+const multer      = require('multer');
+const XLSX        = require('xlsx');
+const path        = require('path');
+const https       = require('https');
+const compression = require('compression');
 
 const app    = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -11,8 +12,19 @@ const upload = multer({ storage: multer.memoryStorage() });
 // metadata, CDG. Antes era 50MB lo que abría puerta a payloads gigantes que
 // matan la RAM del free tier. Uploads de teorico/costos NO pasan por aquí,
 // usan multer (memoryStorage), que tiene su propio límite.
+app.use(compression({ level:6, threshold:1024 })); // Gzip reduce HTTP Responses ~70%
 app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: function(res, filePath) {
+    if(filePath.endsWith('index.html')) {
+      // index.html: cache corto (5min) — cambia frecuentemente con deploys
+      res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+    } else {
+      // otros assets: cache 1h
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
+  }
+}));
 
 // ── Supabase config (set via environment variables in Render) ─────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;  // https://xxx.supabase.co
@@ -103,6 +115,22 @@ async function dbGet(key) {
 async function dbSet(key, value) {
   const data = { key, value: JSON.stringify(value) };
   await supabase('POST', 'app_state', data, '?on_conflict=key');
+}
+
+// ── API cache en memoria (TTL corto para endpoints de solo lectura) ──────────
+var _apiCache = {};
+function cacheGet(key) {
+  var _c = _apiCache[key];
+  if(!_c) return null;
+  if(Date.now() > _c.exp) { delete _apiCache[key]; return null; }
+  return _c.value;
+}
+function cacheSet(key, value, ttlMs) {
+  _apiCache[key] = { value:value, exp:Date.now()+ttlMs };
+}
+function cacheInvalidate(key) {
+  if(key) delete _apiCache[key];
+  else _apiCache = {};
 }
 
 // ── In-memory state ───────────────────────────────────────────────────────
@@ -246,6 +274,22 @@ function publicState() {
 }
 
 // ── API ───────────────────────────────────────────────────────────────────
+// ── Middleware de log de bandwidth (>200ms o >50KB) — debe ir antes de rutas ─
+app.use(function(req, res, next){
+  var start = Date.now();
+  var _end = res.end.bind(res);
+  var bytes = 0;
+  res.end = function(chunk){
+    if(chunk) bytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+    _end.apply(res, arguments);
+    var ms = Date.now()-start;
+    if(ms>200 || bytes>51200){
+      console.log('[BW] '+req.method+' '+req.path+' '+res.statusCode+' '+bytes+'B '+ms+'ms');
+    }
+  };
+  next();
+});
+
 app.post('/api/heartbeat', (req, res) => {
   const { name } = req.body;
   if(name) activeUsers[name] = Date.now();
@@ -3516,7 +3560,11 @@ async function bodGetBarra(barra) {
 // ── GET /api/bod/status ────────────────────────────────────────────────────
 // Permite al cliente saber si el módulo está habilitado.
 app.get('/api/bod/status', function(req, res) {
-  res.json({ ok: true, enabled: BOD_ENABLED });
+  var cached = cacheGet('bod:status');
+  if(cached) return res.json(cached);
+  var statusResp = { ok: true, enabled: BOD_ENABLED };
+  cacheSet('bod:status', statusResp, 60000);
+  res.json(statusResp);
 });
 
 // ── GET /api/bod/sesiones-activas ─────────────────────────────────────────
@@ -3525,6 +3573,8 @@ app.get('/api/bod/status', function(req, res) {
 // FIX (vie 06-jun-2026): endpoint sesiones activas para vista de licencias bolsón
 app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
   try {
+    var cachedSes = cacheGet('bod:sesiones-activas');
+    if(cachedSes) return res.json(cachedSes);
     var sesiones = await supabase('GET', 'bod_sesiones', null,
       '?tipo=eq.recoleccion&order=fecha_trabajo.desc,ts_creacion.desc&limit=50');
     if(!Array.isArray(sesiones) || !sesiones.length)
@@ -3534,8 +3584,11 @@ app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
     var results = await Promise.all(sesiones.map(async function(ses){
       var [lineas, cierres] = await Promise.all([
         supabase('GET', 'bod_lineas', null,
+          // RIESGO: limit=5000 — si una sesión supera 5000 líneas, los totales se truncarán.
+          // En uso normal (bodega Guatemala) una sesión tiene 100-500 líneas por sesión.
+          // Aumentar o paginar si se detecta truncamiento (sesión con exactamente 5000 lineas).
           '?sesion_id=eq.'+encodeURIComponent(ses.id)
-          +'&eliminada=eq.false&select=id,tarima,sku,auditado&limit=1000'
+          +'&eliminada=eq.false&select=sku,auditado&limit=5000'
         ).catch(function(){ return []; }),
         supabase('GET', 'bod_furgon_cierres', null,
           '?sesion_id=eq.'+encodeURIComponent(ses.id)+'&select=furgon,estado,licencia_hija'
@@ -3570,7 +3623,9 @@ app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
       return 0;
     });
 
-    res.json({ ok:true, sesiones:results });
+    var sesResp = { ok:true, sesiones:results };
+    cacheSet('bod:sesiones-activas', sesResp, 30000); // 30s TTL
+    res.json(sesResp);
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
@@ -3597,6 +3652,7 @@ app.post('/api/bod/sesion', bodGuard, async (req, res) => {
       + '&tipo=eq.'          + encodeURIComponent(tipo)
       + '&limit=1');
     if(Array.isArray(existing) && existing.length) {
+      cacheInvalidate('bod:sesiones-activas');
       return res.json({ ok:true, sesion: existing[0], created: false });
     }
 
@@ -3610,6 +3666,7 @@ app.post('/api/bod/sesion', bodGuard, async (req, res) => {
     };
     var created = await supabase('POST', 'bod_sesiones', sesion, '');
     var row = Array.isArray(created) ? created[0] : sesion;
+    cacheInvalidate('bod:sesiones-activas');
     res.json({ ok:true, sesion: row, created: true });
   } catch(e) {
     console.log('BOD sesion POST FAILED:', e.message);
@@ -4183,7 +4240,7 @@ app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
 
     var [lineas, asignaciones, cierres] = await Promise.all([
       supabase('GET', 'bod_lineas', null,
-        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc'),
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000'),
       supabase('GET', 'bod_tarima_furgon', null,
         '?sesion_id=eq.'+encodeURIComponent(sesId)),
       supabase('GET', 'bod_furgon_cierres', null,
@@ -5234,7 +5291,7 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-word', bodGuard
     // ── Fuente de datos: bod_lineas (misma que pantalla y PDF) ───────────────
     // cg.resumen_skus no tiene estado de auditoría real; bod_lineas sí.
     var bodLineasWord = await supabase('GET', 'bod_lineas', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc');
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
     bodLineasWord = Array.isArray(bodLineasWord) ? bodLineasWord : [];
     var asigWordRows = await supabase('GET', 'bod_tarima_furgon', null,
       '?sesion_id=eq.'+encodeURIComponent(sesId));
@@ -5511,7 +5568,7 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard,
 
     // ── Obtener datos reales de auditoría desde bod_lineas (igual que Word y manifiesto) ──
     var bodLineasPdf = await supabase('GET', 'bod_lineas', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc');
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
     bodLineasPdf = Array.isArray(bodLineasPdf) ? bodLineasPdf : [];
     var asigPdfRows = await supabase('GET', 'bod_tarima_furgon', null,
       '?sesion_id=eq.'+encodeURIComponent(sesId));
@@ -5704,60 +5761,89 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard,
 // ── DELETE /api/bod/sesion/:id ─────────────────────────────────────────────
 // Borra (soft delete) una sesión bolsón y todos sus datos relacionados.
 // Solo Erick Vela puede ejecutarlo — validado en BACKEND.
-// Soft delete: marca eliminada=true en bod_sesiones, bod_lineas, bod_tarima_furgon.
-// bod_furgon_cierres no tiene columna eliminada → se borra físico (no contiene datos críticos de Hamilton).
+// Devuelve detalle por tabla para que el usuario sepa si algo falló.
 // FIX (vie 06-jun-2026): borrar sesión bolsón por Erick Vela
 app.delete('/api/bod/sesion/:id', bodGuard, async (req, res) => {
   try {
     var sesId   = String(req.params.id).trim();
     var usuario = String((req.body && req.body.usuario) || '').trim();
 
-    // Validar en BACKEND que solo Erick Vela puede borrar
-    if(usuario !== 'Erick Vela') {
+    if(usuario !== 'Erick Vela')
       return res.status(403).json({ ok:false, error:'Solo Erick Vela puede eliminar sesiones bolsón.' });
-    }
 
-    // Verificar que la sesión existe
     var sesRows = await supabase('GET', 'bod_sesiones', null,
       '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
     if(!Array.isArray(sesRows)||!sesRows.length)
       return res.status(404).json({ ok:false, error:'Sesión no encontrada.' });
     var ses = sesRows[0];
 
-    var now = new Date().toISOString();
+    var now    = new Date().toISOString();
+    var tablas = {};   // detalle por tabla: {ok, error, filas}
+    var hayCritico = false;
 
-    // 1. Soft delete en bod_lineas
-    await supabase('PATCH', 'bod_lineas',
-      { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
-      '?sesion_id=eq.'+encodeURIComponent(sesId)
-    ).catch(function(){});  // ignorar si falla (puede no tener filas)
-
-    // 2. bod_tarima_furgon — borrar físico (no tiene soft delete)
-    await supabase('DELETE', 'bod_tarima_furgon', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)
-    ).catch(function(){});
-
-    // 3. bod_furgon_cierres — borrar físico
-    await supabase('DELETE', 'bod_furgon_cierres', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)
-    ).catch(function(){});
-
-    // 4. Soft delete en bod_sesiones
-    // Si la tabla tiene columna eliminada: soft delete; si no, borrar físico
-    var patchSes = await supabase('PATCH', 'bod_sesiones',
-      { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
-      '?id=eq.'+encodeURIComponent(sesId)
-    ).catch(function(){ return null; });
-
-    if(!patchSes) {
-      // Fallback: borrar físico si no hay columna eliminada
-      await supabase('DELETE', 'bod_sesiones', null,
-        '?id=eq.'+encodeURIComponent(sesId)
-      ).catch(function(){});
+    // 1. bod_lineas — soft delete (columna eliminada ya existe)
+    try {
+      await supabase('PATCH', 'bod_lineas',
+        { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_lineas = { ok:true };
+    } catch(e) {
+      tablas.bod_lineas = { ok:false, error:e.message };
+      hayCritico = true;
     }
 
+    // 2. bod_tarima_furgon — borrar físico (sin columna eliminada)
+    try {
+      await supabase('DELETE', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_tarima_furgon = { ok:true };
+    } catch(e) {
+      tablas.bod_tarima_furgon = { ok:false, error:e.message };
+      // No es crítico si no hay asignaciones — continuar
+    }
+
+    // 3. bod_furgon_cierres — borrar físico
+    try {
+      await supabase('DELETE', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_furgon_cierres = { ok:true };
+    } catch(e) {
+      tablas.bod_furgon_cierres = { ok:false, error:e.message };
+      hayCritico = true;
+    }
+
+    // 4. bod_sesiones — soft delete primero, físico como fallback
+    try {
+      await supabase('PATCH', 'bod_sesiones',
+        { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+        '?id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_sesiones = { ok:true, metodo:'soft_delete' };
+    } catch(e) {
+      // Intentar borrado físico si la columna no existe
+      try {
+        await supabase('DELETE', 'bod_sesiones', null,
+          '?id=eq.'+encodeURIComponent(sesId));
+        tablas.bod_sesiones = { ok:true, metodo:'delete_fisico' };
+      } catch(e2) {
+        tablas.bod_sesiones = { ok:false, error:e2.message };
+        hayCritico = true;
+      }
+    }
+
+    if(hayCritico) {
+      return res.status(500).json({
+        ok:false,
+        sesion_id: sesId,
+        licencia_id: ses.licencia_id,
+        error: 'Algunas tablas no se pudieron limpiar. Verificá el detalle.',
+        tablas: tablas
+      });
+    }
+
+    cacheInvalidate('bod:sesiones-activas');
     res.json({ ok:true, sesion_id:sesId, licencia_id:ses.licencia_id,
-               mensaje:'Sesión '+ses.licencia_id+' eliminada por '+usuario+'.' });
+               mensaje:'Sesión '+ses.licencia_id+' eliminada por '+usuario+'.',
+               tablas:tablas });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
