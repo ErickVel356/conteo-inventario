@@ -299,6 +299,13 @@ app.post('/api/heartbeat', (req, res) => {
 app.get('/api/state', (req, res) => {
   // 304 si el cliente ya tiene la versión actual — evita transferir ~2.8MB sin cambios
   var clientVersion = req.query.version !== undefined ? Number(req.query.version) : -1;
+  // [STATE-CHECK] diagnóstico temporal — muestra si el cliente envía ?version= y si coincide
+  console.log('[STATE-CHECK]', JSON.stringify({
+    url:           req.originalUrl,
+    clientVersion: clientVersion,
+    serverVersion: state.version,
+    match:         clientVersion === state.version
+  }));
   if(clientVersion >= 0 && clientVersion === state.version) {
     return res.status(304).end();
   }
