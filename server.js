@@ -297,10 +297,13 @@ app.post('/api/heartbeat', (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
+  // 304 si el cliente ya tiene la versión actual — evita transferir ~2.8MB sin cambios
+  var clientVersion = req.query.version !== undefined ? Number(req.query.version) : -1;
+  if(clientVersion >= 0 && clientVersion === state.version) {
+    return res.status(304).end();
+  }
   var ps = publicState();
   try {
-    // Diagnóstico de tamaño: permite monitorear crecimiento del state sin crashear.
-    // FIX (mar 2-jun-2026, server v20): campo stateSizeBytes agregado para auditoría.
     ps.stateSizeBytes = Buffer.byteLength(JSON.stringify(buildDailyStatePayload()), 'utf8');
   } catch(e) { /* no bloquear el estado si falla el cálculo */ }
   res.json(ps);
