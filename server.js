@@ -132,6 +132,11 @@ function cacheInvalidate(key) {
   if(key) delete _apiCache[key];
   else _apiCache = {};
 }
+function cacheInvalidatePrefix(prefix) {
+  Object.keys(_apiCache).forEach(function(k){
+    if(k.indexOf(prefix) === 0) delete _apiCache[k];
+  });
+}
 
 // ── In-memory state ───────────────────────────────────────────────────────
 let state = {
@@ -3692,6 +3697,10 @@ app.get('/api/bod/sesion', bodGuard, async (req, res) => {
     var tipo  = String(req.query.tipo        || 'recoleccion').trim();
     if(!lic || !fecha) return res.status(400).json({ ok:false, error:'falta licencia_id o fecha' });
 
+    var buscarKey = 'bod:sesion-buscar:'+lic+':'+fecha+':'+tipo;
+    var cachedBuscar = cacheGet(buscarKey);
+    if(cachedBuscar) return res.json(cachedBuscar);
+
     var sesRows = await supabase('GET', 'bod_sesiones', null,
       '?licencia_id=eq.' + encodeURIComponent(lic)
       + '&fecha_trabajo=eq.' + encodeURIComponent(fecha)
@@ -3711,7 +3720,9 @@ app.get('/api/bod/sesion', bodGuard, async (req, res) => {
       porTarima[t].lineas++;
       porTarima[t].unidades += Number(l.cantidad)||0;
     });
-    res.json({ ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) });
+    var respBuscar = { ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) };
+    cacheSet(buscarKey, respBuscar, 30000); // 30s — invalida en mutaciones Bodega
+    res.json(respBuscar);
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
@@ -3722,6 +3733,10 @@ app.get('/api/bod/sesion', bodGuard, async (req, res) => {
 app.get('/api/bod/sesion/:id', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
+    var sesKey = 'bod:sesion:'+sesId;
+    var cachedSes = cacheGet(sesKey);
+    if(cachedSes) return res.json(cachedSes);
+
     var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
     if(!Array.isArray(rows) || !rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
     var sesion = rows[0];
@@ -3736,7 +3751,9 @@ app.get('/api/bod/sesion/:id', bodGuard, async (req, res) => {
       porTarima[t].lineas++;
       porTarima[t].unidades += Number(l.cantidad)||0;
     });
-    res.json({ ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) });
+    var respSes = { ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) };
+    cacheSet(sesKey, respSes, 30000); // 30s — invalida en POST linea y mutaciones Bodega
+    res.json(respSes);
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
@@ -3784,6 +3801,7 @@ app.post('/api/bod/sesion/:id/linea', bodGuard, async (req, res) => {
     };
     var created = await supabase('POST', 'bod_lineas', linea, '');
     var row = Array.isArray(created) ? created[0] : linea;
+    invalidarCacheSesion(sesId); // invalida bod:sesion/:id y bod:sesion-buscar:*
     res.json({ ok:true, linea: row, ...(advertencia ? { advertencia } : {}) });
   } catch(e) {
     console.log('BOD linea POST FAILED:', e.message);
@@ -4047,6 +4065,9 @@ app.post('/api/bod/sesion/:id/cerrar', bodGuard, async (req, res) => {
 app.get('/api/bod/sesion/:id/furgones', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
+    var cacheKey = 'bod:furgones:'+sesId;
+    var cached = cacheGet(cacheKey);
+    if(cached) return res.json(cached);
     var [rows, cierres] = await Promise.all([
       supabase('GET', 'bod_tarima_furgon', null,
         '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=furgon.asc,tarima.asc'),
@@ -4055,11 +4076,21 @@ app.get('/api/bod/sesion/:id/furgones', bodGuard, async (req, res) => {
     ]);
     rows    = Array.isArray(rows)    ? rows    : [];
     cierres = Array.isArray(cierres) ? cierres : [];
-    res.json({ ok:true, asignaciones: rows, cargas: cierres });
+    var resp = { ok:true, asignaciones: rows, cargas: cierres };
+    cacheSet(cacheKey, resp, 30000); // 30s — invalida en crear/cerrar/reabrir/hamilton/borrar
+    res.json(resp);
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
 });
+
+// Helper: invalida cache relacionado con una sesión (furgones + sesiones-activas)
+function invalidarCacheSesion(sesId) {
+  cacheInvalidate('bod:furgones:'+sesId);
+  cacheInvalidate('bod:sesion:'+sesId);
+  cacheInvalidatePrefix('bod:sesion-buscar:');
+  cacheInvalidate('bod:sesiones-activas');
+}
 
 // ── POST /api/bod/sesion/:id/carga-logistica ──────────────────────────────
 // Combina: asignar tarimas a furgón + crear carga logística en bod_furgon_cierres.
@@ -4162,6 +4193,7 @@ app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
     };
     await supabase('POST', 'bod_furgon_cierres', cierre, '');
 
+    invalidarCacheSesion(sesId);
     res.json({
       ok:            true,
       furgon:        furgon,
@@ -4217,6 +4249,7 @@ app.post('/api/bod/sesion/:id/furgon', bodGuard, async (req, res) => {
         },
         '?on_conflict=sesion_id,tarima');
     }
+    cacheInvalidate('bod:furgones:'+sesId);
     res.json({ ok:true, asignadas: normadas.length, nuevas: nuevas.length });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
@@ -4538,6 +4571,7 @@ app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId/cerrar', bodGuard, async
       { estado:'cerrada', cerrado_por: String(usuario||''), ts_cierre: now },
       '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
 
+    invalidarCacheSesion(sesId);
     res.json({ ok:true, estado:'cerrada', cerrado_por: usuario, ts_cierre: now });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
@@ -4566,6 +4600,7 @@ app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId/reabrir', bodGuard, asyn
       { estado:'abierta' },
       '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
 
+    invalidarCacheSesion(sesId);
     res.json({ ok:true, estado:'abierta', reabierto_por: usuario });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
@@ -4711,6 +4746,7 @@ app.post('/api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton', bodGuar
       });
     }
 
+    invalidarCacheSesion(sesId);
     res.json({ ok:true, hamilton_contenedor: licHija, skus: items.length });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
@@ -5848,7 +5884,7 @@ app.delete('/api/bod/sesion/:id', bodGuard, async (req, res) => {
       });
     }
 
-    cacheInvalidate('bod:sesiones-activas');
+    invalidarCacheSesion(sesId);
     res.json({ ok:true, sesion_id:sesId, licencia_id:ses.licencia_id,
                mensaje:'Sesión '+ses.licencia_id+' eliminada por '+usuario+'.',
                tablas:tablas });
