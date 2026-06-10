@@ -629,16 +629,28 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <!-- ── BODEGA: AUDITORÍA ───────────────────────────────────── -->
     <div id="pg-bod-auditoria" class="page">
       <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia</label>
-            <input type="text" class="field-inp" id="bod-aud-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:120px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia <span style="font-weight:400;text-transform:none;color:#aaa">(opcional)</span></label>
+            <input type="text" class="field-inp" id="bod-aud-licencia" placeholder="Todas" autocomplete="off" style="text-transform:uppercase">
           </div>
-          <div style="min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha</label>
-            <input type="date" class="field-inp" id="bod-aud-fecha">
+          <div style="min-width:120px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Desde</label>
+            <input type="date" class="field-inp" id="bod-aud-fecha-desde">
           </div>
-          <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Cargar</button>
+          <div style="min-width:120px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Hasta</label>
+            <input type="date" class="field-inp" id="bod-aud-fecha-hasta">
+          </div>
+          <div style="min-width:100px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Estado</label>
+            <select class="field-inp" id="bod-aud-estado" style="font-size:.82rem;padding:5px 7px">
+              <option value="">Todos</option>
+              <option value="abierta">Abierta</option>
+              <option value="cerrada">Cerrada</option>
+            </select>
+          </div>
+          <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Buscar</button>
         </div>
         <div id="bod-aud-msg" style="font-size:.82rem;margin-top:.5rem"></div>
       </div>
@@ -10420,12 +10432,12 @@ function bodAuditoriaAutoRefresh(){
   var now = Date.now();
   if(now - bodAudLastRefresh < 4500) return;
   bodAudLastRefresh = now;
-  var licEl   = document.getElementById('bod-aud-licencia');
-  var fechaEl = document.getElementById('bod-aud-fecha');
-  var msgEl2  = document.getElementById('bod-aud-msg');
-  var lic   = (licEl   ? licEl.value   : '').trim().toUpperCase();
-  var fecha = (fechaEl ? fechaEl.value : '').trim();
-  if(lic && fecha && msgEl2) bodCargarAuditoria(lic, fecha, msgEl2, true);
+  var licEl2   = document.getElementById('bod-aud-licencia');
+  var desdeEl2 = document.getElementById('bod-aud-fecha-desde');
+  var msgEl2   = document.getElementById('bod-aud-msg');
+  var lic2   = (licEl2   ? licEl2.value   : '').trim().toUpperCase();
+  var fecha2 = (desdeEl2 ? desdeEl2.value : '').trim();
+  if(lic2 && fecha2 && msgEl2) bodCargarAuditoria(lic2, fecha2, msgEl2, true);
 }
 
 // Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
@@ -10501,6 +10513,106 @@ function bodSortTarimas(arr) {
   });
 }
 
+// bodCargarListadoSesiones: muestra sesiones en un rango de fechas
+function bodCargarListadoSesiones(desde, hasta, lic, estado, msgEl) {
+  if(msgEl) msgEl.innerHTML='<span style="color:#888">Buscando sesiones…</span>';
+  var params = [];
+  if(desde)  params.push('fecha_desde='+encodeURIComponent(desde));
+  if(hasta)  params.push('fecha_hasta='+encodeURIComponent(hasta));
+  if(lic)    params.push('licencia_id='+encodeURIComponent(lic));
+  if(estado) params.push('estado='+encodeURIComponent(estado));
+  var url = '/api/bod/sesiones'+(params.length?'?'+params.join('&'):'');
+  bodFetch('GET', url)
+    .then(function(d){
+      if(!d || !d.ok) {
+        if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Error cargando sesiones.</span>';
+        return;
+      }
+      var sesiones = d.sesiones||[];
+      if(msgEl) msgEl.innerHTML='';
+      var el = document.getElementById('bod-aud-contenido');
+      if(!el) return;
+      if(!sesiones.length) {
+        el.innerHTML='<div style="color:#aaa;padding:1rem;font-size:.85rem">No se encontraron sesiones con esos filtros. Podés crear una nueva desde el menú principal.</div>';
+        return;
+      }
+      if(msgEl) msgEl.innerHTML='';
+      var rows = sesiones.map(function(s){
+        var estadoBadge = s.estado==='abierta'
+          ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px;font-size:.72rem">Abierta</span>'
+          : '<span style="background:#eee;color:#555;padding:1px 6px;border-radius:8px;font-size:.72rem">Cerrada</span>';
+        return '<tr>'
+          +'<td><button class="btn btn-xs bod-btn-cargar-sesion-listado" data-id="'+escH(s.id)+'"'
+          +' data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
+          +' style="font-size:.76rem;font-weight:600;color:#1565c0;background:none;border:none;cursor:pointer;text-decoration:underline">'+escH(s.licencia_id)+'</button></td>'
+          +'<td style="font-size:.76rem">'+escH(s.fecha_trabajo||'—')+'</td>'
+          +'<td style="font-size:.76rem;text-align:center">'+estadoBadge+'</td>'
+          +'<td style="font-size:.76rem;text-align:center">'+s.total_skus+'</td>'
+          +'<td style="font-size:.76rem;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
+          +'<td style="font-size:.76rem;color:#888">'+escH(s.creado_por||'—')+'</td>'
+          +'</tr>';
+      }).join('');
+      // Construir título dinámico según parámetros disponibles
+      var tituloSesiones = 'Sesiones';
+      if(lic && desde && hasta)        tituloSesiones = 'Sesiones de '+lic+' del '+desde+' al '+hasta;
+      else if(lic && desde)            tituloSesiones = 'Sesiones de '+lic+' desde '+desde;
+      else if(lic && hasta)            tituloSesiones = 'Sesiones de '+lic+' hasta '+hasta;
+      else if(lic)                     tituloSesiones = 'Sesiones de '+lic;
+      else if(desde && hasta)          tituloSesiones = 'Sesiones del '+desde+' al '+hasta;
+      else if(desde)                   tituloSesiones = 'Sesiones desde '+desde;
+      else if(hasta)                   tituloSesiones = 'Sesiones hasta '+hasta;
+      el.innerHTML='<div style="font-size:.82rem;color:#555;margin-bottom:.5rem">'+escH(tituloSesiones)+':</div>'
+        +'<div class="tbl-wrap"><table>'
+        +'<thead><tr><th>Licencia</th><th>Fecha</th><th class="tc">Estado</th>'
+        +'<th class="tc">SKUs</th><th class="tc">Audit./Total</th><th>Creado por</th></tr></thead>'
+        +'<tbody>'+rows+'</tbody></table></div>';
+      el.querySelectorAll('.bod-btn-cargar-sesion-listado').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var sesId = btn.dataset.id;
+          var lic   = btn.dataset.lic;
+          var fec   = btn.dataset.fecha;
+          var licElC   = document.getElementById('bod-aud-licencia');
+          var desdeElC = document.getElementById('bod-aud-fecha-desde');
+          if(licElC)   licElC.value   = lic;
+          if(desdeElC) desdeElC.value = fec;
+          var msgEl3 = document.getElementById('bod-aud-msg');
+          var mEl = msgEl3 || {innerHTML:''};
+          if(sesId) {
+            // Abrir por ID real — evita ambigüedad cuando hay varias sesiones lic+fecha
+            mEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                if(!d.ok || !d.sesion){
+                  mEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error al cargar sesión')+'</span>';
+                  return;
+                }
+                mEl.innerHTML = '';
+                // Construir objeto compatible con bodCargarAuditoria (ya trae sesion+lineas)
+                bodAuditoriaData = d;
+                bodAudLastRefresh = Date.now();
+                var furgSesId = d.sesion.id;
+                fetch('/api/bod/sesion/'+encodeURIComponent(furgSesId)+'/furgones')
+                  .then(function(r){ return r.json(); })
+                  .then(function(f){
+                    bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+                    if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+                    bodRenderAuditoria(d);
+                  });
+              })
+              .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
+          } else {
+            // Fallback: abrir por lic+fecha
+            bodCargarAuditoria(lic, fec, mEl, false);
+          }
+        });
+      });
+    })
+    .catch(function(){
+      if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
+    });
+}
+
 // Cargar sesión + furgones y renderizar
 function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
   if(!silencioso) msgEl.innerHTML = '<span style="color:#888">Cargando…</span>';
@@ -10543,14 +10655,25 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
 var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
 if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
   if(!BOD_ENABLED_CLIENT) return;
-  var licEl   = document.getElementById('bod-aud-licencia');
-  var fechaEl = document.getElementById('bod-aud-fecha');
+  var licEl    = document.getElementById('bod-aud-licencia');
+  var desdeEl  = document.getElementById('bod-aud-fecha-desde');
+  var hastaEl  = document.getElementById('bod-aud-fecha-hasta');
+  var estadoEl = document.getElementById('bod-aud-estado');
   var lic     = (licEl   ? licEl.value   : '').trim().toUpperCase();
-  var fecha   = (fechaEl ? fechaEl.value : '').trim();
+  var desde   = (desdeEl ? desdeEl.value : '').trim();
+  var hasta   = (hastaEl ? hastaEl.value : '').trim();
+  var estado  = (estadoEl ? estadoEl.value : '').trim();
   var msgEl   = document.getElementById('bod-aud-msg');
-  if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';  return; }
-  if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>';  return; }
-  bodCargarAuditoria(lic, fecha, msgEl, false);
+  if(!desde && !hasta && !lic) {
+    msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una fecha o licencia.</span>'; return;
+  }
+  if(lic && desde && !hasta && !estado) {
+    // Licencia + fecha exacta (sin rango ni filtro de estado): sesión directa
+    bodCargarAuditoria(lic, desde, msgEl, false);
+  } else {
+    // Rango, solo licencia, solo rango, o con estado: listado filtrado
+    bodCargarListadoSesiones(desde, hasta, lic, estado, msgEl);
+  }
 });
 
 // bodRenderAuditoria: header + tabs + vista activa
@@ -10701,6 +10824,43 @@ function bodRenderTarimasAuditoria() {
   });
   var tarimaKeys = bodSortTarimas(Object.keys(resumenes));
 
+  // ── FILTROS DE FECHA ──────────────────────────────────────────────────────
+  var filtFechaDesde = (document.getElementById('bod-tar-fecha-desde')||{}).value || '';
+  var filtFechaHasta = (document.getElementById('bod-tar-fecha-hasta')||{}).value || '';
+
+  // Agrupar tarimas por fecha (YYYY-MM-DD Guatemala)
+  var tarimaFechaMap = {};  // tarima → fecha YYYY-MM-DD
+  Object.keys(tarimaPrimerTs).forEach(function(t){
+    var ts = tarimaPrimerTs[t];
+    var fecha = '';
+    if(ts) {
+      try { fecha = new Date(ts).toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}); } catch(e){}
+    }
+    tarimaFechaMap[t] = fecha || '—';
+  });
+
+  // Filtrar tarimaKeys por rango de fecha
+  var tarimaKeysFiltradas = tarimaKeys.filter(function(t){
+    var f = tarimaFechaMap[t];
+    if(filtFechaDesde && f < filtFechaDesde) return false;
+    if(filtFechaHasta && f > filtFechaHasta) return false;
+    return true;
+  });
+
+  // Estado de colapso por fecha (persiste entre re-renders)
+  if(!window._bodFechasColapsadas) window._bodFechasColapsadas = {};
+
+  // Agrupar keys filtradas por fecha
+  var porFechaOrdenado = [];
+  var gruposFecha = {};
+  tarimaKeysFiltradas.forEach(function(t){
+    var f = tarimaFechaMap[t];
+    if(!gruposFecha[f]) { gruposFecha[f]=[]; porFechaOrdenado.push(f); }
+    gruposFecha[f].push(t);
+  });
+  // Ordenar fechas descendente
+  porFechaOrdenado.sort(function(a,b){ return b.localeCompare(a); });
+
   // ── BLOQUE A: Tarimas disponibles ──────────────────────────────────────
   var thead = '<thead><tr>'
     +(esAud ? '<th></th>' : '')
@@ -10710,48 +10870,74 @@ function bodRenderTarimasAuditoria() {
     +(esAud ? '<th></th>' : '')
     +'</tr></thead>';
 
-  var filas = tarimaKeys.map(function(t){
-    var r = resumenes[t];
-    var carga = tarimaCargaMap[t];
-    var furg  = asigMap[t];
-    var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
-    var checkCell = '', estadoCell = '';
-    if(carga){
-      estadoCell = '<span style="background:#e3f2fd;color:#1565c0;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-        +'🔒 Carga '+escH(carga.furgon)+'</span>';
-      checkCell = esAud ? '<td></td>' : '';
-    } else if(furg){
-      var btnLiberar = esAud
-        ? '<button class="btn btn-xs bod-btn-liberar-herencia" data-tarima="'+escH(t)+'" data-furgon="'+escH(furg)+'"'
-          +' style="background:#fdecea;color:#c0392b;font-size:.71rem;margin-left:4px">Liberar</button>'
-        : '';
-      estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-        +'Furgón '+escH(furg)+' (herencia)</span>'+btnLiberar;
-      checkCell = esAud ? '<td></td>' : '';
-    } else {
-      estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
-      checkCell = esAud
-        ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
-        : '';
-    }
-    var tsRaw = tarimaPrimerTs[t] || '';
-    var tsFmt = '';
-    if(tsRaw) {
-      try { var dd=new Date(tsRaw); tsFmt=dd.toLocaleDateString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit'})+' '+dd.toLocaleTimeString('es-GT',{timeZone:'America/Guatemala',hour:'2-digit',minute:'2-digit'}); } catch(e){}
-    }
-    var btnAuditar = esAud
-      ? '<button class="btn btn-xs bod-btn-auditar-tarima" data-tarima="'+escH(t)+'"'
-        +' style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem">🔍 Auditar</button>'
-      : '';
-    return '<tr>'+checkCell
-      +'<td style="font-weight:700">'+escH(t)+'</td>'
-      +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
-      +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
-      +'<td class="tc" style="font-size:.75rem;color:#888">'+tsFmt+'</td>'
-      +'<td>'+estadoCell+'</td>'
-      +(esAud ? '<td>'+btnAuditar+'</td>' : '')
+  // Construir filas agrupadas por fecha
+  var filas = '';
+  porFechaOrdenado.forEach(function(fecha){
+    var grupo = gruposFecha[fecha];
+    var colapsado = !!window._bodFechasColapsadas[fecha];
+    // Calcular totales del grupo
+    var totLineas=0, totUnidades=0;
+    grupo.forEach(function(t){ totLineas+=resumenes[t].lineas; totUnidades+=resumenes[t].unidades; });
+    var fechaDisplay = fecha==='—' ? 'Sin fecha' : fecha;
+    // Encabezado del grupo
+    filas += '<tr class="bod-fecha-grupo" data-fecha="'+escH(fecha)+'"'
+      +' style="background:#eef2f7;cursor:pointer;user-select:none">'
+      +(esAud?'<td></td>':'')
+      +'<td colspan="'+(3+(esAud?2:0))+'" style="padding:4px 6px;font-size:.78rem;font-weight:700;color:#333">'
+      +'<span style="font-size:.8rem">'+(colapsado?'▶':'▼')+'</span> '
+      +'📅 '+escH(fechaDisplay)
+      +' <span style="font-weight:400;font-size:.73rem;color:#666;margin-left:8px">'
+      +grupo.length+' tarimas · '+totLineas+' líneas · '+totUnidades+' unidades'
+      +'</span></td>'
+      +'<td></td>'+(esAud?'<td></td>':'')
       +'</tr>';
-  }).join('');
+    // Filas de tarimas del grupo
+    if(!colapsado) {
+      grupo.forEach(function(t){
+        var r = resumenes[t];
+        var carga = tarimaCargaMap[t];
+        var furg  = asigMap[t];
+        var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
+        var checkCell = '', estadoCell = '';
+        if(carga){
+          estadoCell = '<span style="background:#e3f2fd;color:#1565c0;font-size:.73rem;padding:2px 7px;border-radius:8px">'
+            +'🔒 Carga '+escH(carga.furgon)+'</span>';
+          checkCell = esAud ? '<td></td>' : '';
+        } else if(furg){
+          var btnLiberar = esAud
+            ? '<button class="btn btn-xs bod-btn-liberar-herencia" data-tarima="'+escH(t)+'" data-furgon="'+escH(furg)+'"'
+              +' style="background:#fdecea;color:#c0392b;font-size:.71rem;margin-left:4px">Liberar</button>'
+            : '';
+          estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
+            +'Furgón '+escH(furg)+' (herencia)</span>'+btnLiberar;
+          checkCell = esAud ? '<td></td>' : '';
+        } else {
+          estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
+          checkCell = esAud
+            ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
+            : '';
+        }
+        var tsRaw = tarimaPrimerTs[t] || '';
+        var tsFmt = '';
+        if(tsRaw) {
+          try { var dd=new Date(tsRaw); tsFmt=dd.toLocaleDateString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit'})+' '+dd.toLocaleTimeString('es-GT',{timeZone:'America/Guatemala',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+        }
+        var btnAuditar = esAud
+          ? '<button class="btn btn-xs bod-btn-auditar-tarima" data-tarima="'+escH(t)+'"'
+            +' style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem">🔍 Auditar</button>'
+          : '';
+        filas += '<tr>'+checkCell
+          +'<td style="font-weight:700">'+escH(t)+'</td>'
+          +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
+          +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
+          +'<td class="tc" style="font-size:.75rem;color:#888">'+tsFmt+'</td>'
+          +'<td>'+estadoCell+'</td>'
+          +(esAud ? '<td>'+btnAuditar+'</td>' : '')
+          +'</tr>';
+      });
+    }
+  });
+  if(!filas) filas='<tr><td colspan="'+(5+(esAud?2:0))+'" style="color:#aaa;font-size:.82rem;padding:10px">Sin tarimas'+(filtFechaDesde||filtFechaHasta?' para el rango de fechas seleccionado.':'.')+'</td></tr>';
 
   // Formulario "Crear carga logística" (solo si auditor)
   var formCarga = '';
@@ -10843,9 +11029,41 @@ function bodRenderTarimasAuditoria() {
   }
 
   vistaEl.innerHTML = formCarga
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
+    +'<label style="font-weight:600;color:#555">📅 Filtrar fechas:</label>'
+    +'<input type="date" id="bod-tar-fecha-desde" class="field-inp"'
+    +' style="padding:3px 7px;font-size:.76rem;max-width:130px"'
+    +' value="'+escH(filtFechaDesde)+'" title="Desde">'
+    +'<span style="color:#888">—</span>'
+    +'<input type="date" id="bod-tar-fecha-hasta" class="field-inp"'
+    +' style="padding:3px 7px;font-size:.76rem;max-width:130px"'
+    +' value="'+escH(filtFechaHasta)+'" title="Hasta">'
+    +'<button class="btn btn-xs" id="btn-tar-filtro-limpiar" style="font-size:.72rem">Limpiar</button>'
+    +'</div>'
     +'<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.3rem;letter-spacing:.3px">Tarimas</div>'
     +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>'
     +bloqueCargasHtml;
+
+  // Wire: filtros de fecha re-renderizan Tarimas
+  ['bod-tar-fecha-desde','bod-tar-fecha-hasta'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el&&!el._bodWired){ el._bodWired=true; el.addEventListener('change',bodRenderTarimasAuditoria); }
+  });
+  var btnLimpFecha=document.getElementById('btn-tar-filtro-limpiar');
+  if(btnLimpFecha&&!btnLimpFecha._bodWired){ btnLimpFecha._bodWired=true; btnLimpFecha.addEventListener('click',function(){
+    var d=document.getElementById('bod-tar-fecha-desde'); if(d) d.value='';
+    var h=document.getElementById('bod-tar-fecha-hasta'); if(h) h.value='';
+    bodRenderTarimasAuditoria();
+  }); }
+
+  // Wire: colapso/expansión de grupos por fecha
+  vistaEl.querySelectorAll('.bod-fecha-grupo').forEach(function(row){
+    row.addEventListener('click', function(){
+      var fecha=row.dataset.fecha;
+      window._bodFechasColapsadas[fecha] = !window._bodFechasColapsadas[fecha];
+      bodRenderTarimasAuditoria();
+    });
+  });
 
   // Restaurar bodFurgonDraft
   var furgonInpNew = document.getElementById('bod-furgon-input');
@@ -11882,19 +12100,42 @@ function bodRenderWmsVsApp() {
         var rows = XLSX.utils.sheet_to_json(ws, {defval:''});
         var teo = {};
         rows.forEach(function(row){
-          // Columnas flexibles: SKU/Código, Nombre/Descripción, 952/Cant, Unidades, Exist., Disp.
           var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
           if(!sku) return;
-          // Fix 1: usar bodTeoKey con licHija952 ya declarada antes del onload
+          // Columnas reales del archivo 952.006.001: SKU | Nombre | Cant. | Unidad | Exist. | Disp.
+          // Helper: primer valor no-vacío de los candidatos dados
+          function _fv() {
+            for(var _i=0;_i<arguments.length;_i++){
+              var _v=row[arguments[_i]];
+              if(_v!==undefined&&_v!==null&&String(_v).trim()!=='') return _v;
+            } return '';
+          }
+          var cantRaw  = _fv('Cant.','Cant','Cantidad','952','Cantidad 952','CANTIDAD','cantidad');
+          var existRaw = _fv('Exist.','Exist','Existencia','EXISTENCIA','existencia');
+          var dispRaw  = _fv('Disp.','Disp','Disponible','DISPONIBLE','disponible');
           var teoParseKey = bodTeoKey(licHija952, sku);
           teo[teoParseKey] = {
-            nombre:     String(row['Nombre']||row['NOMBRE']||row['Descripción']||row['DESCRIPCION']||''),
-            cantidad:   Number(row['952']||row['Cantidad 952']||row['CANTIDAD']||0),
-            unidades:   Number(row['Unidades']||row['UNIDADES']||0),
-            existencia: Number(row['Exist.']||row['Existencia']||row['EXISTENCIA']||0),
-            disponible: Number(row['Disp.']||row['Disponible']||row['DISPONIBLE']||0)
+            nombre:     String(_fv('Nombre','NOMBRE','Descripción','DESCRIPCION','nombre','descripcion')||''),
+            cantidad:   isNaN(Number(cantRaw))  ? 0 : Number(cantRaw),
+            unidades:   0,  // 'Unidad' en el archivo real es texto ('U') — no convertir a número
+            existencia: isNaN(Number(existRaw)) ? 0 : Number(existRaw),
+            disponible: isNaN(Number(dispRaw))  ? 0 : Number(dispRaw)
           };
         });
+        // Confirmar reemplazo si ya hay datos para esta lic.hija
+        var prefixCheck = licHija952 ? (licHija952+':') : ':';
+        var tienePrevio = Object.keys(window._bodTeorico952).some(function(k){
+          return k.slice(0, prefixCheck.length) === prefixCheck;
+        });
+        if(tienePrevio) {
+          var licLabel = licHija952 || '(global)';
+          if(!confirm('Ya existe teórico 952 para la licencia "'+licLabel+'".\n\n'
+            +'¿Reemplazar con el nuevo archivo?\n'
+            +'(Las validaciones del Papel de Trabajo se conservan)')) {
+            if(msgEl) msgEl.innerHTML='';
+            return;
+          }
+        }
         // Merge selectivo: borrar solo las claves de la licencia hija que se está subiendo,
         // conservar claves de otras licencias hijas intactas.
         // Clave con lic.hija: "LICENCIA:SKU" — prefijo = "LICENCIA:"
@@ -12084,6 +12325,39 @@ function bodRenderFlujoBolson() {
   var fisicoSku  = bodGetFisicoSkuPorLicHija(filtPapelLic);
   var teorico952 = bodGetTeoricoSkuPorLicHija(filtPapelLic);
 
+  // Pre-calcular tarimas por SKU + datos logísticos desde cargas
+  var tarimasPorSku  = {};  // sku → [tarimas]
+  var furgonPorSku   = {};  // sku → furgon
+  var licHijaPorSku  = {};  // sku → licencia_hija
+  var destinoPorSku  = {};  // sku → destino_tr999
+  // Mapas desde tarimas de bodega → cargas logísticas
+  var tarimaCargaMapPapel = {};
+  cargas.forEach(function(cg){
+    (Array.isArray(cg.tarimas)?cg.tarimas:[]).forEach(function(t){ tarimaCargaMapPapel[t]=cg; });
+  });
+  // Filtro: tarimas de la lic.hija activa (o todas si no hay filtro)
+  var tarimasFiltroP = filtPapelLic ? bodGetTarimasPorLicHija(filtPapelLic) : null;
+  lineas.forEach(function(l){
+    if(tarimasFiltroP && !tarimasFiltroP[l.tarima||'']) return;
+    var sku = l.sku||'?';
+    if(!tarimasPorSku[sku]) tarimasPorSku[sku] = {};
+    tarimasPorSku[sku][l.tarima||'?'] = true;
+    // Datos logísticos de la carga de esta tarima
+    var cg = tarimaCargaMapPapel[l.tarima||''];
+    if(cg) {
+      if(!furgonPorSku[sku])  furgonPorSku[sku]  = cg.furgon || '';
+      if(!licHijaPorSku[sku]) licHijaPorSku[sku]  = cg.licencia_hija || '';
+      if(!destinoPorSku[sku]) destinoPorSku[sku]  = cg.destino_tr999 || '';
+    }
+  });
+
+  // Asignar Tarima AI — número correlativo global por SKU ordenado
+  var skusOrdenados = Object.keys(
+    Object.assign({}, fisicoSku, teorico952)
+  ).sort();
+  var tarimarAiMap = {};
+  skusOrdenados.forEach(function(s,i){ tarimarAiMap[s] = 'AI-'+(i+1); });
+
   // Unión de SKUs
   var todosSkus = {};
   Object.keys(fisicoSku).forEach(function(s){ todosSkus[s]=true; });
@@ -12101,11 +12375,20 @@ function bodRenderFlujoBolson() {
     var papelRenderKey = (filtPapelLic||'')+':'+sku;
     var validado  = !!_bodPapelValidaciones[papelRenderKey];
     var cantManif = validado ? fisico : cant952;
+    var difDespues = validado ? 0 : diff;
+    var difDespColor = difDespues < 0 ? '#c0392b' : difDespues > 0 ? '#e65100' : '#1e7e34';
     var chk = validado ? ' checked' : '';
     var nota = diff < 0 ? '<span style="font-size:.7rem;color:#c0392b"> ⚠</span>' : '';
+    // Columnas nuevas
+    var tarimAI   = escH(tarimarAiMap[sku]||'—');
+    var tarimasLista = tarimasPorSku[sku] ? Object.keys(tarimasPorSku[sku]).sort().join(', ') : '—';
+    var furgon    = escH(furgonPorSku[sku]  || '—');
+    var licHija   = escH(licHijaPorSku[sku] || '—');
+    var destino   = escH(destinoPorSku[sku] || '—');
     return '<tr>'
       +'<td style="font-weight:600;font-size:.8rem">'+escH(sku)+'</td>'
       +'<td style="font-size:.78rem">'+escH(nombre)+'</td>'
+      +'<td class="tc" style="font-size:.73rem;color:#888">'+tarimAI+'</td>'
       +'<td class="tc">'+cant952+'</td>'
       +'<td class="tc">'+fisico+'</td>'
       +'<td class="tc" style="font-weight:600;color:'+segColor+'">'+diff+'</td>'
@@ -12113,11 +12396,16 @@ function bodRenderFlujoBolson() {
       +(esAud
         ? '<td class="tc"><input type="checkbox" class="bod-papel-chk" data-sku="'+escH(sku)+'"'+chk+'></td>'
         : '<td class="tc">'+(validado?'✅':'—')+'</td>')
+      +'<td class="tc" style="font-weight:600;color:'+difDespColor+'">'+(validado?0:diff)+'</td>'
+      +'<td style="font-size:.73rem;color:#666">'+escH(tarimasLista)+'</td>'
+      +'<td style="font-size:.73rem;color:#666">'+furgon+'</td>'
+      +'<td style="font-size:.73rem;color:#666">'+licHija+'</td>'
+      +'<td style="font-size:.73rem;color:#666">'+destino+'</td>'
       +'<td class="tc" style="font-weight:600">'+cantManif+'</td>'
       +'</tr>';
   }).join('');
 
-  if(!filas) filas = '<tr><td colspan="8" style="color:#aaa;font-size:.82rem;padding:12px">Sin datos. Capturá tarimas primero o cargá el teórico 952.</td></tr>';
+  if(!filas) filas = '<tr><td colspan="14" style="color:#aaa;font-size:.82rem;padding:12px">Sin datos. Capturá tarimas primero o cargá el teórico 952.</td></tr>';
 
   var prevPapelLic = filtPapelLic; // guardar para restaurar tras re-render
   vistaEl.innerHTML = ''
@@ -12133,10 +12421,12 @@ function bodRenderFlujoBolson() {
     // Tabla
     +'<div class="tbl-wrap"><table>'
     +'<thead><tr>'
-    +'<th>SKU</th><th>Nombre</th><th class="tc">952</th>'
+    +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">952</th>'
     +'<th class="tc">Físico s/Aud.</th><th class="tc">Diferencia</th>'
     +'<th>Seguimiento</th>'
     +'<th class="tc" title="El auditor confirma traslado y valida la cantidad física">Validación</th>'
+    +'<th class="tc">Dif. post-valid.</th>'
+    +'<th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
     +'<th class="tc">Cant. Manifiesto</th>'
     +'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
