@@ -5892,3 +5892,131 @@ app.delete('/api/bod/sesion/:id', bodGuard, async (req, res) => {
     res.status(500).json({ ok:false, error:e.message });
   }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// FASE 2 BODEGA CDG — Persistencia Teórico 952 + Papel de Trabajo
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/bod/sesion/:id/teorico-952 ───────────────────────────────────
+app.get('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var licHija = String(req.query.licencia_hija || '').trim().toUpperCase();
+    var ck = 'bod:teorico952:'+sesId+':'+(licHija||'*');
+    var cached = cacheGet(ck);
+    if(cached) return res.json(cached);
+
+    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc';
+    if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
+    var rows = await supabase('GET', 'bod_teorico_952', null, query);
+    var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
+    cacheSet(ck, resp, 30000);
+    res.json(resp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/teorico-952 ──────────────────────────────────
+// Body: { licencia_hija, skus: [{sku,nombre,cantidad_952,unidades,existencia,disponible}], creado_por }
+app.post('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
+  try {
+    var sesId    = String(req.params.id).trim();
+    var { licencia_hija, skus, creado_por } = req.body || {};
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    creado_por    = String(creado_por    || '').trim();
+    if(!Array.isArray(skus) || !skus.length)
+      return res.status(400).json({ ok:false, error:'skus requeridos' });
+
+    var now = new Date().toISOString();
+    var upserts = skus.map(function(s){
+      return {
+        sesion_id:      sesId,
+        licencia_hija:  licencia_hija,
+        sku:            String(s.sku||'').trim().toUpperCase(),
+        nombre:         String(s.nombre||''),
+        cantidad_952:   Number(s.cantidad_952)||0,
+        unidades:       Number(s.unidades)||0,
+        existencia:     Number(s.existencia)||0,
+        disponible:     Number(s.disponible)||0,
+        creado_por:     creado_por,
+        actualizado_en: now
+      };
+    }).filter(function(r){ return !!r.sku; });
+
+    if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
+
+    // Batch upsert (Supabase: POST con Prefer merge-duplicates)
+    var saved = await supabase('POST', 'bod_teorico_952', upserts,
+      '?on_conflict=sesion_id,licencia_hija,sku');
+
+    // Invalidar caches
+    cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
+
+    res.json({ ok:true, guardados: upserts.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/papel-trabajo ─────────────────────────────────
+app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var licHija = String(req.query.licencia_hija || '').trim().toUpperCase();
+    var ck = 'bod:papel:'+sesId+':'+(licHija||'*');
+    var cached = cacheGet(ck);
+    if(cached) return res.json(cached);
+
+    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc';
+    if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
+    var rows = await supabase('GET', 'bod_papel_trabajo', null, query);
+    var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
+    cacheSet(ck, resp, 15000); // 15s — cambia frecuentemente al validar
+    res.json(resp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/papel-trabajo ────────────────────────────────
+// Body: { licencia_hija, skus: [{sku,fisico_auditoria,diferencia,seguimiento,
+//                                validado,cantidad_manifiesto,validado_por}] }
+app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
+  try {
+    var sesId    = String(req.params.id).trim();
+    var { licencia_hija, skus } = req.body || {};
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    if(!Array.isArray(skus) || !skus.length)
+      return res.status(400).json({ ok:false, error:'skus requeridos' });
+
+    var now = new Date().toISOString();
+    var upserts = skus.map(function(s){
+      var validado = !!s.validado;
+      return {
+        sesion_id:           sesId,
+        licencia_hija:       licencia_hija,
+        sku:                 String(s.sku||'').trim().toUpperCase(),
+        fisico_auditoria:    Number(s.fisico_auditoria)||0,
+        diferencia:          Number(s.diferencia)||0,
+        seguimiento:         String(s.seguimiento||''),
+        validado:            validado,
+        cantidad_manifiesto: Number(s.cantidad_manifiesto)||0,
+        validado_por:        String(s.validado_por||''),
+        validado_en:         validado ? (s.validado_en || now) : null,
+        actualizado_en:      now
+      };
+    }).filter(function(r){ return !!r.sku; });
+
+    if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
+
+    var saved = await supabase('POST', 'bod_papel_trabajo', upserts,
+      '?on_conflict=sesion_id,licencia_hija,sku');
+
+    cacheInvalidatePrefix('bod:papel:'+sesId+':');
+
+    res.json({ ok:true, guardados: upserts.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
