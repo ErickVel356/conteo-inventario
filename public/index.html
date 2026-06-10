@@ -628,32 +628,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
     <!-- ── BODEGA: AUDITORÍA ───────────────────────────────────── -->
     <div id="pg-bod-auditoria" class="page">
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia <span style="font-weight:400;text-transform:none;color:#aaa">(opcional)</span></label>
-            <input type="text" class="field-inp" id="bod-aud-licencia" placeholder="Todas" autocomplete="off" style="text-transform:uppercase">
-          </div>
-          <div style="min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Desde</label>
-            <input type="date" class="field-inp" id="bod-aud-fecha-desde">
-          </div>
-          <div style="min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Hasta</label>
-            <input type="date" class="field-inp" id="bod-aud-fecha-hasta">
-          </div>
-          <div style="min-width:100px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Estado</label>
-            <select class="field-inp" id="bod-aud-estado" style="font-size:.82rem;padding:5px 7px">
-              <option value="">Todos</option>
-              <option value="abierta">Abierta</option>
-              <option value="cerrada">Cerrada</option>
-            </select>
-          </div>
-          <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Buscar</button>
-        </div>
-        <div id="bod-aud-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-      </div>
+      <!-- Filtros viven dentro de la pestaña Tarimas; estos inputs son de referencia -->
+      <input type="hidden" id="bod-aud-licencia" value="">
+      <input type="hidden" id="bod-aud-fecha-desde" value="">
+      <input type="hidden" id="bod-aud-fecha-hasta" value="">
+      <input type="hidden" id="bod-aud-estado" value="">
+      <div id="bod-aud-msg" style="font-size:.82rem;padding:.4rem 0;display:none"></div>
       <div id="bod-aud-contenido"></div>
     </div>
 
@@ -10389,7 +10369,9 @@ function bodRenderTabla() {
 
 // ── Auditoría ─────────────────────────────────────────────────────────────
 // ── Estado auditoría ─────────────────────────────────────────────────────
-var bodAuditoriaData      = null;
+var bodAuditoriaData      = null;   // datos de una sesión única (Detalle/Papel/Manifiesto)
+var bodMultiSesiones      = [];     // array de sesiones para la vista Tarimas global
+var bodAudFiltros = { lic:'', desde:'', hasta:'', estado:'' }; // filtros activos
 var bodAudVista           = 'tarimas';
 var bodFurgonAsignaciones = [];
 var bodAudPollTimer       = null;
@@ -10652,29 +10634,221 @@ function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
     .catch(function(){ if(!silencioso) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
 }
 
-var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
-if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
-  if(!BOD_ENABLED_CLIENT) return;
-  var licEl    = document.getElementById('bod-aud-licencia');
-  var desdeEl  = document.getElementById('bod-aud-fecha-desde');
-  var hastaEl  = document.getElementById('bod-aud-fecha-hasta');
-  var estadoEl = document.getElementById('bod-aud-estado');
-  var lic     = (licEl   ? licEl.value   : '').trim().toUpperCase();
-  var desde   = (desdeEl ? desdeEl.value : '').trim();
-  var hasta   = (hastaEl ? hastaEl.value : '').trim();
-  var estado  = (estadoEl ? estadoEl.value : '').trim();
-  var msgEl   = document.getElementById('bod-aud-msg');
+// El botón 'Buscar' vive dentro de la pestaña Tarimas (renderizado dinámicamente)
+// bodBuscarMultiSesiones: ejecutado por el botón Buscar dentro de Tarimas
+function bodBuscarMultiSesiones() {
+  var lic    = (document.getElementById('bod-fil-licencia')||{value:''}).value.trim().toUpperCase();
+  var desde  = (document.getElementById('bod-fil-desde')||{value:''}).value.trim();
+  var hasta  = (document.getElementById('bod-fil-hasta')||{value:''}).value.trim();
+  var estado = (document.getElementById('bod-fil-estado')||{value:''}).value.trim();
   if(!desde && !hasta && !lic) {
-    msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una fecha o licencia.</span>'; return;
+    var msgEl=document.getElementById('bod-fil-msg');
+    if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una fecha o licencia.</span>';
+    return;
   }
-  if(lic && desde && !hasta && !estado) {
-    // Licencia + fecha exacta (sin rango ni filtro de estado): sesión directa
-    bodCargarAuditoria(lic, desde, msgEl, false);
-  } else {
-    // Rango, solo licencia, solo rango, o con estado: listado filtrado
-    bodCargarListadoSesiones(desde, hasta, lic, estado, msgEl);
-  }
-});
+  // Guardar filtros activos
+  bodAudFiltros = { lic:lic, desde:desde, hasta:hasta, estado:estado };
+  // Sincronizar con los hidden inputs para compatibilidad con autoRefresh
+  var hidLic=document.getElementById('bod-aud-licencia'); if(hidLic) hidLic.value=lic;
+  var hidDesde=document.getElementById('bod-aud-fecha-desde'); if(hidDesde) hidDesde.value=desde;
+  var hidHasta=document.getElementById('bod-aud-fecha-hasta'); if(hidHasta) hidHasta.value=hasta;
+  var hidEstado=document.getElementById('bod-aud-estado'); if(hidEstado) hidEstado.value=estado;
+  bodCargarMultiSesiones(lic, desde, hasta, estado);
+}
+
+// bodCargarMultiSesiones: carga N sesiones + sus líneas/furgones y renderiza Tarimas global
+function bodCargarMultiSesiones(lic, desde, hasta, estado) {
+  var vistaEl = document.getElementById('bod-aud-contenido');
+  if(!vistaEl) return;
+  vistaEl.innerHTML='<div style="color:#888;padding:1rem;font-size:.85rem">⏳ Cargando sesiones…</div>';
+  var params = [];
+  if(lic)    params.push('licencia_id='+encodeURIComponent(lic));
+  if(desde)  params.push('fecha_desde='+encodeURIComponent(desde));
+  if(hasta)  params.push('fecha_hasta='+encodeURIComponent(hasta));
+  if(estado) params.push('estado='+encodeURIComponent(estado));
+  var url = '/api/bod/sesiones'+(params.length?'?'+params.join('&'):'');
+  bodFetch('GET', url)
+    .then(function(d){
+      if(!d||!d.ok||!d.sesiones||!d.sesiones.length) {
+        bodMultiSesiones = [];
+        vistaEl.innerHTML='<div style="color:#aaa;padding:1rem;font-size:.85rem">Sin sesiones para esos filtros. Podés crear una desde el menú principal.</div>';
+        return;
+      }
+      bodMultiSesiones = d.sesiones;
+      // Si hay una sola sesión, cargarla completa para Detalle/Papel/Manifiesto
+      if(d.sesiones.length===1) {
+        return bodCargarAuditoria(d.sesiones[0].licencia_id, d.sesiones[0].fecha_trabajo,
+          {innerHTML:''}, false);
+      }
+      // Multi-sesión: cargar líneas + furgones de todas en paralelo
+      return Promise.all(d.sesiones.map(function(s){
+        return Promise.all([
+          bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(s.id)).catch(function(){ return null; }),
+          bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(s.id)+'/furgones').catch(function(){ return null; })
+        ]).then(function(res){
+          var sesData = res[0]; var furgData = res[1];
+          return {
+            meta:    s,
+            sesion:  sesData && sesData.sesion ? sesData.sesion : s,
+            lineas:  sesData && sesData.lineas ? sesData.lineas : [],
+            cargas:  furgData && furgData.cargas ? furgData.cargas : [],
+            asigs:   furgData && furgData.asignaciones ? furgData.asignaciones : []
+          };
+        });
+      })).then(function(sesArr){
+        // Renderizar Tarimas global directamente
+        bodRenderTarimasMulti(sesArr);
+      });
+    })
+    .catch(function(){
+      if(vistaEl) vistaEl.innerHTML='<div style="color:#c0392b;padding:1rem;font-size:.85rem">Sin conexión.</div>';
+    });
+}
+
+// bodRenderTarimasMulti: pinta Tarimas de N sesiones agrupadas por fecha > licencia
+function bodRenderTarimasMulti(sesArr) {
+  var el = document.getElementById('bod-aud-contenido');
+  if(!el) return;
+  if(!window._bodGruposColapsados) window._bodGruposColapsados = {};
+
+  // Agrupar sesiones por fecha_trabajo
+  var porFecha = {};
+  sesArr.forEach(function(se){
+    var f = (se.meta&&se.meta.fecha_trabajo) || (se.sesion&&se.sesion.fecha_trabajo) || '—';
+    if(!porFecha[f]) porFecha[f]=[];
+    porFecha[f].push(se);
+  });
+  var fechas = Object.keys(porFecha).sort(function(a,b){ return b.localeCompare(a); });
+
+  // Construir filtros en el encabezado de Tarimas
+  var f = bodAudFiltros;
+  var filtHtml = '<div style="background:#f8f9fa;border-radius:8px;padding:.6rem .8rem;margin-bottom:.6rem">'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;font-size:.78rem">'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Licencia</label>'
+    +'<input type="text" id="bod-fil-licencia" class="field-inp" value="'+escH(f.lic||'')+'" placeholder="Todas" autocomplete="off" style="text-transform:uppercase;width:120px;padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Desde</label>'
+    +'<input type="date" id="bod-fil-desde" class="field-inp" value="'+escH(f.desde||'')+'" style="padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Hasta</label>'
+    +'<input type="date" id="bod-fil-hasta" class="field-inp" value="'+escH(f.hasta||'')+'" style="padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Estado</label>'
+    +'<select id="bod-fil-estado" class="field-inp" style="font-size:.8rem;padding:4px 6px">'
+    +'<option value=""'+(f.estado===''?' selected':'')+'>Todos</option>'
+    +'<option value="abierta"'+(f.estado==='abierta'?' selected':'')+'>Abierta</option>'
+    +'<option value="cerrada"'+(f.estado==='cerrada'?' selected':'')+'>Cerrada</option>'
+    +'</select></div>'
+    +'<button class="btn btn-sm" id="bod-fil-buscar" style="font-size:.78rem">🔍 Buscar</button>'
+    +'</div>'
+    +'<div id="bod-fil-msg" style="font-size:.76rem;margin-top:.2rem"></div>'
+    +'</div>';
+
+  var tabsHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:.6rem">'
+    +'<span class="tab-pill on">🗂 Tarimas</span>'
+    +'<span style="font-size:.73rem;color:#aaa;padding:4px 0;align-self:center">← Seleccioná una sesión para Detalle, Carga Teórico, Papel de Trabajo y Manifiesto</span>'
+    +'</div>';
+
+  // Construir grupos fecha > licencia > tarimas
+  var gruposHtml = '';
+  fechas.forEach(function(fecha){
+    var sesDeFecha = porFecha[fecha];
+    var colFecha = !!window._bodGruposColapsados['f:'+fecha];
+    // Totales del grupo-fecha
+    var totTar=0, totLin=0, totUni=0;
+    sesDeFecha.forEach(function(se){
+      var reses = {};
+      se.lineas.forEach(function(l){ reses[l.tarima||'?']=true; totLin++; totUni+=Number(l.cantidad)||0; });
+      totTar+=Object.keys(reses).length;
+    });
+    gruposHtml += '<div class="bod-grupo-fecha" data-fecha="'+escH(fecha)+'" style="background:#eef2f7;border-radius:6px;padding:5px 8px;margin-bottom:2px;cursor:pointer">'
+      +'<span style="font-size:.78rem;font-weight:700;color:#333">'+(colFecha?'▶':'▼')+'</span> '
+      +'<span style="font-size:.8rem;font-weight:700">📅 '+escH(fecha==='—'?'Sin fecha':fecha)+'</span> '
+      +'<span style="font-size:.72rem;color:#666;margin-left:6px">'
+      +sesDeFecha.length+' ses. · '+totTar+' tar. · '+totLin+' lín. · '+totUni+' ud.</span>'
+      +'</div>';
+    if(!colFecha) {
+      sesDeFecha.forEach(function(se){
+        var licId = (se.sesion&&se.sesion.licencia_id)||(se.meta&&se.meta.licencia_id)||'—';
+        var sesId = (se.sesion&&se.sesion.id)||(se.meta&&se.meta.id)||'';
+        var est   = (se.sesion&&se.sesion.estado)||(se.meta&&se.meta.estado)||'abierta';
+        var colSes = !!window._bodGruposColapsados['s:'+sesId];
+        var resTarimas = {};
+        se.lineas.forEach(function(l){ resTarimas[l.tarima||'?']=true; });
+        var nTar=Object.keys(resTarimas).length, nLin=se.lineas.length;
+        var nUni=se.lineas.reduce(function(a,l){return a+Number(l.cantidad||0);},0);
+        var estBadge=est==='abierta'
+          ?'<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 5px;border-radius:6px">Abierta</span>'
+          :'<span style="background:#eee;color:#555;font-size:.7rem;padding:1px 5px;border-radius:6px">Cerrada</span>';
+        gruposHtml += '<div style="margin-left:16px;margin-bottom:2px">'
+          +'<div class="bod-grupo-ses" data-sesid="'+escH(sesId)+'" style="background:#f0f4f8;border-radius:5px;padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:6px">'
+          +'<span style="font-size:.75rem">'+(colSes?'▶':'▼')+'</span>'
+          +'<span style="font-size:.78rem;font-weight:700">'+escH(licId)+'</span>'
+          +estBadge
+          +'<span style="font-size:.72rem;color:#777">'+nTar+' tar · '+nLin+' lín · '+nUni+' ud</span>'
+          +'<button class="btn btn-xs bod-btn-abrir-sesion-full" data-sesid="'+escH(sesId)+'" data-lic="'+escH(licId)+'" data-fecha="'+escH(se.meta&&se.meta.fecha_trabajo||'')+'" style="margin-left:auto;font-size:.7rem;background:#e3f2fd;color:#1565c0">📂 Abrir completo</button>'
+          +'</div>';
+        if(!colSes) {
+          // Tabla de tarimas de esta sesión
+          var tarKeys = bodSortTarimas(Object.keys(resTarimas));
+          var linByTarima = {};
+          se.lineas.forEach(function(l){ var t=l.tarima||'?'; if(!linByTarima[t])linByTarima[t]=0; linByTarima[t]++; });
+          var uniByTarima = {};
+          se.lineas.forEach(function(l){ var t=l.tarima||'?'; if(!uniByTarima[t])uniByTarima[t]=0; uniByTarima[t]+=Number(l.cantidad||0); });
+          var tfilas = tarKeys.map(function(t){
+            return '<tr>'
+              +'<td style="font-weight:700;font-size:.8rem">'+escH(t)+'</td>'
+              +'<td class="tc" style="font-size:.8rem">'+(linByTarima[t]||0)+'</td>'
+              +'<td class="tc" style="font-size:.8rem">'+(uniByTarima[t]||0)+'</td>'
+              +'</tr>';
+          }).join('');
+          gruposHtml += '<div style="margin-left:16px;margin-bottom:6px">'
+            +'<div class="tbl-wrap"><table>'
+            +'<thead><tr><th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th></tr></thead>'
+            +'<tbody>'+tfilas+'</tbody></table></div></div>';
+        }
+        gruposHtml += '</div>';
+      });
+    }
+  });
+
+  el.innerHTML = filtHtml + tabsHtml + gruposHtml;
+
+  // Wire: botón Buscar
+  var btnBus=document.getElementById('bod-fil-buscar');
+  if(btnBus&&!btnBus._w){ btnBus._w=true; btnBus.addEventListener('click', bodBuscarMultiSesiones); }
+
+  // Wire: colapso grupos fecha
+  el.querySelectorAll('.bod-grupo-fecha').forEach(function(div){
+    div.addEventListener('click', function(){
+      var k='f:'+div.dataset.fecha;
+      window._bodGruposColapsados[k]=!window._bodGruposColapsados[k];
+      bodRenderTarimasMulti(sesArr);
+    });
+  });
+
+  // Wire: colapso grupos sesión
+  el.querySelectorAll('.bod-grupo-ses').forEach(function(div){
+    div.addEventListener('click', function(ev){
+      if(ev.target.closest('.bod-btn-abrir-sesion-full')) return; // no colapsar si es el botón
+      var k='s:'+div.dataset.sesid;
+      window._bodGruposColapsados[k]=!window._bodGruposColapsados[k];
+      bodRenderTarimasMulti(sesArr);
+    });
+  });
+
+  // Wire: botón '📂 Abrir completo' — carga esa sesión para Detalle/Papel/Manifiesto
+  el.querySelectorAll('.bod-btn-abrir-sesion-full').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var lic   = btn.dataset.lic;
+      var fecha = btn.dataset.fecha;
+      var sesId = btn.dataset.sesid;
+      var msgEl2 = document.getElementById('bod-aud-msg');
+      if(sesId && typeof bodCargarAuditoriaById==='function') {
+        bodCargarAuditoriaById(sesId, msgEl2||{innerHTML:''});
+      } else {
+        bodCargarAuditoria(lic, fecha, msgEl2||{innerHTML:''}, false);
+      }
+    });
+  });
+}
 
 // bodRenderAuditoria: header + tabs + vista activa
 function bodRenderAuditoria(data) {
@@ -11479,7 +11653,7 @@ function bodRenderDetalleAuditoria(data) {
       bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
         { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor(), cantidad_audit:cantAud })
         .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+          if(d.ok) bodRecargarSesionActual();
           else alert(d.error||'Error');
         }).catch(function(){ alert('Sin conexión'); });
     });
@@ -11493,11 +11667,50 @@ function bodRenderDetalleAuditoria(data) {
       bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/unauditar',
         { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
         .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
+          if(d.ok) bodRecargarSesionActual();
           else alert(d.error||'Error');
         }).catch(function(){ alert('Sin conexión'); });
     });
   });
+}
+
+// ── bodRecargarSesionActual ────────────────────────────────────────────────
+// Recarga la sesión activa (por ID) y re-renderiza la vista actual.
+// Reemplaza el patrón btn-bod-cargar-auditoria.click() que ya no existe.
+function bodRecargarSesionActual() {
+  var sesId = bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
+  if(!sesId) {
+    // Sin sesión cargada: re-ejecutar la búsqueda con filtros actuales
+    if(bodAudFiltros && (bodAudFiltros.lic || bodAudFiltros.desde || bodAudFiltros.hasta)) {
+      bodCargarMultiSesiones(bodAudFiltros.lic||'', bodAudFiltros.desde||'',
+                             bodAudFiltros.hasta||'', bodAudFiltros.estado||'');
+    }
+    return;
+  }
+  // Recargar datos de la sesión actual
+  Promise.all([
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId)).catch(function(){ return null; }),
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').catch(function(){ return null; })
+  ]).then(function(res){
+    var sesData  = res[0];
+    var furgData = res[1];
+    if(sesData && sesData.ok) {
+      bodAuditoriaData = sesData;
+      bodAudLastRefresh = Date.now();
+    }
+    if(furgData && furgData.ok) {
+      bodFurgonAsignaciones = Array.isArray(furgData.asignaciones) ? furgData.asignaciones : [];
+      if(bodAuditoriaData) bodAuditoriaData._cargas = Array.isArray(furgData.cargas) ? furgData.cargas : [];
+    }
+    // Re-renderizar la vista activa
+    if(bodAudVista === 'detalle') {
+      bodRenderDetalleAuditoria(bodAuditoriaData);
+    } else if(bodAudVista === 'tarimas') {
+      bodRenderTarimasAuditoria();
+    } else if(bodAuditoriaData) {
+      bodRenderAuditoria(bodAuditoriaData);
+    }
+  }).catch(function(){});
 }
 
 // ── Navegación ─────────────────────────────────────────────────────────────
@@ -11515,6 +11728,32 @@ if(smBodCaptura) smBodCaptura.addEventListener('click', function(){
 var smBodAuditoria = document.getElementById('sm-bod-auditoria');
 if(smBodAuditoria) smBodAuditoria.addEventListener('click', function(){
   if(typeof navTo==='function') navTo('pg-bod-auditoria','🔍 Auditar sesión');
+  // Mostrar formulario de búsqueda con fecha de hoy por defecto
+  var contenido = document.getElementById('bod-aud-contenido');
+  if(!contenido || contenido.innerHTML.trim()) return; // ya tiene contenido
+  var hoy = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
+  var filHtml = '<div style="background:#f8f9fa;border-radius:8px;padding:.8rem 1rem;margin-bottom:.6rem">'
+    +'<div style="font-size:.82rem;font-weight:700;color:#555;margin-bottom:.5rem">🔍 Buscar sesiones</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;font-size:.78rem">'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Licencia</label>'
+    +'<input type="text" id="bod-fil-licencia" class="field-inp" placeholder="Todas"'
+    +' autocomplete="off" style="text-transform:uppercase;width:120px;padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Desde</label>'
+    +'<input type="date" id="bod-fil-desde" class="field-inp" value="'+escH(hoy)+'" style="padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Hasta</label>'
+    +'<input type="date" id="bod-fil-hasta" class="field-inp" value="'+escH(hoy)+'" style="padding:3px 7px"></div>'
+    +'<div><label style="font-size:.72rem;color:#888;display:block">Estado</label>'
+    +'<select id="bod-fil-estado" class="field-inp" style="font-size:.8rem;padding:4px 6px">'
+    +'<option value="">Todos</option><option value="abierta">Abierta</option><option value="cerrada">Cerrada</option>'
+    +'</select></div>'
+    +'<button class="btn btn-sm" id="bod-fil-buscar" style="font-size:.78rem">🔍 Buscar</button>'
+    +'</div><div id="bod-fil-msg" style="font-size:.76rem;margin-top:.2rem"></div></div>';
+  contenido.innerHTML = filHtml;
+  var btnBus = document.getElementById('bod-fil-buscar');
+  if(btnBus && !btnBus._w) { btnBus._w=true; btnBus.addEventListener('click', bodBuscarMultiSesiones); }
+  // Auto-buscar con fecha de hoy
+  bodAudFiltros = { lic:'', desde:hoy, hasta:hoy, estado:'' };
+  bodCargarMultiSesiones('', hoy, hoy, '');
 });
 
 // ── Catálogo barra-SKU ────────────────────────────────────────────────────
