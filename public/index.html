@@ -10390,7 +10390,9 @@ var bodLicenciasAdicionales     = [];   // licencias bolsón adicionales para re
 var bodFurgonCierres           = {};   // furgon → datos de cierre (cache local)
 var _bodDatosWms   = [];   // cache datos WMS vs App para filtros sin re-fetch
 var _bodDatosFlujo = [];   // cache datos Flujo Bolsón para filtros sin re-fetch
-window._bodTeorico952 = window._bodTeorico952 || {}; // teórico 952 cargado por auditor
+window._bodTeorico952 = window._bodTeorico952 || {}; // teórico 952 cargado/persistido
+window._bodPapelPersistido = window._bodPapelPersistido || {}; // papel de trabajo del server
+var _bodPapelGuardando = false; // prevenir doble POST
 var _bodDatosRem   = [];   // cache datos Remanentes para filtros sin re-fetch
 
 function bodAuditoriaActiva(){
@@ -10427,6 +10429,68 @@ function bodAuditoriaAutoRefresh(){
 }
 
 // Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
+// ── Helpers clave compuesta teórico 952: "licHija:SKU" ───────────────────
+function bodTeoKey(lic, sku) {
+  return (lic||'') + ':' + String(sku||'').trim().toUpperCase();
+}
+function bodSplitTeoKey(key) {
+  var sep = String(key||'').indexOf(':');
+  if(sep < 0) return { licencia_hija:'', sku: String(key).trim().toUpperCase() };
+  return { licencia_hija: key.slice(0, sep), sku: key.slice(sep + 1).trim().toUpperCase() };
+}
+
+// ── Helpers Papel de Trabajo — misma lógica en render y en guardado ──────────
+function bodGetTarimasPorLicHija(licHija) {
+  var result = {};
+  var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+  cargas.forEach(function(cg){
+    if(!licHija || (cg.licencia_hija||'') === licHija) {
+      (Array.isArray(cg.tarimas) ? cg.tarimas : []).forEach(function(t){ result[t] = true; });
+    }
+  });
+  return result;
+}
+
+function bodGetFisicoSkuPorLicHija(licHija) {
+  var result = {};
+  var tarimas = bodGetTarimasPorLicHija(licHija);
+  var lineas  = (bodAuditoriaData && bodAuditoriaData.lineas) || [];
+  lineas.forEach(function(l){
+    if(licHija && !tarimas[l.tarima||'']) return;
+    var sku = l.sku||'?';
+    if(!result[sku]) result[sku] = { desc: l.descripcion||'', cantidad: 0 };
+    result[sku].cantidad += Number(l.cantidad)||0;
+    if(!result[sku].desc && l.descripcion) result[sku].desc = l.descripcion;
+  });
+  return result;
+}
+
+function bodGetTeoricoSkuPorLicHija(licHija) {
+  var result = {};
+  var teoAll = window._bodTeorico952 || {};
+  Object.entries(teoAll).forEach(function(kv){
+    var parts = bodSplitTeoKey(kv[0]);
+    var val   = kv[1];
+    if(licHija) {
+      // Con filtro: usar clave específica, fallback a clave sin lic.hija ('')
+      if(parts.licencia_hija && parts.licencia_hija !== licHija) return;
+      // Preferir entrada específica (con lic.hija) sobre la global ('')
+      if(!result[parts.sku] || parts.licencia_hija === licHija) {
+        result[parts.sku] = val;
+      }
+    } else {
+      // Sin filtro: agregar cantidades de todas las licencias por SKU
+      if(!result[parts.sku]) {
+        result[parts.sku] = { nombre: val.nombre||'', cantidad: 0,
+                              unidades:0, existencia:0, disponible:0 };
+      }
+      result[parts.sku].cantidad += Number(val.cantidad)||0;
+      if(!result[parts.sku].nombre && val.nombre) result[parts.sku].nombre = val.nombre;
+    }
+  });
+  return result;
+}
+
 function bodSortTarimas(arr) {
   return arr.slice().sort(function(a, b){
     var ma = a.match(/^([A-Z]+)(\d+)$/i);
@@ -11331,7 +11395,17 @@ function bodRenderManifiestoAuditoria() {
     avisoFase1 = document.createElement('div');
     avisoFase1.id = 'bod-manif-aviso-fase1';
     avisoFase1.style.cssText = 'background:#fff8e1;border-left:3px solid #f9a825;padding:5px 8px;font-size:.73rem;color:#795548;margin-bottom:.5rem';
-    avisoFase1.innerHTML = '📌 <strong>Fase 1:</strong> Manifiesto se genera desde Tarimas. En Fase 2 usará Papel de Trabajo como fuente.';
+    var tieneP = Object.keys(window._bodPapelPersistido || {}).length > 0;
+    var tieneT = Object.keys(window._bodTeorico952 || {}).length > 0;
+    if(tieneP && tieneT) {
+      avisoFase1.style.background = '#e8f5e9';
+      avisoFase1.style.borderColor = '#4caf50';
+      avisoFase1.innerHTML = '📋 <strong>Papel de Trabajo guardado</strong> — Manifiesto aún usa Tarimas hasta Fase 2B.';
+    } else {
+      avisoFase1.style.background = '#fff8e1';
+      avisoFase1.style.borderColor = '#f9a825';
+      avisoFase1.innerHTML = '📌 <strong>Fuente: Tarimas</strong> — Completá el Papel de Trabajo para activar Fase 2B.';
+    }
     vistaEl.insertBefore(avisoFase1, vistaEl.firstChild);
   }
 
@@ -11694,6 +11768,23 @@ function bodRenderWmsVsApp() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
   var sesion  = bodAuditoriaData.sesion || {};
+  // Cargar teórico persistido si window._bodTeorico952 está vacío
+  var sesId952c = sesion.id || '';
+  if(sesId952c && !Object.keys(window._bodTeorico952).length) {
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId952c)+'/teorico-952')
+      .then(function(d){
+        if(d && d.ok && d.rows && d.rows.length) {
+          d.rows.forEach(function(r){
+            var teoKey = bodTeoKey(r.licencia_hija||'', r.sku);
+            window._bodTeorico952[teoKey] = {
+              nombre: r.nombre||'', cantidad: r.cantidad_952||0,
+              unidades: r.unidades||0, existencia: r.existencia||0, disponible: r.disponible||0
+            };
+          });
+          bodRenderWmsVsApp(); // re-render con datos cargados
+        }
+      }).catch(function(){});
+  }
   var licId   = sesion.licencia_id || '';
   var sesId   = sesion.id || '';
   var usuario = window.currentUser ? window.currentUser.name : '';
@@ -11710,12 +11801,15 @@ function bodRenderWmsVsApp() {
       // Tabla de teórico 952 (oculta por defecto)
       +'<div id="bod-teo952-tabla" style="display:none;margin-bottom:.4rem">'
       +'<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>SKU</th><th>Nombre</th><th class="tc">952</th><th class="tc">Unidades</th>'
+      +'<th>Lic. hija</th><th>SKU</th><th>Nombre</th><th class="tc">952</th><th class="tc">Unidades</th>'
       +'<th class="tc">Exist.</th><th class="tc">Disp.</th>'
       +'</tr></thead><tbody>'
       + Object.entries(teo952).map(function(kv){
+          var parts = bodSplitTeoKey(kv[0]);
           var s=kv[1];
-          return '<tr><td style="font-weight:600;font-size:.78rem">'+escH(kv[0])+'</td>'
+          return '<tr>'
+            +'<td style="font-size:.76rem;color:#888">'+escH(parts.licencia_hija||'—')+'</td>'
+            +'<td style="font-weight:600;font-size:.78rem">'+escH(parts.sku)+'</td>'
             +'<td style="font-size:.76rem">'+escH(s.nombre||'—')+'</td>'
             +'<td class="tc">'+escH(String(s.cantidad||0))+'</td>'
             +'<td class="tc">'+escH(String(s.unidades||0))+'</td>'
@@ -11779,6 +11873,8 @@ function bodRenderWmsVsApp() {
     if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Leyendo '+escH(archivo.name)+'…</span>';
     this.value = '';
     var reader = new FileReader();
+    // Fix 1: leer licHija952 ANTES de que reader.onload se ejecute
+    var licHija952 = (document.getElementById('filtro-wms-lichija')||{}).value || '';
     reader.onload = function(ev){
       try {
         var wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
@@ -11789,7 +11885,9 @@ function bodRenderWmsVsApp() {
           // Columnas flexibles: SKU/Código, Nombre/Descripción, 952/Cant, Unidades, Exist., Disp.
           var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
           if(!sku) return;
-          teo[sku] = {
+          // Fix 1: usar bodTeoKey con licHija952 ya declarada antes del onload
+          var teoParseKey = bodTeoKey(licHija952, sku);
+          teo[teoParseKey] = {
             nombre:     String(row['Nombre']||row['NOMBRE']||row['Descripción']||row['DESCRIPCION']||''),
             cantidad:   Number(row['952']||row['Cantidad 952']||row['CANTIDAD']||0),
             unidades:   Number(row['Unidades']||row['UNIDADES']||0),
@@ -11797,8 +11895,37 @@ function bodRenderWmsVsApp() {
             disponible: Number(row['Disp.']||row['Disponible']||row['DISPONIBLE']||0)
           };
         });
-        window._bodTeorico952 = teo;
-        if(msgEl) msgEl.innerHTML = '';
+        // Merge selectivo: borrar solo las claves de la licencia hija que se está subiendo,
+        // conservar claves de otras licencias hijas intactas.
+        // Clave con lic.hija: "LICENCIA:SKU" — prefijo = "LICENCIA:"
+        // Clave global (sin lic.hija): ":SKU" — prefijo = ":"
+        var prefixTeo = licHija952 ? (licHija952+':') : ':';
+        Object.keys(window._bodTeorico952).forEach(function(k){
+          if(k.slice(0, prefixTeo.length) === prefixTeo) delete window._bodTeorico952[k];
+        });
+        Object.assign(window._bodTeorico952, teo);
+        if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Guardando en servidor…</span>';
+        // Guardar en Supabase
+        var sesId952 = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
+        // licHija952 ya está declarada fuera del onload (Fix 1)
+        if(sesId952) {
+          bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952)+'/teorico-952', {
+            licencia_hija: licHija952,
+            skus: Object.entries(teo).map(function(kv){
+              // Fix: extraer sku limpio de la clave compuesta usando bodSplitTeoKey
+              var parts = bodSplitTeoKey(kv[0]);
+              return Object.assign({ sku: parts.sku }, kv[1]);
+            }),
+            creado_por: window.currentUser ? window.currentUser.name : ''
+          }).then(function(d){
+            if(msgEl) msgEl.innerHTML = d.ok
+              ? '<span style="color:#1e7e34">✅ '+Object.keys(teo).length+' SKUs guardados</span>'
+              : '<span style="color:#c0392b">Error guardando: '+escH(d.error||'')+'</span>';
+            setTimeout(function(){ if(msgEl) msgEl.innerHTML=''; }, 3000);
+          }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión</span>'; });
+        } else {
+          if(msgEl) msgEl.innerHTML = '';
+        }
         bodRenderWmsVsApp();
         // También refrescar Papel de Trabajo si está activo
       } catch(err) {
@@ -11919,6 +12046,28 @@ function bodRenderFlujoBolson() {
   var cargas  = (bodAuditoriaData._cargas) || [];
   var lineas  = bodAuditoriaData.lineas || [];
   var esAud   = isBodAuditor();
+  var sesIdPapel = (bodAuditoriaData.sesion||{}).id||'';
+  var filtPapelPrev = (document.getElementById('filtro-papel-lichija')||{}).value||'';
+  // Cargar papel de trabajo persistido si no lo tenemos aún
+  if(sesIdPapel && !Object.keys(window._bodPapelPersistido).length) {
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo')
+      .then(function(d){
+        if(d && d.ok && d.rows && d.rows.length) {
+          d.rows.forEach(function(r){
+            var k = (r.licencia_hija||'')+':'+r.sku;
+            window._bodPapelPersistido[k] = {
+              validado: !!r.validado, validado_por: r.validado_por||'',
+              validado_en: r.validado_en||'',
+              cantidad_manifiesto: Number(r.cantidad_manifiesto)||0
+            };
+            // Sincronizar con validaciones en memoria (clave compuesta)
+            var papelKey = (r.licencia_hija||'')+':'+r.sku;
+            _bodPapelValidaciones[papelKey] = !!r.validado;
+          });
+          bodRenderFlujoBolson(); // re-render con datos cargados
+        }
+      }).catch(function(){});
+  }
 
   // Construir opciones de lic.hija para el dropdown
   var licHijasSet = {};
@@ -11928,47 +12077,20 @@ function bodRenderFlujoBolson() {
         return '<option value="'+escH(lh)+'">'+escH(lh)+'</option>';
       }).join('');
 
-  // Datos del teórico 952 (si fue cargado)
-  var teorico952 = window._bodTeorico952 || {};
-
-  // Agrupar físico por SKU (desde bod_lineas)
-  var fisicoSku = {};
-  lineas.forEach(function(l){
-    var sku = l.sku||'?';
-    if(!fisicoSku[sku]) fisicoSku[sku] = {sku:sku, desc:l.descripcion||'', cantidad:0};
-    fisicoSku[sku].cantidad += Number(l.cantidad)||0;
-    if(!fisicoSku[sku].desc && l.descripcion) fisicoSku[sku].desc = l.descripcion;
-  });
-
-  // Filtro Lic. hija: obtener SKUs de tarimas asociadas a la lic.hija seleccionada
+  // Filtro Lic. hija activo
   var filtPapelLic = (document.getElementById('filtro-papel-lichija')||{}).value || '';
-  var skusFiltrados = null;
-  if(filtPapelLic) {
-    // Encontrar tarimas de la carga con esa lic.hija
-    var tarimasFiltradas = {};
-    cargas.forEach(function(cg){
-      if((cg.licencia_hija||'') === filtPapelLic) {
-        (Array.isArray(cg.tarimas)?cg.tarimas:[]).forEach(function(t){ tarimasFiltradas[t]=true; });
-      }
-    });
-    skusFiltrados = {};
-    lineas.forEach(function(l){
-      if(tarimasFiltradas[l.tarima||'']) skusFiltrados[l.sku||'?']=true;
-    });
-  }
 
-  // Union de SKUs: teórico + físico (ambos respetan el filtro de lic.hija)
+  // Usar helpers — misma lógica en render y guardado
+  var fisicoSku  = bodGetFisicoSkuPorLicHija(filtPapelLic);
+  var teorico952 = bodGetTeoricoSkuPorLicHija(filtPapelLic);
+
+  // Unión de SKUs
   var todosSkus = {};
-  Object.keys(fisicoSku).forEach(function(s){
-    if(!skusFiltrados || skusFiltrados[s]) todosSkus[s]=true;
-  });
-  // Teórico 952: solo incluir SKUs que ya están en físico filtrado (o todos si sin filtro)
-  Object.keys(teorico952).forEach(function(s){
-    if(!skusFiltrados || skusFiltrados[s]) todosSkus[s]=true;
-  });
+  Object.keys(fisicoSku).forEach(function(s){ todosSkus[s]=true; });
+  Object.keys(teorico952).forEach(function(s){ todosSkus[s]=true; });
 
   var filas = Object.keys(todosSkus).sort().map(function(sku){
-    var fis  = fisicoSku[sku]  || { cantidad:0 };
+    var fis  = fisicoSku[sku]  || { cantidad:0, desc:'' };
     var teo  = teorico952[sku] || { nombre:'', cantidad:0 };
     var nombre  = teo.nombre || fis.desc || '—';
     var cant952 = Number(teo.cantidad) || 0;
@@ -11976,7 +12098,8 @@ function bodRenderFlujoBolson() {
     var diff    = cant952 - fisico;
     var seguimiento = diff > 0 ? 'Se queda en Bolsón' : diff === 0 ? 'OK' : 'Solicitar traslado a la 952';
     var segColor = diff > 0 ? '#e65100' : diff === 0 ? '#1e7e34' : '#c0392b';
-    var validado  = !!_bodPapelValidaciones[sku];
+    var papelRenderKey = (filtPapelLic||'')+':'+sku;
+    var validado  = !!_bodPapelValidaciones[papelRenderKey];
     var cantManif = validado ? fisico : cant952;
     var chk = validado ? ' checked' : '';
     var nota = diff < 0 ? '<span style="font-size:.7rem;color:#c0392b"> ⚠</span>' : '';
@@ -12032,11 +12155,43 @@ function bodRenderFlujoBolson() {
     selPapel.addEventListener('change', function(){ bodRenderFlujoBolson(); });
   }
 
-  // Wire checkboxes de validación
+  // Wire checkboxes de validación — guarda en Supabase
   vistaEl.querySelectorAll('.bod-papel-chk').forEach(function(chk){
     chk.addEventListener('change', function(){
-      _bodPapelValidaciones[chk.dataset.sku] = chk.checked;
-      // Re-render para actualizar Cant. Manifiesto
+      var sku        = chk.dataset.sku;
+      var validado   = chk.checked;
+      var licHijaVal = (document.getElementById('filtro-papel-lichija')||{}).value || '';
+      var papelChkKey = licHijaVal+':'+sku;
+      _bodPapelValidaciones[papelChkKey] = validado;
+      // Misma lógica que el render — helpers garantizan consistencia
+      var fisicoChk = bodGetFisicoSkuPorLicHija(licHijaVal);
+      var teorChk   = bodGetTeoricoSkuPorLicHija(licHijaVal);
+      var fisico952    = (fisicoChk[sku]||{cantidad:0}).cantidad;
+      var teo952v      = (teorChk[sku]||{cantidad:0}).cantidad;
+      var diff952      = teo952v - fisico952;
+      var seg952       = diff952>0?'Se queda en Bolsón':diff952===0?'OK':'Solicitar traslado a la 952';
+      var cantManif952 = validado ? fisico952 : teo952v;
+      var usuarioPapel = window.currentUser ? window.currentUser.name : '';
+      var sesIdPapelSave = (bodAuditoriaData&&bodAuditoriaData.sesion)||{};
+      var sesId952s = sesIdPapelSave.id||'';
+      if(sesId952s && !_bodPapelGuardando) {
+        _bodPapelGuardando = true;
+        bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952s)+'/papel-trabajo', {
+          licencia_hija: licHijaVal,
+          skus: [{ sku:sku, fisico_auditoria:fisico952, diferencia:diff952,
+                   seguimiento:seg952, validado:validado,
+                   cantidad_manifiesto:cantManif952,
+                   validado_por: validado ? usuarioPapel : '' }]
+        }).then(function(d){
+          _bodPapelGuardando = false;
+          if(d && d.ok) {
+            var k = licHijaVal+':'+sku;
+            window._bodPapelPersistido[k] = { validado:validado, validado_por:usuarioPapel,
+              validado_en: new Date().toISOString(), cantidad_manifiesto:cantManif952 };
+          }
+        }).catch(function(){ _bodPapelGuardando = false; });
+      }
+      // Re-render sin perder el filtro activo
       bodRenderFlujoBolson();
     });
   });
