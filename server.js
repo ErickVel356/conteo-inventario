@@ -1,12999 +1,6083 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>Conteo Físico de Inventario</title>
-
-<script>
-/* ── XLSX embebido (sin CDN) ──────────────────────────────────────────────── */
-var XLSX=(function(){
-function escXml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');}
-function parseXmlStr(str){return(new DOMParser()).parseFromString(str,'application/xml');}
-function colIdx(col){var n=0;for(var i=0;i<col.length;i++)n=n*26+(col.charCodeAt(i)-64);return n-1;}
-function cellAddr(ref){var m=ref.match(/^([A-Z]+)(\d+)$/);if(!m)return null;return{r:parseInt(m[2])-1,c:colIdx(m[1])};}
-function colName(n){var s='';n++;while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-(n%26||26))/26);}return s;}
-function encodeCell(rc){return colName(rc.c)+(rc.r+1);}
-function encodeRange(range){return encodeCell(range.s)+':'+encodeCell(range.e);}
-function readZip(ab){
-  var bytes=new Uint8Array(ab),view=new DataView(ab),files={},eocd=-1;
-  for(var i=bytes.length-22;i>=0;i--){if(view.getUint32(i,true)===0x06054b50){eocd=i;break;}}
-  if(eocd<0)throw new Error('Not a ZIP');
-  var cdOffset=view.getUint32(eocd+16,true),cdSize=view.getUint32(eocd+12,true),pos=cdOffset;
-  while(pos<cdOffset+cdSize){
-    if(view.getUint32(pos,true)!==0x02014b50)break;
-    var method=view.getUint16(pos+10,true),compSize=view.getUint32(pos+20,true),uncompSize=view.getUint32(pos+24,true);
-    var fnLen=view.getUint16(pos+28,true),extraLen=view.getUint16(pos+30,true),cmtLen=view.getUint16(pos+32,true);
-    var localOff=view.getUint32(pos+42,true);
-    var fname=new TextDecoder().decode(bytes.slice(pos+46,pos+46+fnLen));
-    files[fname]={method:method,localOff:localOff,compSize:compSize,uncompSize:uncompSize};
-    pos+=46+fnLen+extraLen+cmtLen;
-  }
-  var out={};
-  Object.keys(files).forEach(function(fname){
-    var f=files[fname],lhSize=30+view.getUint16(f.localOff+26,true)+view.getUint16(f.localOff+28,true);
-    var data=bytes.slice(f.localOff+lhSize,f.localOff+lhSize+f.compSize);
-    out[fname]=data;
-    if(f.method===8){out[fname+'__compressed']=true;out[fname+'__uncompSize']=f.uncompSize;}
-  });
-  return out;
-}
-async function inflateAsync(data){
-  var ds=new DecompressionStream('deflate-raw'),writer=ds.writable.getWriter(),reader=ds.readable.getReader();
-  writer.write(data);writer.close();
-  var chunks=[],total=0;
-  while(true){var r=await reader.read();if(r.done)break;chunks.push(r.value);total+=r.value.length;}
-  var out=new Uint8Array(total),pos=0;
-  chunks.forEach(function(c){out.set(c,pos);pos+=c.length;});
-  return out;
-}
-async function getEntry(zip,name){
-  var data=zip[name];if(!data)return null;
-  if(zip[name+'__compressed'])data=await inflateAsync(data);
-  return new TextDecoder().decode(data);
-}
-async function readXlsxAsync(ab){
-  var zip=readZip(ab);
-  var ssText=await getEntry(zip,'xl/sharedStrings.xml'),ss=[];
-  if(ssText){var doc=parseXmlStr(ssText),sis=doc.getElementsByTagName('si');for(var i=0;i<sis.length;i++){var ts=sis[i].getElementsByTagName('t'),val='';for(var j=0;j<ts.length;j++)val+=ts[j].textContent;ss.push(val);}}
-  var wbText=await getEntry(zip,'xl/workbook.xml'),wbDoc=parseXmlStr(wbText),shEls=wbDoc.getElementsByTagName('sheet');
-  var sheets={},sheetNames=[];
-  for(var i=0;i<shEls.length;i++){var nm=shEls[i].getAttribute('name'),rid=shEls[i].getAttribute('r:id');sheetNames.push(nm);sheets[nm]=rid;}
-  var relText=await getEntry(zip,'xl/_rels/workbook.xml.rels'),relDoc=parseXmlStr(relText),relEls=relDoc.getElementsByTagName('Relationship'),rels={};
-  for(var i=0;i<relEls.length;i++)rels[relEls[i].getAttribute('Id')]=relEls[i].getAttribute('Target');
-  var wb={SheetNames:sheetNames,Sheets:{}};
-  for(var si=0;si<sheetNames.length;si++){
-    var sname=sheetNames[si],target=rels[sheets[sname]];if(!target)continue;
-    var path=target.startsWith('xl/')?target:'xl/'+target;
-    var wsText=await getEntry(zip,path);if(!wsText)continue;
-    var wsDoc=parseXmlStr(wsText),cells={},cEls=wsDoc.getElementsByTagName('c');
-    for(var ci=0;ci<cEls.length;ci++){
-      var cel=cEls[ci],ref=cel.getAttribute('r'),t=cel.getAttribute('t'),vEl=cel.getElementsByTagName('v')[0],val=vEl?vEl.textContent:'';
-      if(t==='s')val=ss[parseInt(val)]||'';
-      else if(t==='b')val=val==='1';
-      else if(val!==''&&!isNaN(+val))val=+val;
-      cells[ref]={v:val,t:t||'n'};
-    }
-    wb.Sheets[sname]=cells;
-  }
-  return wb;
-}
-function sheetToJson(ws,opts){
-  opts=opts||{};var defval=opts.defval!==undefined?opts.defval:'',rows=[],maxR=0,maxC=0;
-  Object.keys(ws).forEach(function(ref){if(ref==='!ref'||ref==='!cols')return;var a=cellAddr(ref);if(!a)return;if(a.r>maxR)maxR=a.r;if(a.c>maxC)maxC=a.c;});
-  for(var r=0;r<=maxR;r++){var row=[];for(var c=0;c<=maxC;c++){var cell=ws[colName(c)+(r+1)];row.push(cell?(cell.v===undefined?defval:cell.v):defval);}rows.push(row);}
-  return rows;
-}
-function aoaToSheet(data){
-  var ws={},maxC=0;
-  for(var r=0;r<data.length;r++){var row=data[r];if(row.length-1>maxC)maxC=row.length-1;for(var c=0;c<row.length;c++){var v=row[c],t='s';if(v===null||v===undefined||v==='')continue;if(typeof v==='number')t='n';else if(v instanceof Date){t='n';v=25569+v.getTime()/86400000;}else v=String(v);ws[colName(c)+(r+1)]={v:v,t:t};}}
-  ws['!ref']=colName(0)+'1:'+colName(maxC)+(data.length);return ws;
-}
-function bookNew(){return{SheetNames:[],Sheets:{}};}
-function bookAppendSheet(wb,ws,name){wb.SheetNames.push(name);wb.Sheets[name]=ws;}
-var crcTable=(function(){var t=[];for(var i=0;i<256;i++){var c=i;for(var j=0;j<8;j++)c=c&1?(0xEDB88320^(c>>>1)):(c>>>1);t[i]=c;}return t;})();
-function crc32(buf){var c=0xFFFFFFFF;for(var i=0;i<buf.length;i++)c=crcTable[(c^buf[i])&0xFF]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
-function buildZip(files){
-  var parts=[],centralDir=[],offset=0;
-  Object.keys(files).forEach(function(name){
-    var nameBytes=new TextEncoder().encode(name),dataBytes=new TextEncoder().encode(files[name]),crc=crc32(dataBytes);
-    var lh=new Uint8Array(30+nameBytes.length),lv=new DataView(lh.buffer);
-    lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);lv.setUint32(14,crc,true);lv.setUint32(18,dataBytes.length,true);lv.setUint32(22,dataBytes.length,true);lv.setUint16(26,nameBytes.length,true);lh.set(nameBytes,30);
-    var cd=new Uint8Array(46+nameBytes.length),cv=new DataView(cd.buffer);
-    cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint32(16,crc,true);cv.setUint32(20,dataBytes.length,true);cv.setUint32(24,dataBytes.length,true);cv.setUint16(28,nameBytes.length,true);cv.setUint32(42,offset,true);cd.set(nameBytes,46);
-    centralDir.push(cd);parts.push(lh,dataBytes);offset+=lh.length+dataBytes.length;
-  });
-  var cdOffset=offset,cdSize=centralDir.reduce(function(s,c){return s+c.length;},0);
-  var eocd=new Uint8Array(22),ev=new DataView(eocd.buffer);
-  ev.setUint32(0,0x06054b50,true);ev.setUint16(8,centralDir.length,true);ev.setUint16(10,centralDir.length,true);ev.setUint32(12,cdSize,true);ev.setUint32(16,cdOffset,true);
-  var allParts=parts.concat(centralDir).concat([eocd]),total=allParts.reduce(function(s,p){return s+p.length;},0),out=new Uint8Array(total),pos=0;
-  allParts.forEach(function(p){out.set(p,pos);pos+=p.length;});return out.buffer;
-}
-function writeXlsx(wb){
-  var sharedStrings=[],ssMap={};
-  function getSS(v){var s=String(v);if(ssMap[s]===undefined){ssMap[s]=sharedStrings.length;sharedStrings.push(s);}return ssMap[s];}
-  var sheetsXml='',sheetFiles={};
-  wb.SheetNames.forEach(function(name,idx){
-    var ws=wb.Sheets[name],xmlRows={},maxR=0,maxC=0;
-    Object.keys(ws).forEach(function(ref){if(ref==='!ref'||ref==='!cols')return;var a=cellAddr(ref);if(!a)return;if(a.r>maxR)maxR=a.r;if(a.c>maxC)maxC=a.c;if(!xmlRows[a.r])xmlRows[a.r]=[];var cell=ws[ref],v=cell.v,t=cell.t,cx;if(v===null||v===undefined||v==='')return;if(t==='n'||typeof v==='number')cx='<c r="'+ref+'" t="n"><v>'+v+'</v></c>';else cx='<c r="'+ref+'" t="s"><v>'+getSS(v)+'</v></c>';xmlRows[a.r].push(cx);});
-    var rowsXml='';for(var r=0;r<=maxR;r++){if(!xmlRows[r]||!xmlRows[r].length)continue;rowsXml+='<row r="'+(r+1)+'">'+xmlRows[r].join('')+'</row>';}
-    sheetFiles['xl/worksheets/sheet'+(idx+1)+'.xml']='<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+rowsXml+'</sheetData></worksheet>';
-    sheetsXml+='<sheet name="'+escXml(name)+'" sheetId="'+(idx+1)+'" r:id="rId'+(idx+1)+'"/>';
-  });
-  var ssXml='<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'+sharedStrings.length+'" uniqueCount="'+sharedStrings.length+'">'+sharedStrings.map(function(s){return'<si><t xml:space="preserve">'+escXml(s)+'</t></si>';}).join('')+'</sst>';
-  var wbXml='<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+sheetsXml+'</sheets></workbook>';
-  var wbRels='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+wb.SheetNames.map(function(_,i){return'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>';}).join('')+'<Relationship Id="rId'+(wb.SheetNames.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>';
-  var ct='<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+wb.SheetNames.map(function(_,i){return'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';}).join('')+'<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>';
-  var rels='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
-  var zipFiles={'[Content_Types].xml':ct,'_rels/.rels':rels,'xl/workbook.xml':wbXml,'xl/_rels/workbook.xml.rels':wbRels,'xl/sharedStrings.xml':ssXml};
-  Object.assign(zipFiles,sheetFiles);
-  return buildZip(zipFiles);
-}
-function writeFile(wb,filename){
-  var ab=writeXlsx(wb),blob=new Blob([ab],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.href=url;a.download=filename;document.body.appendChild(a);a.click();
-  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
-}
-return{readAsync:readXlsxAsync,utils:{sheet_to_json:sheetToJson,aoa_to_sheet:aoaToSheet,book_new:bookNew,book_append_sheet:bookAppendSheet,encode_cell:encodeCell,encode_range:encodeRange},writeFile:writeFile};
-})();
-</script>
-
-<style>
-/* ── RESET & BASE ───────────────────────────────────────────────── */
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f0ee;color:#1a1a1a;min-height:100vh;-webkit-tap-highlight-color:transparent}
-
-/* ── LAYOUT ─────────────────────────────────────────────────────── */
-.wrap{max-width:1100px;margin:0 auto;padding:1.25rem 1rem}
-.page{display:none}
-.page.active{display:block}
-
-/* ── TOPBAR ─────────────────────────────────────────────────────── */
-.topbar{background:#fff;border-bottom:1px solid #e0e0e0;padding:.75rem 1rem;display:flex;align-items:center;gap:.75rem;position:sticky;top:0;z-index:40;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.topbar h1{font-size:1.1rem;font-weight:700;flex:1;margin:0}
-.topbar-back{background:none;border:none;font-size:1.4rem;cursor:pointer;padding:4px 8px;color:#555;min-height:44px;display:flex;align-items:center;border-radius:8px}
-.topbar-back:active{background:#f0f0ee}
-
-/* ── CARDS ──────────────────────────────────────────────────────── */
-.card{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem;margin-bottom:.875rem;box-shadow:0 1px 3px rgba(0,0,0,.04)}
-.card-tap{cursor:pointer;transition:background .12s,border-color .12s}
-.card-tap:active{background:#f5f5f3;border-color:#bbb}
-
-/* ── MENU PRINCIPAL (2 tarjetas grandes) ────────────────────────── */
-.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1.5rem}
-@media(max-width:480px){.menu-grid{grid-template-columns:1fr}}
-.menu-card{background:#fff;border:1.5px solid #e0e0e0;border-radius:16px;padding:1.75rem 1.25rem;cursor:pointer;text-align:center;transition:all .15s;box-shadow:0 2px 8px rgba(0,0,0,.06);min-height:140px;display:flex;flex-direction:column;justify-content:center}
-.menu-card:active{background:#f5f5f3;transform:scale(.98)}
-.menu-card .mc-icon{font-size:2.6rem;margin-bottom:.75rem;min-height:3.2rem;display:flex;align-items:center;justify-content:center}
-.menu-card .mc-title{font-size:1.1rem;font-weight:700;margin-bottom:.25rem;min-height:1.4rem}
-.menu-card .mc-sub{font-size:.82rem;color:#888;min-height:1.1rem}
-
-/* ── SUBMENÚ (3 opciones Hamilton) ──────────────────────────────── */
-.submenu-list{display:flex;flex-direction:column;gap:.75rem;margin-top:1rem}
-.submenu-item{background:#fff;border:1.5px solid #e0e0e0;border-radius:12px;padding:1.1rem 1.25rem;cursor:pointer;display:flex;align-items:center;gap:1rem;transition:all .12s;box-shadow:0 1px 3px rgba(0,0,0,.04)}
-.submenu-item:active{background:#f5f5f3;border-color:#bbb}
-.submenu-item .si-icon{font-size:1.8rem;flex-shrink:0}
-.submenu-item .si-text .si-title{font-weight:700;font-size:.975rem}
-.submenu-item .si-text .si-sub{font-size:.8rem;color:#888;margin-top:2px}
-.submenu-badge{margin-left:auto;font-size:.72rem;padding:3px 9px;border-radius:10px;white-space:nowrap}
-
-/* ── ONLINE BAR (solo supervisores) ─────────────────────────────── */
-#online-bar{background:#eafaf1;border:1px solid #b2dfdb;border-radius:10px;padding:.6rem 1rem;margin-bottom:.875rem;font-size:.82rem;color:#1e7e34;display:none}
-
-/* ── MESSAGES ───────────────────────────────────────────────────── */
-.msg{padding:10px 14px;border-radius:8px;font-size:.875rem;line-height:1.5;margin-bottom:.5rem}
-.msg-ok{background:#eafaf1;color:#1e7e34;border:1px solid #b2dfdb}
-.msg-err{background:#fdecea;color:#b71c1c;border:1px solid #f5c6cb}
-.msg-info{background:#e8f4fd;color:#1565c0;border:1px solid #b3d7f7}
-.msg-warn{background:#fef9e7;color:#b7770d;border:1px solid #f9e79f}
-#upload-msg{margin-top:.75rem}
-
-/* ── STATUS BAR ─────────────────────────────────────────────────── */
-.status-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.875rem}
-.status-chip{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:.8rem;border:1px solid #e0e0e0;background:#fff}
-.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.dot-ok{background:#1e7e34}.dot-empty{background:#ccc}.dot-partial{background:#b7770d}
-
-/* ── COST BAR ───────────────────────────────────────────────────── */
-#cost-bar{display:flex;align-items:center;gap:10px;margin-bottom:.875rem;padding:10px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:10px;flex-wrap:wrap}
-
-/* ── TAB PILLS ──────────────────────────────────────────────────── */
-.tab-pills{display:flex;background:#e8e8e6;border-radius:12px;padding:4px;gap:3px;margin-bottom:1.25rem;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.tab-pill{flex:1;min-width:max-content;padding:8px 14px;font-size:.85rem;font-weight:600;border:none;border-radius:9px;cursor:pointer;background:transparent;color:#666;font-family:inherit;transition:all .15s;white-space:nowrap;min-height:40px}
-.tab-pill.on{background:#1a1a1a;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
-
-/* ── SELECTOR ───────────────────────────────────────────────────── */
-.sel-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:1.25rem}
-.sel-wrap label{font-size:.875rem;color:#666}
-select{padding:9px 12px;font-size:1rem;border:1px solid #ccc;border-radius:8px;background:#fff;color:#1a1a1a;cursor:pointer;max-width:100%;min-height:44px;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
-.prog{font-size:.8rem;color:#999}
-
-/* ── TABLA ──────────────────────────────────────────────────────── */
-.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e0e0e0;border-radius:10px;background:#fff;margin-bottom:1rem}
-table{width:100%;border-collapse:collapse;font-size:.875rem}
-thead tr{background:#f5f5f3}
-th{padding:10px 12px;text-align:left;font-weight:600;color:#555;border-bottom:1px solid #e0e0e0;white-space:nowrap}
-td{padding:9px 12px;border-bottom:1px solid #f0f0ee;vertical-align:middle}
-tr:last-child td{border-bottom:none}
-.tc{text-align:center}
-
-/* ── INPUTS ─────────────────────────────────────────────────────── */
-input[type=number]{width:88px;padding:8px 6px;font-size:1rem;border:1px solid #ccc;border-radius:8px;background:#fff;text-align:center;min-height:44px;-webkit-appearance:none;appearance:none;font-family:inherit}
-input[type=number]:focus{outline:none;border-color:#555;box-shadow:0 0 0 3px rgba(0,0,0,.08)}
-input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-input[type=number]:disabled{background:#f5f5f3;color:#aaa;cursor:not-allowed}
-.calc-fab{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#5a6fd8;color:#fff;font-size:24px;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.25);cursor:pointer;z-index:9999;display:flex;align-items:center;justify-content:center}
-.calc-fab:active{transform:scale(0.95)}
-.calc-panel{position:fixed;bottom:90px;right:20px;width:320px;max-width:calc(100vw - 40px);background:#fff;border-radius:12px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:9998;visibility:hidden;opacity:0;transform:translateY(20px);pointer-events:none;transition:transform 0.2s,opacity 0.2s,visibility 0.2s}
-.calc-panel.open{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto}
-.calc-panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-weight:600;font-size:15px;color:#2c3e50}
-.calc-panel-header button{background:none;border:none;font-size:24px;cursor:pointer;color:#888;padding:0 4px;line-height:1;min-width:32px;min-height:32px}
-.calc-panel-input{width:100%;font-size:20px;padding:12px;border:2px solid #e0e0e0;border-radius:8px;text-align:right;font-family:monospace;margin-bottom:12px;min-height:48px;-webkit-appearance:none;box-sizing:border-box}
-.calc-panel-input:focus{outline:none;border-color:#5a6fd8}
-.calc-panel-result{font-size:14px;text-align:right;padding:8px 12px;background:#f5f7fa;border-radius:6px;margin-bottom:12px;color:#888}
-.calc-panel-result-value{font-weight:700;font-size:24px;color:#2c3e50;margin-left:6px}
-.calc-panel-actions{display:flex;gap:8px;margin-bottom:8px}
-.calc-panel-actions button{flex:1;padding:12px;font-size:15px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;min-height:44px}
-.calc-panel-actions button.primary{background:#5a6fd8;color:#fff;border-color:#5a6fd8}
-.calc-panel-hint{font-size:11px;color:#888;text-align:center;margin-top:8px;line-height:1.4}
-@media (max-width:600px){.calc-panel{bottom:84px;right:12px;width:calc(100vw - 24px)}}
-input[type=text].field-inp,textarea.field-inp{width:100%;padding:9px 12px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;background:#fff;font-family:inherit;min-height:44px}
-input[type=text].field-inp:focus,textarea.field-inp:focus{outline:none;border-color:#555}
-textarea.field-inp{resize:vertical;min-height:72px}
-
-/* ── TRACE & LOCK ───────────────────────────────────────────────── */
-.trace-hint{font-size:.68rem;color:#aaa;margin-top:3px;white-space:nowrap}
-.lock-label{font-size:.72rem;color:#c0392b;background:#fdecea;border-radius:6px;padding:3px 8px;display:inline-block;margin-top:3px;white-space:nowrap}
-
-/* ── BUTTONS ────────────────────────────────────────────────────── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;font-size:.9rem;font-weight:600;border:1px solid #ccc;border-radius:10px;background:#fff;color:#1a1a1a;cursor:pointer;min-height:44px;font-family:inherit;transition:opacity .12s;-webkit-appearance:none}
-.btn:active{opacity:.75}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-dark{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
-.btn-green{background:#1e7e34;color:#fff;border-color:#1e7e34}
-.btn-orange{background:#e67e22;color:#fff;border-color:#e67e22}
-.btn-blue{background:#1565c0;color:#fff;border-color:#1565c0}
-.btn-warn{background:#fef9e7;color:#b7770d;border-color:#f9e79f}
-.btn-sm{padding:7px 14px;font-size:.82rem;min-height:40px}
-.btn-xs{padding:5px 10px;font-size:.78rem;min-height:34px;border-radius:8px}
-.actions{display:flex;justify-content:flex-end;margin-top:1rem;gap:.75rem;flex-wrap:wrap}
-
-/* ── BADGES ─────────────────────────────────────────────────────── */
-.badge{font-size:.72rem;padding:3px 9px;border-radius:10px;font-weight:600;white-space:nowrap;display:inline-block}
-.b-ok{background:#eafaf1;color:#1e7e34}.b-over{background:#e8f4fd;color:#1565c0}
-.b-under{background:#fdecea;color:#c0392b}.b-diff{background:#fef9e7;color:#b7770d}
-.b-pend{background:#f2f2f2;color:#999}.b-type{background:#f0f0ee;color:#555}
-.b-cdg{background:#f0e6ff;color:#6a0dad}
-
-/* ── METRICS ─────────────────────────────────────────────────────── */
-.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:1.25rem}
-@media(min-width:600px){.metrics{grid-template-columns:repeat(4,1fr)}}
-.metric{background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:.875rem}
-.metric .lbl{font-size:.72rem;color:#999;margin-bottom:4px}
-.metric .val{font-size:1.5rem;font-weight:700}
-
-/* ── MISC ───────────────────────────────────────────────────────── */
-.sec{font-size:.9rem;font-weight:700;margin:1.5rem 0 .75rem;color:#333}
-.sub{font-size:.85rem;color:#777;margin-bottom:.875rem}
-.empty{text-align:center;color:#bbb;padding:1.5rem;font-size:.875rem}
-.green{color:#1e7e34;font-weight:500}.red{color:#c0392b;font-weight:500}
-.blue{color:#1565c0;font-weight:500}.gray{color:#bbb}
-.export-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.export-row label{font-size:.875rem;color:#666}
-
-/* ── CDG FOTO SLOTS ─────────────────────────────────────────────── */
-.cdg-foto-slot{border:1.5px dashed #ccc;border-radius:10px;padding:8px;background:#fafaf8;text-align:center;cursor:pointer;transition:all .12s;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}
-.cdg-foto-slot:hover{border-color:#888;background:#f5f5f3}
-.cdg-foto-slot.has-photo{border-style:solid;border-color:#1e7e34;background:#fff;padding:0;overflow:hidden}
-.cdg-foto-slot img{max-width:100%;max-height:120px;display:block;border-radius:8px;object-fit:cover}
-.cdg-foto-slot .slot-label{font-size:.72rem;color:#666;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-.cdg-foto-slot .slot-ico{font-size:1.4rem;color:#bbb}
-.cdg-foto-slot .slot-del{position:absolute;top:4px;right:4px;background:rgba(255,255,255,.95);border:1px solid #c0392b;color:#c0392b;border-radius:50%;width:22px;height:22px;font-size:.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;z-index:2}
-.cdg-foto-slot .slot-label-overlay{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:.65rem;padding:3px 5px;text-align:center;text-transform:uppercase;letter-spacing:.3px;font-weight:600}
-@media (max-width:600px){
-  #cdg-foto-grid{grid-template-columns:repeat(2,1fr)!important}
-}
-
-/* ── DROP ZONE ──────────────────────────────────────────────────── */
-.drop{border:2px dashed #ccc;border-radius:12px;padding:2rem 1.25rem;text-align:center;cursor:pointer;transition:all .15s;-webkit-user-select:none;user-select:none;background:#fff}
-.drop:active{border-color:#888;background:#fafaf8}
-.drop svg{width:36px;height:36px;stroke:#bbb;display:block;margin:0 auto 10px}
-.drop strong{font-size:1rem;display:block;margin-bottom:4px}
-.drop small{font-size:.8rem;color:#999;line-height:1.4}
-
-/* ── CDG FORM ───────────────────────────────────────────────────── */
-.cdg-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.75rem;align-items:flex-end}
-.cdg-row .cdg-field{display:flex;flex-direction:column;gap:4px}
-.cdg-row .cdg-field label{font-size:.78rem;color:#666}
-
-/* ── HISTORIAL ──────────────────────────────────────────────────── */
-.hist-item{padding:.5rem 0;border-bottom:1px solid #f0f0ee;font-size:.82rem;color:#555}
-.hist-item:last-child{border-bottom:none}
-.hist-time{color:#aaa;font-size:.75rem}
-
-/* ── ASIGNACIONES ───────────────────────────────────────────────── */
-.asign-row{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.75rem 0;border-bottom:1px solid #f0f0ee}
-.asign-row:last-child{border-bottom:none}
-.asign-chip{display:inline-flex;align-items:center;gap:5px;background:#e8f4fd;color:#1565c0;border-radius:10px;padding:3px 10px;font-size:.78rem}
-.asign-chip button{background:none;border:none;cursor:pointer;color:#c0392b;font-size:.85rem;padding:0;min-height:24px;line-height:1}
-
-/* ── MODAL ──────────────────────────────────────────────────────── */
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:1rem}
-.modal-bg.open{display:flex}
-.modal-box{background:#fff;border-radius:16px;padding:1.5rem;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)}
-.modal-box h3{font-size:1rem;font-weight:700;margin-bottom:.875rem}
-.field-row{margin-bottom:.75rem}
-.field-row label{display:block;font-size:.82rem;color:#555;margin-bottom:4px;font-weight:500}
-
-/* ── COLLAPSIBLE ────────────────────────────────────────────────── */
-.collapsible-hdr{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:.75rem 0;border-bottom:1px solid #e0e0e0;min-height:44px}
-.collapsible-hdr .ch-title{font-weight:700;font-size:.9rem}
-.collapsible-hdr .ch-ico{font-size:.75rem;color:#aaa}
-.collapsible-body{padding-top:.75rem}
-
-/* ── TABLET / MOBILE ─────────────────────────────────────────────── */
-@media (max-width: 768px) {
-  .wrap { padding: .75rem !important; }
-  h1 { font-size: 1rem !important; }
-  table { font-size: .8rem !important; }
-  th, td { padding: 6px 7px !important; }
-  input[type=number] { width: 58px !important; font-size: .85rem !important; }
-  
-}
-@media (max-width: 480px) {
-  .tab-pill button { padding: 6px 9px !important; font-size: .77rem !important; }
-  input[type=number] { width: 50px !important; }
-}
-</style>
-</head>
-<body>
-
-<!-- ══════════════════════════════════════════════════════════════
-     LOGIN
-══════════════════════════════════════════════════════════════ -->
-<!-- ══════════════════════════════════════════════════════════════
-     GATE — clave de acceso (FIX 27-may-2026, login v1). Se muestra ANTES
-     del dropdown de nombres. La clave vive en Supabase (key='app_config'),
-     se cambia solo desde ahí. Interruptor de emergencia: si la clave en
-     Supabase está vacía o es 'OFF', el gate se salta (login desactivado).
-     Modo equilibrado: una vez pasada, se recuerda por el día (sessionStorage
-     + fecha); recargar el mismo día NO la vuelve a pedir.
-══════════════════════════════════════════════════════════════ -->
-<div id="pg-gate" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
-  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-    <div style="text-align:center;margin-bottom:1.5rem">
-      <div style="font-size:2.5rem;margin-bottom:8px">🔒</div>
-      <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:4px">Acceso restringido</h2>
-      <p style="font-size:.85rem;color:#888">Ingresa la clave de acceso</p>
-    </div>
-    <div style="margin-bottom:1rem">
-      <input id="gate-pass" type="password" autocomplete="off" placeholder="Clave de acceso"
-        style="display:block;width:100%;padding:12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:#fff;min-height:48px;font-family:inherit;box-sizing:border-box">
-    </div>
-    <div id="gate-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
-    <button id="btn-gate-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Continuar</button>
-    <div id="gate-loading" style="display:none;text-align:center;margin-top:1rem;font-size:.8rem;color:#888">Verificando…</div>
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.30 · 06-jun</div>
-  </div>
-</div>
-
-<div id="pg-login" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
-  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-    <div style="text-align:center;margin-bottom:1.5rem">
-      <div style="font-size:2.5rem;margin-bottom:8px">📦</div>
-      <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:4px">Conteo Físico</h2>
-      <p style="font-size:.85rem;color:#888">Auditoría interna de inventario</p>
-    </div>
-    <div style="margin-bottom:1rem">
-      <label style="font-size:.85rem;color:#555;display:block;margin-bottom:6px;font-weight:500">¿Quién eres?</label>
-      <select id="login-name-sel" style="display:block;width:100%;padding:12px 36px 12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:#fff;min-height:48px;-webkit-appearance:none;appearance:none">
-        <option value="">— Selecciona tu nombre —</option>
-        <optgroup label="Supervisores">
-          <option>Erick Vela</option><option>Steven Palencia</option>
-          <option>Edmar Guzman</option><option>Ever Garcia</option>
-          <option>Mario Hernandez</option><option>Oscar Ramirez</option>
-          <option>Vivi Gil</option><option>Carlos Andrino</option>
-          <option>Rodrigo Ruiz</option>
-        </optgroup>
-        <optgroup label="Contadores">
-          <option>Carlos Sandoval</option><option>Israel Gatica</option>
-          <option>Nelson Diaz</option><option>Julio Yoc</option>
-          <option>Ronald Gomez</option><option>William Garzona</option>
-          <option>Alexander Grijalva</option><option>Jaqueline Perez</option>
-          <option>Jeffry Telon</option><option>Bianca Montenegro</option>
-        </optgroup>
-        <!-- BOD: operadores de bodega — visible siempre, rol se asigna en JS -->
-        <optgroup label="Bodega CDG" id="login-optgroup-bodega">
-          <option>Huvaldo Pérez</option><option>Ader Chávez</option>
-          <option>Angie Suar</option><option>Duma Pérez</option>
-          <option>Edgar Soto</option>
-          <option>Alejandra Galeros</option><option>Sharon Hernández</option>
-        </optgroup>
-      </select>
-    </div>
-    <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
-    <button id="btn-login-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Entrar</button>
-    <!-- FIX (vie 22-may-2026 noche): versión visible en login para validación -->
-    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.30 · 06-jun</div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SHELL — visible tras login
-══════════════════════════════════════════════════════════════ -->
-<div id="main-wrap" style="display:none">
-
-  <!-- TOPBAR GLOBAL -->
-  <div class="topbar" id="global-topbar">
-    <button class="topbar-back" id="btn-topbar-back" style="display:none">‹</button>
-    <h1 id="topbar-title">📦 Conteo de Inventario</h1>
-    <!-- FIX (rev ChatGPT E, vie 22-may-2026): prefijo "Versión:" para que
-         el operario no piense que es un botón o texto raro. -->
-    <span id="app-version-badge" style="font-size:.68rem;background:#e8f4ff;padding:3px 8px;border-radius:14px;color:#0066cc;white-space:nowrap;font-weight:600;font-family:monospace" title="Versión del cliente. Si pide ayuda, mostrá esta versión.">Versión: v5.2.30 · 06-jun</span>
-    <span id="user-badge" style="font-size:.78rem;background:#f0f0ee;padding:4px 11px;border-radius:20px;color:#555;white-space:nowrap"></span>
-    <button id="btn-logout" class="btn btn-sm" style="padding:6px 12px;min-height:36px">Salir</button>
-  </div>
-  <!-- FIX (vie 22-may-2026): modal Ver CDG read-only. Permite a cualquier
-       usuario del equipo ver el detalle completo de un conteo CDG
-       (SKUs, fotos generales, fotos por SKU, hallazgos asociados) SIN
-       desbloquear el conteo ni modificar quien/autor/bloqueado. Cierra el
-       caso del backlog (botón "Ver" pedido desde madrugada 21-may). -->
-  <div id="cdg-view-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:9998;overflow-y:auto;overscroll-behavior:contain;padding:1rem">
-    <div style="max-width:900px;margin:1rem auto;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);overflow:hidden">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid #eee;background:#fafaf8;position:sticky;top:0;z-index:1">
-        <h3 style="margin:0;font-size:1.05rem;font-weight:700">👁 Vista de conteo CDG <span id="cdg-view-id" style="color:#666;font-weight:500"></span></h3>
-        <button id="cdg-view-close" class="btn btn-sm" style="padding:6px 14px;min-height:36px">× Cerrar</button>
-      </div>
-      <div id="cdg-view-content" style="padding:1.25rem">
-        <!-- contenido inyectado dinámicamente -->
-      </div>
-    </div>
-  </div>
-
-  <!-- FIX (vie 22-may-2026 noche): banner persistente de errores de red.
-       Se muestra cuando un save crítico falla. NO se cierra solo. Solo
-       desaparece cuando el usuario lo cierra manualmente con confirmación.
-       Diseño post-incidente Carlos: el auto-hide reproducía la falsa
-       tranquilidad que causó la pérdida de datos. -->
-  <div id="network-error-banner" style="display:none;position:sticky;top:0;z-index:9999;background:#c0392b;color:#fff;padding:14px 16px;font-size:.95rem;line-height:1.4;border-bottom:3px solid #8b1f15;box-shadow:0 2px 8px rgba(0,0,0,.25)">
-    <div style="display:flex;align-items:flex-start;gap:10px;max-width:100%">
-      <div style="font-size:1.5rem;line-height:1">⚠️</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;margin-bottom:4px;font-size:1.02rem">ALERTA — El conteo dejó de guardarse</div>
-        <div id="network-error-detail" style="font-size:.88rem;opacity:.95">NO sigas contando.<br>NO cierres la app: podrías perder SKUs y fotos.<br>Avisá a tu supervisor.</div>
-        <div id="network-error-count" style="font-size:.72rem;margin-top:6px;opacity:.85"></div>
-      </div>
-      <button id="network-error-dismiss" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.4);padding:6px 10px;border-radius:6px;font-size:.78rem;cursor:pointer;min-height:32px;font-family:inherit;flex-shrink:0" title="Cerrar (solo si tu supervisor lo autoriza)">Cerrar</button>
-    </div>
-  </div>
-  <div class="wrap">
-    <div class="sub" id="fecha"></div>
-
-    <!-- ONLINE BAR (solo supervisores) -->
-    <div id="online-bar"></div>
-
-    <!-- ── PÁGINA: MENÚ PRINCIPAL ─────────────────────────────── -->
-    <div id="pg-menu" class="page active">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Qué vas a contar hoy?</p>
-      <div id="menu-grid-cards" class="menu-grid" style="visibility:hidden">
-        <div class="menu-card" id="mc-hamilton">
-          <div class="mc-icon">🏭</div>
-          <div class="mc-title">Conteos Hamilton</div>
-          <div class="mc-sub">Embarques · Traslados · CDG</div>
-        </div>
-        <div class="menu-card" id="mc-cdg">
-          <div class="mc-icon">🏢</div>
-          <div class="mc-title">Conteos CDG</div>
-          <div class="mc-sub">Envíos a Hamilton (U25)</div>
-        </div>
-      </div>
-      <div style="margin-top:1.5rem;display:flex;gap:.75rem;flex-wrap:wrap">
-        <button class="btn btn-sm" id="btn-reset">↺ Nuevo día</button>
-      </div>
-    </div>
-
-    <!-- ── MÓDULO BODEGA CDG — BOD MODULE UI ───────────────────
-         Visible solo si BOD_ENABLED_CLIENT=true y usuario bodega/supervisor.
-         Fase 1: Captura tarima + Auditoría.
-    ──────────────────────────────────────────────────────── -->
-    <div id="pg-bod-menu" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
-      <!-- Lista de licencias bolsón activas -->
-      <div id="bod-sesiones-activas-wrap" style="margin-bottom:1rem;background:#f8f9fa;border-radius:8px;padding:.65rem .8rem">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">
-          <span style="font-weight:600;font-size:.82rem;color:#333">📋 Licencias bolsón activas</span>
-          <button id="btn-bod-refresh-activas" class="btn btn-xs" style="font-size:.72rem;background:#e8f4ff;color:#1565c0;padding:2px 8px">↻</button>
-          <button id="btn-bod-nueva-licencia" class="btn btn-xs" style="font-size:.72rem;background:#1565c0;color:#fff;padding:2px 10px;margin-left:auto">+ Nueva licencia bolsón</button>
-        </div>
-        <div id="bod-sesiones-activas-list" style="font-size:.78rem;color:#888">Cargando…</div>
-      </div>
-      <div class="submenu-list">
-          <div class="si-icon">📦</div>
-          <div class="si-text">
-            <div class="si-title">Capturar tarima</div>
-            <div class="si-sub">Registrar ítems por tarima</div>
-          </div>
-        </div>
-        <div class="submenu-item" id="sm-bod-auditoria" style="display:none">
-          <div class="si-icon">🔍</div>
-          <div class="si-text">
-            <div class="si-title">Auditar sesión</div>
-            <div class="si-sub">Supervisores y contadores</div>
-          </div>
-        </div>
-        <div class="submenu-item" id="sm-bod-barra-sku" style="display:none">
-          <div class="si-icon">📋</div>
-          <div class="si-text">
-            <div class="si-title">Catálogo barra-SKU</div>
-            <div class="si-sub">Solo supervisores</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── BODEGA: CATÁLOGO BARRA-SKU ────────────────────────── -->
-    <div id="pg-bod-barra-sku" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Catálogo barra-SKU — Carga masiva</p>
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <p style="font-size:.82rem;color:#555;margin:0 0 .75rem">
-          Seleccioná un archivo <strong>Excel (.xlsx)</strong> con columnas
-          <code>barra</code>, <code>sku</code> y <code>descripcion</code>.
-          Las filas existentes se actualizan; las nuevas se insertan.
-        </p>
-        <label class="btn btn-dark" style="cursor:pointer;display:inline-block;position:relative">
-          📂 Elegir archivo…
-          <input type="file" id="inp-bod-barra-sku" accept=".xlsx,.xls,.csv"
-                 style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">
-        </label>
-        <span id="bod-barra-sku-nombre" style="margin-left:.75rem;font-size:.83rem;color:#555"></span>
-        <div style="margin-top:.75rem">
-          <button class="btn btn-dark" id="btn-bod-barra-sku-upload" disabled>⬆️ Subir catálogo</button>
-        </div>
-        <div id="bod-barra-sku-msg" style="font-size:.82rem;margin-top:.6rem"></div>
-      </div>
-    </div>
-
-    <!-- ── BODEGA: CAPTURA DE TARIMA ──────────────────────────── -->
-    <div id="pg-bod-captura" class="page">
-      <!-- Encabezado sesión -->
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia (Bolsón)</label>
-            <input type="text" class="field-inp" id="bod-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
-          </div>
-          <div style="min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha trabajo</label>
-            <input type="date" class="field-inp" id="bod-fecha">
-          </div>
-          <button class="btn btn-dark" id="btn-bod-abrir-sesion">Abrir sesión</button>
-        </div>
-        <div id="bod-sesion-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        <div id="bod-sesion-info" style="font-size:.78rem;color:#888;margin-top:3px"></div>
-      </div>
-
-      <!-- Formulario captura (oculto hasta tener sesión) -->
-      <div id="bod-form-captura" style="display:none">
-        <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-            <div style="min-width:100px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Tarima</label>
-              <select class="field-inp" id="bod-sel-tarima" style="font-size:.85rem;padding:6px 8px">
-                <!-- Generado por JS: A1-A100 -->
-              </select>
-            </div>
-            <div style="min-width:130px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Barra (opcional)</label>
-              <input type="text" class="field-inp" id="bod-barra" placeholder="Escanear o escribir" autocomplete="off" inputmode="text">
-            </div>
-            <div style="min-width:80px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">SKU</label>
-              <input type="text" class="field-inp" id="bod-sku" placeholder="SKU" autocomplete="off" inputmode="numeric">
-            </div>
-            <div style="flex:2;min-width:130px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Descripción</label>
-              <input type="text" class="field-inp" id="bod-desc" placeholder="Autofill o manual">
-            </div>
-            <div style="min-width:70px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Cantidad</label>
-              <input type="number" class="field-inp" id="bod-cantidad" value="1" min="1" step="1" style="width:70px">
-            </div>
-            <button class="btn btn-dark" id="btn-bod-agregar">+ Agregar</button>
-          </div>
-          <div id="bod-captura-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        </div>
-
-        <!-- Tabla últimos 15 -->
-        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap">
-          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
-          <select id="bod-filtro-operador" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:150px">
-            <option value="mis">Mis capturas</option>
-            <option value="todos">Todos</option>
-          </select>
-        </div>
-        <div class="tbl-wrap">
-          <table>
-            <thead><tr>
-              <th>Operador</th><th>Tarima</th><th>Barra</th>
-              <th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Hora</th>
-            </tr></thead>
-            <tbody id="bod-tabla-capturas"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── BODEGA: AUDITORÍA ───────────────────────────────────── -->
-    <div id="pg-bod-auditoria" class="page">
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia <span style="font-weight:400;text-transform:none;color:#aaa">(opcional)</span></label>
-            <input type="text" class="field-inp" id="bod-aud-licencia" placeholder="Todas" autocomplete="off" style="text-transform:uppercase">
-          </div>
-          <div style="min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Desde</label>
-            <input type="date" class="field-inp" id="bod-aud-fecha-desde">
-          </div>
-          <div style="min-width:120px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Hasta</label>
-            <input type="date" class="field-inp" id="bod-aud-fecha-hasta">
-          </div>
-          <div style="min-width:100px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Estado</label>
-            <select class="field-inp" id="bod-aud-estado" style="font-size:.82rem;padding:5px 7px">
-              <option value="">Todos</option>
-              <option value="abierta">Abierta</option>
-              <option value="cerrada">Cerrada</option>
-            </select>
-          </div>
-          <button class="btn btn-sm" id="btn-bod-cargar-auditoria">Buscar</button>
-        </div>
-        <div id="bod-aud-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-      </div>
-      <div id="bod-aud-contenido"></div>
-    </div>
-
-    <!-- ── PÁGINA: SUBMENÚ HAMILTON ──────────────────────────── -->
-    <div id="pg-hamilton" class="page">
-      <div class="submenu-list">
-        <div class="submenu-item" id="sm-embarques">
-          <div class="si-icon">🚢</div>
-          <div class="si-text">
-            <div class="si-title">Embarques</div>
-            <div class="si-sub">Contenedores de importación</div>
-          </div>
-          <span class="submenu-badge badge b-type" id="cnt-embarques">0</span>
-        </div>
-        <div class="submenu-item" id="sm-traslados">
-          <div class="si-icon">🚛</div>
-          <div class="si-text">
-            <div class="si-title">Traslados</div>
-            <div class="si-sub">Otras bodegas</div>
-          </div>
-          <span class="submenu-badge badge b-type" id="cnt-traslados">0</span>
-        </div>
-        <div class="submenu-item" id="sm-cdg-hamilton">
-          <div class="si-icon">✅</div>
-          <div class="si-text">
-            <div class="si-title">Traslados CDG</div>
-            <div class="si-sub">Desde bodega CDG · validados</div>
-          </div>
-          <span class="submenu-badge badge b-cdg" id="cnt-cdg">0</span>
-        </div>
-      </div>
-
-      <!-- Carga teórico (supervisor) -->
-      <div id="upload-section" style="margin-top:1.25rem">
-        <div class="card">
-          <div class="drop" id="dropzone">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
-            </svg>
-            <strong>Cargar teórico del día</strong>
-            <small>.xlsx · .xls · .csv — Traslados y Embarques</small>
-          </div>
-          <input type="file" id="fileinput" accept=".xlsx,.xls,.csv">
-          <div id="upload-msg"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG NUEVO CONTEO ──────────────────────────── -->
-    <div id="pg-cdg" class="page">
-      <!-- HEADER with history buttons -->
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:1rem">
-        <p style="font-size:.85rem;color:#666;margin:0">Registra SKUs del envío. Finaliza para crear el teórico en Hamilton CDG.</p>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-sm" id="btn-hist-cdg">📋 Historial CDG</button>
-          <button class="btn btn-sm" id="btn-hist-ktm">📋 Historial KTM</button>
-          <button class="btn btn-sm" id="btn-hist-otros">📋 Historial Otros</button>
-          <button class="btn btn-sm btn-warn" id="btn-cdg-hallazgos-list">⚠ Hallazgos</button>
-        </div>
-      </div>
-
-      <!-- NEW CONTEO FORM -->
-      <div class="card" id="cdg-form-card">
-        <div class="cdg-row">
-          <div class="cdg-field" style="flex:2;min-width:140px">
-            <label>Correlativo U25</label>
-            <input type="text" class="field-inp" id="cdg-u25" placeholder="U25-101010">
-          </div>
-          <div class="cdg-field" style="flex:1;min-width:120px">
-            <label>Tipo de bodega</label>
-            <select id="cdg-tipo" class="field-inp">
-              <option value="CDG">CDG</option>
-              <option value="KTM">KTM</option>
-              <option value="otro">Otro...</option>
-            </select>
-          </div>
-          <div class="cdg-field" id="cdg-tipo-otro-wrap" style="flex:1;min-width:120px;display:none">
-            <label>Especifica bodega</label>
-            <input type="text" class="field-inp" id="cdg-tipo-otro" placeholder="Nombre bodega">
-          </div>
-        </div>
-
-        <!-- 5 fotos del traslado con etiquetas -->
-        <div style="margin-bottom:.75rem">
-          <label style="font-size:.82rem;color:#555;display:block;margin-bottom:6px;font-weight:500">📷 Evidencia fotográfica del traslado</label>
-          <div id="cdg-foto-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px"></div>
-        </div>
-
-        <!-- SKU list (encabezado dinámico) -->
-        <div id="cdg-sku-list" style="margin-bottom:.75rem"></div>
-
-        <!-- Add SKU row -->
-        <div style="background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.5rem">
-          <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar SKU</div>
-          <div class="cdg-row" style="margin-bottom:0">
-            <div class="cdg-field" style="flex:1;min-width:100px">
-              <label>SKU</label>
-              <input type="text" class="field-inp" id="cdg-sku" placeholder="SKU">
-            </div>
-            <div class="cdg-field" style="flex:3;min-width:160px">
-              <label>Descripción <span id="cdg-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
-              <input type="text" class="field-inp" id="cdg-desc" placeholder="Descripción del producto">
-            </div>
-            <div class="cdg-field" style="min-width:90px">
-              <label>Cantidad</label>
-              <input type="number" id="cdg-qty" min="0" placeholder="0">
-            </div>
-            <div class="cdg-field" style="min-width:100px">
-              <label>Costo unit.</label>
-              <input type="text" id="cdg-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
-            </div>
-            <div class="cdg-field" style="justify-content:flex-end">
-              <label>&nbsp;</label>
-              <button class="btn btn-sm btn-dark" id="btn-cdg-add-sku" style="min-width:100px">+ Agregar</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Action buttons -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.75rem">
-          <button class="btn btn-sm" id="btn-cdg-save-draft" style="flex:1">💾 Guardar progreso</button>
-          <button class="btn btn-sm btn-warn" id="btn-cdg-hallazgo" style="flex:1">⚠ Crear hallazgo</button>
-          <button class="btn btn-dark" id="btn-cdg-finish" style="flex:2">🔒 Finalizar y bloquear</button>
-        </div>
-      </div>
-      <div id="cdg-msg"></div>
-
-      <!-- HISTORY PANELS -->
-      <div id="cdg-hist-panel" style="display:none;margin-top:1rem">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
-          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-hist-title">Historial</h3>
-          <button class="btn btn-sm" id="btn-cdg-hist-close">× Cerrar</button>
-        </div>
-        <div id="cdg-hist-content"></div>
-      </div>
-
-      <!-- CDG HALLAZGOS PANEL -->
-      <div id="cdg-hallazgos-panel" style="display:none;margin-top:1rem">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">
-          <h3 style="font-size:.95rem;font-weight:600;margin:0" id="cdg-hallazgos-title">⚠ Hallazgos CDG</h3>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-sm btn-blue" id="btn-cdg-hallazgos-word">📥 Exportar Word</button>
-            <button class="btn btn-sm" id="btn-cdg-hallazgos-close">× Cerrar</button>
-          </div>
-        </div>
-        <div id="cdg-hallazgos-content"></div>
-      </div>
-
-      <!-- SUPERVISOR: Unlock panel -->
-      <div id="cdg-unlock-panel" style="display:none;margin-top:1rem;background:#fff3cd;border:1px solid #ffc107;border-radius:10px;padding:1rem">
-        <p style="font-size:.85rem;font-weight:600;margin-bottom:.5rem">🔓 Desbloquear conteo finalizado</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:180px">
-            <label style="font-size:.78rem;color:#666;display:block;margin-bottom:4px">Selecciona conteo a desbloquear</label>
-            <select id="sel-cdg-unlock" class="field-inp" style="width:100%"></select>
-          </div>
-          <button class="btn btn-warn" id="btn-cdg-unlock">🔓 Desbloquear</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG SELECTOR (clásico vs v2) ─────────────── -->
-    <div id="pg-cdg-menu" class="page">
-      <!--
-        ESTRUCTURA FINAL DOCUMENTADA (Deploy Version Considerations.docx):
-          1. Captura
-          2. Manifiesto / Validación WMS  ← IMPLEMENTADO en v5.2.29
-          3. Reportes
-        Manifiesto implementado: carga WMS, comparación, exportar Manifiesto individual.
-        Fase 2 (pendiente): integrar en Reportes / Descargar Todo.
-        Fase 3 (pendiente): envío por correo.
-        sm-cdg-admin oculto — no visible en producción actual.
-      -->
-      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Seleccioná el módulo de conteo CDG.</p>
-      <div class="submenu-list">
-        <!-- Captura colaborativa CDG — abre CDG v2 -->
-        <div class="submenu-item" id="sm-cdg-v2">
-          <div class="si-icon">👥</div>
-          <div class="si-text">
-            <div class="si-title">Captura colaborativa CDG</div>
-            <div class="si-sub">Crear o unirse a una licencia de conteo</div>
-          </div>
-        </div>
-        <!-- sm-cdg-manifiesto: Manifiesto / Validación WMS — funcional desde v5.2.29 -->
-        <div class="submenu-item" id="sm-cdg-manifiesto">
-          <div class="si-icon">📄</div>
-          <div class="si-text">
-            <div class="si-title">Manifiesto / Validación WMS</div>
-            <div class="si-sub">Cargar teórico WMS y comparar contra conteo</div>
-          </div>
-        </div>
-        <!-- Reportes / historial — abre historial read-only -->
-        <div class="submenu-item" id="sm-cdg-historial">
-          <div class="si-icon">📋</div>
-          <div class="si-text">
-            <div class="si-title">Reportes / historial</div>
-            <div class="si-sub">Consultar conteos, hallazgos y exportaciones</div>
-          </div>
-        </div>
-        <!-- Conteo individual clásico — plan B temporal -->
-        <div class="submenu-item" id="sm-cdg-clasico">
-          <div class="si-icon">🏢</div>
-          <div class="si-text">
-            <div class="si-title">Conteo individual clásico</div>
-            <div class="si-sub">Flujo anterior temporal</div>
-          </div>
-        </div>
-        <!-- sm-cdg-admin: reservado para fase posterior, nunca visible en producción actual -->
-        <div class="submenu-item" id="sm-cdg-admin" style="display:none">
-          <div class="si-icon">🔧</div>
-          <div class="si-text">
-            <div class="si-title">Administración</div>
-            <div class="si-sub">Desbloquear y supervisar licencias</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG HISTORIAL ──────────────────────────────── -->
-    <!-- FIX (lun 1-jun-2026, v5.2.28): página nueva — solo botones que invocan
-         showCDGHist() existente. No mueve ni reescribe nada del historial real. -->
-    <div id="pg-cdg-historial" class="page">
-      <!--
-        FIX (lun 1-jun-2026, v5.2.29): Reportes / Historial CDG reestructurado.
-        3 pestañas internas: Resumen/Tablero · Historial · Hallazgos.
-        - showCDGHist() original (pg-cdg, CDG clásico) NO se toca.
-        - showCDGHistEn() sigue disponible por compatibilidad pero ya no es la vista principal.
-        - Los IDs cdg-historial-page-panel/title/content se mantienen en el DOM
-          por si algún código los referencia, pero están ocultos (las pestañas los reemplazan).
-        NOTA TÉCNICA (migración futura):
-          Cuando el reporte unificado esté validado operativamente, se podrá
-          implementar una fase posterior para convertir conteos v1 (state.cdg) a
-          la estructura v2 (cdg_lineas + cdg_meta_*). Por ahora es read-only unificado.
-      -->
-
-      <!-- Pestañas internas -->
-      <!-- FIX (lun 1-jun-2026, v5.2.29 rev): onclick removido, cableado con addEventListener en JS.
-           Evita que un fallo anterior en el script deje los botones sin respuesta. -->
-      <div class="tab-pills" style="margin-bottom:.75rem">
-        <button class="tab-pill on"  id="rcdg-tab-resumen">📊 Resumen</button>
-        <!-- FIX (lun 1-jun-2026, v5.2.29): pestaña Historial oculta. Resumen cubre la misma función con KPIs y filtros. showCDGHist/showCDGHistEn intactos (CDG Clásico los usa). -->
-        <button class="tab-pill" id="rcdg-tab-historial" style="display:none">📋 Historial</button>
-        <button class="tab-pill"     id="rcdg-tab-hallazgos">⚠️ Hallazgos</button>
-      </div>
-
-      <!-- ── PESTAÑA: RESUMEN / TABLERO ──────────────────────────── -->
-      <div id="rcdg-panel-resumen">
-        <!-- KPIs -->
-        <div id="rcdg-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:1rem"></div>
-        <!-- Filtro rápido por tipo -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
-          <span style="font-size:.78rem;color:#666;font-weight:600">Tipo:</span>
-          <button class="btn btn-sm rcdg-filtro-tipo on" data-tipo="todos"  style="font-size:.75rem">Todos</button>
-          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="CDG"    style="font-size:.75rem">CDG</button>
-          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="KTM"    style="font-size:.75rem">KTM</button>
-          <button class="btn btn-sm rcdg-filtro-tipo"    data-tipo="otro"   style="font-size:.75rem">Otros</button>
-          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="todos"       style="font-size:.75rem;margin-left:6px">Fuente: Todos</button>
-          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="colaborativo" style="font-size:.75rem">Colaborativo</button>
-          <button class="btn btn-sm rcdg-filtro-fuente"  data-fuente="clasico"      style="font-size:.75rem">Clásico</button>
-          <button class="btn btn-sm" id="rcdg-btn-refresh" style="margin-left:auto;font-size:.75rem">🔄 Actualizar</button>
-        </div>
-        <!-- Filtro de fecha + botón bulk WMS -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:.6rem">
-          <span style="font-size:.78rem;color:#666;font-weight:600">Fecha:</span>
-          <input type="date" id="rcdg-filtro-fecha-desde" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:130px" title="Desde">
-          <input type="date" id="rcdg-filtro-fecha-hasta" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:130px" title="Hasta">
-          <button class="btn btn-sm" id="rcdg-btn-hoy" style="font-size:.75rem">Hoy</button>
-          <button class="btn btn-sm" id="rcdg-btn-fecha-clear" style="font-size:.75rem">✕</button>
-          <label class="btn btn-sm" style="margin-left:auto;cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.75rem" title="Cargar WMS para todas las licencias del archivo">
-            📦 Cargar WMS masivo
-            <input type="file" id="rcdg-bulk-wms-file" accept=".xlsx,.xls" style="display:none">
-          </label>
-          <button class="btn btn-sm" id="rcdg-btn-sincronizar-hamilton" style="background:#e3f2fd;color:#1565c0;font-size:.75rem" title="Actualizar conteos CDG en Hamilton con datos del WMS">
-            🔄 Sincronizar Hamilton CDG
-          </button>
-        </div>
-        <div id="rcdg-bulk-wms-msg" style="font-size:.82rem;margin-bottom:.4rem"></div>
-
-        <!-- Tabla resumen -->
-        <div class="tbl-wrap" id="rcdg-tabla-resumen-wrap">
-          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
-        </div>
-      </div>
-
-      <!-- ── PESTAÑA: HISTORIAL ──────────────────────────────────── -->
-      <div id="rcdg-panel-historial" style="display:none" aria-hidden="true">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
-          <span style="font-size:.78rem;color:#666;font-weight:600">Tipo:</span>
-          <button class="btn btn-sm rcdg-hist-tipo on" data-tipo="todos" style="font-size:.75rem">Todos</button>
-          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="CDG"   style="font-size:.75rem">CDG</button>
-          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="KTM"   style="font-size:.75rem">KTM</button>
-          <button class="btn btn-sm rcdg-hist-tipo"    data-tipo="otro"  style="font-size:.75rem">Otros</button>
-        </div>
-        <div class="tbl-wrap" id="rcdg-tabla-historial-wrap">
-          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
-        </div>
-      </div>
-
-      <!-- ── PESTAÑA: HALLAZGOS ──────────────────────────────────── -->
-      <div id="rcdg-panel-hallazgos" style="display:none">
-        <!-- Filtros -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">
-          <span style="font-size:.78rem;color:#666;font-weight:600">Fuente:</span>
-          <button class="btn btn-sm rcdg-hall-fuente on" data-fuente="todos"       style="font-size:.75rem">Todos</button>
-          <button class="btn btn-sm rcdg-hall-fuente"    data-fuente="colaborativo" style="font-size:.75rem">Colaborativo</button>
-          <button class="btn btn-sm rcdg-hall-fuente"    data-fuente="clasico"      style="font-size:.75rem">Clásico</button>
-          <select id="rcdg-hall-filtro-lic" class="field-inp" style="font-size:.78rem;max-width:160px;padding:4px 8px">
-            <option value="">Todas las licencias</option>
-          </select>
-        </div>
-        <div id="rcdg-hallazgos-content">
-          <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando…</div>
-        </div>
-      </div>
-
-      <!-- IDs legacy mantenidos por compatibilidad con showCDGHistEn() -->
-      <div id="cdg-historial-tipos"       style="display:none"></div>
-      <div id="cdg-historial-page-panel"  style="display:none">
-        <div id="cdg-historial-page-title"></div>
-        <div id="cdg-historial-page-content"></div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG ADMINISTRACIÓN ────────────────────────── -->
-    <!-- FIX (lun 1-jun-2026, v5.2.28): página nueva solo para supervisores.
-         Por ahora placeholder — no mueve unlock real ni lógica existente. -->
-    <div id="pg-cdg-admin" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:1rem">Funciones de supervisión CDG.</p>
-      <div class="card" style="background:#fff3cd;border:1px solid #ffc107;padding:1rem;margin-bottom:1rem">
-        <p style="font-size:.85rem;font-weight:600;margin-bottom:.25rem">🔧 Administración CDG en preparación</p>
-        <p style="font-size:.82rem;color:#666;margin:0">Las funciones de desbloqueo y gestión avanzada estarán disponibles aquí próximamente.<br>Por ahora usá el panel de desbloqueo dentro de CDG Clásico.</p>
-      </div>
-      <div class="submenu-list">
-        <div class="submenu-item" id="sm-cdg-admin-clasico">
-          <div class="si-icon">🏢</div>
-          <div class="si-text">
-            <div class="si-title">Ir a CDG Clásico</div>
-            <div class="si-sub">Panel de desbloqueo disponible dentro</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG MANIFIESTO / VALIDACIÓN WMS ─────────── -->
-    <!-- FIX (lun 1-jun-2026, v5.2.29): pestaña Manifiesto funcional.
-         Carga WMS, comparación vs captura CDG, exportar Manifiesto individual.
-         No toca CDG v1, Hamilton, captura v2, reportes ni cierre/finalizar. -->
-    <div id="pg-cdg-manifiesto" class="page">
-
-      <!-- Selector de licencia -->
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div style="flex:1;min-width:160px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Licencia</label>
-            <select id="wms-lic-select" class="field-inp" style="width:100%">
-              <option value="">Seleccioná una licencia…</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:6px;align-items:flex-end;padding-bottom:0">
-            <button class="btn btn-sm" id="btn-wms-refresh-lics" title="Actualizar lista de licencias" style="min-height:36px">🔄</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Estado WMS de la licencia seleccionada -->
-      <div id="wms-estado-panel" style="display:none;margin-bottom:.75rem">
-        <div class="card" style="padding:.85rem 1rem">
-          <!-- Header: metadata del WMS cargado -->
-          <div id="wms-meta-display" style="margin-bottom:.75rem;font-size:.83rem;color:#555"></div>
-          <!-- Datos de encabezado del WMS (Origen, Destino, Fecha, Tipo) -->
-          <div id="wms-encabezado-display" style="font-size:.8rem;color:#888;margin-bottom:.75rem"></div>
-          <!-- Botones de acción -->
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <label class="btn btn-sm btn-dark" style="cursor:pointer;min-height:36px;display:flex;align-items:center;gap:5px">
-              📂 Cargar WMS
-              <input type="file" id="wms-file-input" accept=".xlsx,.xls" style="display:none">
-            </label>
-            <button class="btn btn-sm btn-green" id="btn-wms-exportar" style="display:none">📥 Exportar Manifiesto</button>
-          </div>
-          <div id="wms-upload-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        </div>
-      </div>
-
-      <!-- Comparación WMS vs CDG -->
-      <div id="wms-comparacion-panel" style="display:none">
-        <!-- Resumen numérico -->
-        <div id="wms-resumen" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:.75rem"></div>
-        <!-- Filtros -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem" id="wms-filtros">
-          <button class="btn btn-sm wms-filtro-btn active" data-filtro="todos"       style="font-size:.78rem">Todos</button>
-          <button class="btn btn-sm wms-filtro-btn"        data-filtro="diferencias" style="font-size:.78rem">Solo diferencias</button>
-          <button class="btn btn-sm wms-filtro-btn"        data-filtro="faltantes"   style="font-size:.78rem;background:#fdecea;color:#c0392b">Faltantes</button>
-          <button class="btn btn-sm wms-filtro-btn"        data-filtro="sobrantes"   style="font-size:.78rem;background:#e8f5e9;color:#1b5e20">Sobrantes</button>
-          <button class="btn btn-sm wms-filtro-btn"        data-filtro="ok"          style="font-size:.78rem;background:#e3f2fd;color:#0d47a1">Coincidencias</button>
-        </div>
-        <!-- Tabla de comparación -->
-        <div class="tbl-wrap" id="wms-tabla-wrap"></div>
-      </div>
-
-      <!-- Estado vacío / instrucciones -->
-      <div id="wms-empty-msg" style="text-align:center;padding:2rem;color:#aaa;font-size:.88rem">
-        Seleccioná una licencia para cargar el WMS y comparar.
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CDG v2 LISTA DE LICENCIAS ─────────────────── -->
-    <div id="pg-cdg-v2-lista" class="page">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:1rem">
-        <p style="font-size:.85rem;color:#666;margin:0">Licencias activas del día. Uníte a una o creá una nueva.</p>
-        <button class="btn btn-sm btn-dark" id="btn-cdgv2-nueva">➕ Nueva licencia</button>
-      </div>
-
-      <!-- Formulario crear nueva licencia (colapsable) -->
-      <div id="cdgv2-form-crear" style="display:none;margin-bottom:1rem">
-        <div class="card" style="padding:1rem">
-          <div style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:.75rem;text-transform:uppercase;letter-spacing:.3px">Nueva licencia</div>
-          <div class="cdg-row">
-            <div class="cdg-field" style="flex:2;min-width:140px">
-              <label>Correlativo U25</label>
-              <input type="text" class="field-inp" id="cdgv2-new-u25" placeholder="U25-101010">
-            </div>
-            <div class="cdg-field" style="flex:1;min-width:100px">
-              <label>Tipo de bodega</label>
-              <select id="cdgv2-new-tipo" class="field-inp">
-                <option value="CDG">CDG</option>
-                <option value="KTM">KTM</option>
-                <option value="otro">Otro</option>
-              </select>
-            </div>
-            <div class="cdg-field" style="justify-content:flex-end">
-              <label>&nbsp;</label>
-              <button class="btn btn-sm btn-dark" id="btn-cdgv2-crear-ok" style="min-width:100px">Crear</button>
-            </div>
-          </div>
-          <div id="cdgv2-crear-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        </div>
-      </div>
-
-      <!-- Lista de licencias -->
-      <div id="cdgv2-licencias-list">
-        <div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">Cargando licencias…</div>
-      </div>
-      <div id="cdgv2-lista-msg" style="font-size:.82rem;color:#888;margin-top:.5rem;text-align:center"></div>
-    </div>
-
-    <!-- ── PÁGINA: CDG v2 LICENCIA INDIVIDUAL ──────────────────── -->
-    <div id="pg-cdg-v2-licencia" class="page">
-      <!-- Header de la licencia -->
-      <div class="card" id="cdgv2-lic-header" style="margin-bottom:.75rem;padding:.85rem 1rem">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <div>
-            <div style="font-size:1rem;font-weight:700" id="cdgv2-lic-titulo">—</div>
-            <div style="font-size:.8rem;color:#666;margin-top:2px" id="cdgv2-lic-meta">—</div>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <span id="cdgv2-lic-estado-badge" style="font-size:.75rem;padding:3px 10px;border-radius:10px;font-weight:600"></span>
-            <!-- btn-cdgv2-desbloquear: fijo en HTML, visible solo para supervisores cuando cerrada.
-                 FIX (lun 1-jun-2026, v5.2.29): declarado aquí para evitar duplicación al re-renderizar. -->
-            <button id="btn-cdgv2-desbloquear" class="btn btn-sm"
-              style="display:none;background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:.78rem">
-              🔓 Desbloquear
-            </button>
-            <span style="font-size:.78rem;color:#888" id="cdgv2-lic-poll-ts"></span>
-          </div>
-        </div>
-        <!-- Fotos encabezado (5 slots) -->
-        <div style="margin-top:.75rem">
-          <div style="font-size:.78rem;color:#555;font-weight:500;margin-bottom:6px">📷 Evidencia fotográfica</div>
-          <div id="cdgv2-foto-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px"></div>
-        </div>
-      </div>
-
-      <!-- Formulario agregar línea -->
-      <div id="cdgv2-add-form" style="background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.75rem">
-        <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar línea</div>
-        <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
-          <div class="cdg-field" style="flex:1;min-width:90px;position:relative">
-            <label>SKU</label>
-            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="numeric" autocomplete="off">
-            <div id="cdgv2-sku-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;font-size:.82rem"></div>
-          </div>
-          <div class="cdg-field" style="flex:3;min-width:150px">
-            <label>Descripción <span id="cdgv2-add-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
-            <input type="text" class="field-inp" id="cdgv2-add-desc" placeholder="Ingresá el SKU primero" readonly style="background:#f5f5f3">
-          </div>
-          <div class="cdg-field" style="min-width:80px">
-            <label>Cantidad</label>
-            <input type="number" class="field-inp" id="cdgv2-add-qty" min="0" placeholder="0">
-          </div>
-          <div class="cdg-field" style="min-width:90px">
-            <label>Costo unit.</label>
-            <input type="text" class="field-inp" id="cdgv2-add-costo" placeholder="Auto" readonly style="background:#f5f5f3;font-size:.82rem">
-          </div>
-          <div class="cdg-field" style="justify-content:flex-end">
-            <label>&nbsp;</label>
-            <button class="btn btn-sm btn-dark" id="btn-cdgv2-add-linea" style="min-width:90px">+ Agregar</button>
-          </div>
-        </div>
-        <!-- Fotos de la línea (se adjuntan ANTES de guardar, máx 3) -->
-        <div style="margin-top:.6rem">
-          <div style="font-size:.75rem;color:#666;margin-bottom:4px">📷 Fotos de evidencia (máx 3, opcional)</div>
-          <div id="cdgv2-add-fotos-row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>
-          </div>
-        </div>
-        <div id="cdgv2-add-msg" style="font-size:.82rem;margin-top:.4rem"></div>
-      </div>
-
-      <!-- Lista de líneas -->
-      <div id="cdgv2-lineas-container" style="margin-bottom:.75rem">
-        <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando líneas…</div>
-      </div>
-
-      <!-- Botones de acción -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.5rem">
-        <button class="btn btn-sm" id="btn-cdgv2-guardar-prog" style="flex:1">💾 Guardar progreso</button>
-        <button class="btn btn-sm btn-warn" id="btn-cdgv2-hallazgo" style="flex:1">⚠ Crear hallazgo</button>
-        <button class="btn btn-dark" id="btn-cdgv2-finalizar" style="flex:2;display:none">🔒 Finalizar y bloquear</button>
-      </div>
-      <div id="cdgv2-lic-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-
-      <!-- Panel de hallazgos de esta licencia CDG v2.
-           FIX (lun 1-jun-2026, v5.2.29): siempre visible, incluye botón Crear hallazgo. -->
-      <div id="cdgv2-hallazgos-panel" style="margin-top:.75rem">
-        <div style="margin-bottom:.4rem">
-          <!-- FIX (lun 1-jun-2026, v5.2.29 rev): btn-cdgv2-hallazgo-panel quitado.
-               Solo queda btn-cdgv2-hallazgo en la barra de acciones. -->
-          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">⚠ Hallazgos de esta licencia</div>
-        </div>
-        <div id="cdgv2-hallazgos-list"></div>
-      </div>
-    </div>
-
-    <!-- ── PÁGINA: CONTEO (lista contenedores + tabs) ─────────── -->
-    <div id="pg-conteo" class="page">
-
-      <div class="status-bar" id="status-bar"></div>
-      <div id="cost-bar">
-        <span style="font-size:.875rem;color:#666">📦 Costos SAP:</span>
-        <span id="cost-status" style="font-size:.8rem;color:#999">No cargado</span>
-        <button class="btn btn-sm" id="btn-load-cost">Cargar costos</button>
-        <input type="file" id="cost-input" accept=".xlsx,.xls,.csv" style="display:none">
-      </div>
-
-      <!-- Tab pills -->
-      <div class="tab-pills" id="tab-pills">
-        <button class="tab-pill on" id="tab-btn-conteo">📋 Conteo</button>
-        <button class="tab-pill" id="tab-btn-reporte">📊 Reporte</button>
-        <button class="tab-pill" id="tab-btn-hallazgos">⚠️ Hallazgos</button>
-        <button class="tab-pill" id="tab-btn-asign" style="display:none">👥 Asignaciones</button>
-      </div>
-
-      <!-- TAB CONTEO -->
-      <div id="tab-conteo">
-        <!-- Summary card -->
-        <div id="summary-card" style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:.875rem 1rem;margin-bottom:.875rem;display:none">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.5rem">
-            <div>
-              <span style="font-size:.75rem;color:#888">Contenedor</span>
-              <div style="font-size:1rem;font-weight:600" id="sc-cont">—</div>
-            </div>
-            <div><span style="font-size:.75rem;color:#888">Tipo</span><div style="font-size:.85rem" id="sc-tipo">—</div></div>
-            <div><span style="font-size:.75rem;color:#888">Puerta</span><div style="font-size:.85rem" id="sc-puerta">—</div></div>
-            <div><span style="font-size:.75rem;color:#888">Participantes</span><div style="font-size:.85rem" id="sc-partic">—</div></div>
-          </div>
-          <div style="display:flex;gap:1rem;font-size:.82rem;flex-wrap:wrap">
-            <span>📋 Líneas: <strong id="sc-lineas">0</strong></span>
-            <span>✅ Contadas: <strong id="sc-contadas" style="color:#1e7e34">0</strong></span>
-            <span>⏳ Pendientes: <strong id="sc-pendientes" style="color:#b7770d">0</strong></span>
-            <span>⚠️ Diferencias: <strong id="sc-diffs" style="color:#c0392b">0</strong></span>
-          </div>
-        </div>
-
-        <div class="sel-wrap">
-          <label>Contenedor:</label>
-          <select id="sel-cont"></select>
-          <label style="margin-left:8px;font-size:.82rem;color:#666">Puerta:</label>
-          <select id="sel-puerta" style="padding:7px 10px;font-size:.85rem;border:1px solid #ccc;border-radius:8px;min-height:40px;-webkit-appearance:none;background:#fff">
-            <option value="">— Puerta —</option>
-            <optgroup id="puerta-grp-L" label="── Embarques (L) ──">
-            <option>L001.001</option>
-            <option>L002.001</option>
-            <option>L003.001</option>
-            <option>L004.001</option>
-            <option>L005.001</option>
-            <option>L006.001</option>
-            <option>L007.001</option>
-            <option>L008.001</option>
-            <option>L009.001</option>
-            <option>L010.001</option>
-            <option>L011.001</option>
-            <option>L012.001</option>
-            <option>L013.001</option>
-            <option>L014.001</option>
-            <option>L015.001</option>
-            <option>L016.001</option>
-            <option>L017.001</option>
-            <option>L018.001</option>
-            <option>L019.001</option>
-            <option>L020.001</option>
-            </optgroup>
-            <optgroup id="puerta-grp-I" label="── Traslados (I) ──">
-            <option>I001.001</option>
-            <option>I002.001</option>
-            <option>I003.001</option>
-            <option>I004.001</option>
-            <option>I005.001</option>
-            <option>I006.001</option>
-            <option>I007.001</option>
-            <option>I008.001</option>
-            <option>I009.001</option>
-            <option>I010.001</option>
-            <option>I011.001</option>
-            <option>I012.001</option>
-            <option>I013.001</option>
-            <option>I014.001</option>
-            <option>I015.001</option>
-            <option>I016.001</option>
-            <option>I017.001</option>
-            <option>I018.001</option>
-            <option>I019.001</option>
-            <option>I020.001</option>
-            </optgroup></select>
-          <span class="prog" id="prog-text"></span>
-          <!-- Conteo metadata -->
-          <div id="conteo-meta-wrap" style="display:none;width:100%;margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
-            <label style="font-size:.78rem;color:#666">F. Ingreso:</label>
-            <input type="date" id="inp-fecha-ingreso" style="padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
-            <label style="font-size:.78rem;color:#666">F. Furgón:</label>
-            <input type="date" id="inp-fecha-furgon" style="padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
-            <label style="font-size:.78rem;color:#666">Placas:</label>
-            <input type="text" id="inp-placas" placeholder="ej: P-123ABC" style="width:110px;padding:6px 8px;font-size:.82rem;border:1px solid #ccc;border-radius:8px;min-height:38px;-webkit-appearance:none">
-          </div>
-          <span id="self-assign-wrap" style="display:none">
-            <button class="btn btn-sm btn-blue" id="btn-self-assign">📋 Registrarme en este conteo</button>
-          </span>
-
-        </div>
-        <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <input id="sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..."
-        style="flex:1;max-width:380px;padding:9px 14px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none;background:#fff">
-      <span id="sku-search-count" style="font-size:.78rem;color:#888"></span>
-    </div>
-    <div class="tbl-wrap">
-          <table>
-            <thead id="thead-conteo"><tr id="thead-conteo-row">
-              <th>SKU</th><th>Nombre / Descripción</th>
-              <th class="tc">Teórico</th>
-              <th class="tc">Físico</th>
-              <th class="tc">Dañado</th>
-              <th class="tc">Total físico</th>
-              <th class="tc">Diferencia</th>
-            </tr></thead>
-            <tbody id="tbody-conteo"></tbody>
-          </table>
-        </div>
-        <div class="actions">
-          <button class="btn btn-orange" id="btn-hallazgo">⚠ Crear hallazgo</button>
-          <button class="btn btn-dark" id="btn-save">Guardar conteo ✓</button>
-        </div>
-      </div>
-
-      <!-- TAB REPORTE -->
-      <div id="tab-reporte" style="display:none">
-
-        <!-- EXPORT BAR (top) -->
-        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:.875rem 1rem;margin-bottom:1rem">
-          <p style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:.75rem">⬇ Exportar a Excel</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-            <div>
-              <label style="font-size:.75rem;color:#888;display:block;margin-bottom:3px">¿Qué exportar?</label>
-              <select id="export-scope" style="padding:8px 10px;font-size:.85rem;border:1px solid #ccc;border-radius:8px;min-height:40px;background:#fff;-webkit-appearance:none">
-                <option value="all-one">Todo en un solo archivo</option>
-                <option value="all-sep">Todo — archivos individuales</option>
-                <option value="Embarques">Todos los Embarques</option>
-                <option value="Traslados">Todos los Traslados</option>
-                <option value="pick">Seleccionar contenedores</option>
-              </select>
-            </div>
-            <button class="btn btn-green" id="btn-export" style="min-height:40px;align-self:flex-end">⬇ Exportar</button>
-          </div>
-          <div id="export-pick-wrap" style="display:none;margin-top:.75rem;border:1px solid #e0e0e0;border-radius:8px;padding:.75rem;background:#f9f9f7;max-height:180px;overflow-y:auto">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-              <p style="font-size:.78rem;color:#888;margin:0">Selecciona contenedores:</p>
-              <div style="display:flex;gap:8px">
-                <button id="btn-pick-all" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:2px 8px;cursor:pointer">Todos</button>
-                <button id="btn-pick-none" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:2px 8px;cursor:pointer">Ninguno</button>
-              </div>
-            </div>
-            <div id="export-pick-list"></div>
-          </div>
-        </div>
-
-        <!-- METRICS -->
-        <div class="metrics">
-          <div class="metric"><div class="lbl">Contenedores</div><div class="val" id="m-total">0</div></div>
-          <div class="metric"><div class="lbl">Contados</div><div class="val" id="m-done">0</div></div>
-          <div class="metric"><div class="lbl">Con diferencias</div><div class="val" id="m-diffs">0</div></div>
-          <div class="metric"><div class="lbl">Items totales</div><div class="val" id="m-items">0</div></div>
-          <div class="metric"><div class="lbl">Costo total Q</div><div class="val" id="m-costo">0.00</div></div>
-        </div>
-
-        <!-- RESUMEN -->
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:1.5rem 0 .75rem">
-          <div class="sec" style="margin:0">Resumen por contenedor</div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <!-- FIX (vie 22-may-2026 noche): filtro Tipo. Permite ver
-                 solo Embarques, solo Traslados, o Ambos. Botones tipo
-                 toggle para que sea claro qué está activo. -->
-            <label style="font-size:.78rem;color:#666">Tipo:</label>
-            <div id="filter-tipo-group" role="group" style="display:inline-flex;gap:2px;background:#f0f0ee;padding:3px;border-radius:8px">
-              <button class="filter-tipo-btn" data-tipo="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Ambos</button>
-              <button class="filter-tipo-btn" data-tipo="Embarques" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Embarques</button>
-              <button class="filter-tipo-btn" data-tipo="Traslados" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Traslados</button>
-            </div>
-            <!-- FIX (dom 24-may-2026): filtro Clasificación. Permite ver solo
-                 Auditado / En Revisión / No auditado / Todos. Estado en
-                 window._filterClasif. Mismo patrón que el filtro Tipo. -->
-            <label style="font-size:.78rem;color:#666;margin-left:8px">Clasif:</label>
-            <div id="filter-clasif-group" role="group" style="display:inline-flex;gap:2px;background:#f0f0ee;padding:3px;border-radius:8px">
-              <button class="filter-clasif-btn" data-clasif="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Todas</button>
-              <button class="filter-clasif-btn" data-clasif="Auditado" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Auditado</button>
-              <button class="filter-clasif-btn" data-clasif="En Revisión" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">En Revisión</button>
-              <button class="filter-clasif-btn" data-clasif="No auditado" style="font-size:.72rem;padding:5px 8px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">No auditado</button>
-            </div>
-            <span style="display:inline-block;width:1px;height:24px;background:#ddd;margin:0 4px"></span>
-            <label style="font-size:.78rem;color:#666">Filtrar Fecha de trabajo:</label>
-            <span style="font-size:.72rem;color:#888">Desde</span>
-            <input type="date" id="filter-fecha-desde" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
-            <span style="font-size:.72rem;color:#888">Hasta</span>
-            <input type="date" id="filter-fecha-hasta" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
-            <button id="btn-filter-fecha-clear" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;min-height:34px">× Limpiar</button>
-            <span id="filter-ocultos-info" style="font-size:.72rem;color:#888;margin-left:6px"></span>
-          </div>
-        </div>
-        <div class="tbl-wrap" style="margin-bottom:1.5rem">
-          <!-- FIX (rev ChatGPT G, vie 22-may-2026): mini leyenda explicativa
-               sobre la columna Clasificación. Aclara el origen automático
-               y que el supervisor puede ajustar. Reduce la confusión al
-               primer encuentro. -->
-          <div style="font-size:.72rem;color:#888;margin-bottom:6px;padding:6px 10px;background:#f8f9fa;border-left:3px solid #5a6fd8;border-radius:4px">
-            ℹ️ <strong>Clasificación:</strong> calculada automáticamente por % cobertura. Los supervisores pueden ajustarla manualmente (queda marcada como ★ Manual).
-          </div>
-          <table>
-            <!-- FIX (vie 22-may-2026 noche): nuevas columnas Cobertura %
-                 y Clasificación. La columna Cobertura es calculada
-                 (contadas/total). La columna Clasificación es editable
-                 solo para supervisores (isSup), con valor inicial
-                 calculado por cobertura pero overrideable manualmente
-                 desde el state (teorico[c].clasificacion). -->
-            <thead><tr><th>Tipo</th><th>Contenedor</th><th class="tc">Items</th><th class="tc">OK</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th><th class="tc">% Cobertura</th><th>Puerta</th><th class="tc">Costo total Q</th><th id="th-fecha-trabajo" style="cursor:pointer;user-select:none" title="Click para invertir orden">Fecha de trabajo <span id="th-fecha-trabajo-arrow" style="font-size:.7em;color:#5a6fd8">↓</span></th><th>Estado</th><th>Clasificación</th></tr></thead>
-            <tbody id="tbody-resumen"></tbody>
-          </table>
-        </div>
-
-        <!-- DETALLE DIFERENCIAS (colapsable) -->
-        <button id="btn-toggle-detalle" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:none;border:none;cursor:pointer;padding:0;margin-bottom:.75rem;min-height:40px">
-          <span class="sec" style="margin:0">Detalle de diferencias</span>
-          <span id="detalle-ico" style="font-size:.78rem;color:#888">▼ mostrar</span>
-        </button>
-        <div id="detalle-wrap" style="display:none;margin-bottom:1.5rem">
-          <div class="tbl-wrap">
-            <table>
-              <thead><tr><th>Contenedor</th><th>SKU</th><th>Nombre</th><th class="tc">Teórico</th><th class="tc">Físico</th><th class="tc">Diferencia</th></tr></thead>
-              <tbody id="tbody-detalle"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB HALLAZGOS -->
-      <div id="tab-hallazgos" style="display:none">
-        <div id="hall-list"></div>
-        <p class="empty" id="hall-empty">Sin hallazgos registrados aún.</p>
-      </div>
-
-      <!-- TAB ASIGNACIONES (solo supervisor) -->
-      <div id="tab-asign" style="display:none">
-        <div id="asign-content"></div>
-      </div>
-
-    </div><!-- /pg-conteo -->
-  </div><!-- /wrap -->
-</div><!-- /main-wrap -->
-
-<!-- ══ MODAL HALLAZGO ══════════════════════════════════════════════ -->
-<div class="modal-bg" id="modal-hallazgo">
-  <div class="modal-box">
-    <h3>⚠ Crear hallazgo de auditoría</h3>
-    <p style="font-size:.82rem;color:#888;margin-bottom:.75rem">Contenedor: <strong id="hall-cont-name"></strong></p>
-    <div class="field-row">
-      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        ¿Qué pasó?
-        <button type="button" id="btn-hall-mic" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px" title="Dictar por voz">🎤 Dictar</button>
-        <span id="hall-mic-status" style="font-size:.7rem;color:#888"></span>
-        <select id="hall-mic-lang" style="font-size:.7rem;padding:1px 4px;border-radius:4px;border:1px solid #ccc">
-          <option value="es-ES">Español</option>
-          <option value="en-US">English</option>
-        </select>
-      </label>
-      <textarea class="field-inp" id="hall-input" rows="2" placeholder="Describe lo que encontraste..."></textarea>
-    </div>
-    <div class="field-row"><label>Condición</label><textarea class="field-inp" id="hall-condicion" rows="2" placeholder="Estado real encontrado..."></textarea></div>
-    <div class="field-row"><label>Criterio</label><textarea class="field-inp" id="hall-criterio" rows="2" placeholder="Política o norma aplicable..."></textarea></div>
-    <div class="field-row"><label>Causa</label><textarea class="field-inp" id="hall-causa" rows="2" placeholder="Causa raíz..."></textarea></div>
-    <div class="field-row"><label>Efecto</label><textarea class="field-inp" id="hall-efecto" rows="2" placeholder="Impacto en la operación..."></textarea></div>
-    <div class="field-row"><label>Recomendación</label><textarea class="field-inp" id="hall-recomendacion" rows="2" placeholder="Acción correctiva..."></textarea></div>
-    <!-- Foto hallazgo -->
-    <div class="field-row" style="margin-top:.5rem">
-      <label>Foto (opcional)</label>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <button id="btn-hall-foto" class="btn btn-sm" style="min-height:38px">📷 Tomar foto / Elegir</button>
-        <input type="file" id="hall-foto-input" accept="image/*" style="display:none">
-        <span id="hall-foto-status" style="font-size:.78rem;color:#888"></span>
-      </div>
-      <div id="hall-foto-preview" style="margin-top:6px;display:none">
-        <img id="hall-foto-img" style="max-width:100%;max-height:150px;border-radius:8px;border:1px solid #e0e0e0">
-        <button id="btn-hall-foto-del" style="display:block;margin-top:4px;font-size:.75rem;color:#c0392b;background:none;border:none;cursor:pointer">× Eliminar foto</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem">
-      <button class="btn" id="btn-hall-cancel" style="flex:1">Cancelar</button>
-      <button class="btn btn-warn" id="btn-hall-mod" style="flex:1;display:none">✏️ Modificar</button>
-      <button class="btn btn-dark" id="btn-hall-save" style="flex:2">Guardar hallazgo</button>
-    </div>
-  </div>
-</div>
-    
-
-
-<script>
-'use strict';
-
-/* ══════════════════════════════════════════════════════════════════
-   CONSTANTES
-══════════════════════════════════════════════════════════════════ */
-var SUPERVISORES = ['Erick Vela','Steven Palencia','Edmar Guzman','Ever Garcia',
-  'Mario Hernandez','Oscar Ramirez','Vivi Gil','Carlos Andrino','Rodrigo Ruiz'];
-var CONTADORES_LIST = ['Carlos Sandoval','Israel Gatica','Nelson Diaz','Julio Yoc',
-  'Ronald Gomez','William Garzona','Alexander Grijalva','Jaqueline Perez',
-  'Jeffry Telon','Bianca Montenegro'];
-var STORE_KEY = 'conteo_fisico_v4';
-
-/* ══════════════════════════════════════════════════════════════════
-   ESTADO GLOBAL
-══════════════════════════════════════════════════════════════════ */
-// FIX (sáb 30-may-2026, v5.2.27): feature flag para CDG v2 multi-usuario.
-// Cambiar a true cuando el módulo esté listo para el equipo.
-var CDG_V2_HABILITADO = true;
-
-var currentUser  = null;
-window.ACCESS_SCOPE = 'full';   // 'full' | 'bodega' | 'rgis'
-var teorico      = {};   // { contId: { items, type, cdgValidado? } }
-var fisico       = {};   // { contId: [{fisico,daniado,quien,ts,calcExpr}] | null }
-                          // calcExpr: legacy histórico, ya no se setea desde UI desde 19/5/2026,
-                          // solo se preserva valor previo en saveField.
-var costos       = {};
-var hallazgos    = [];
-var asignaciones = {};   // { contId: [nombre, ...] }
-var historial    = [];   // [{ts, usuario, accion}]
-var conts        = [];
-var current      = null;
-var loadedSheets = {};
-var cdgSkus      = [];
-var locks        = {};   // { contId_idx: {quien, at} }  — solo offline (90s)
-var onlineUsers  = {};   // { nombre: timestamp }  — solo offline (15s)
-var _currentFilter = ''; // 'Embarques' | 'Traslados' | 'CDG' | ''
-
-/* ══════════════════════════════════════════════════════════════════
-   PERSISTENCIA
-══════════════════════════════════════════════════════════════════ */
-// All actions persist via their individual API endpoints — no bulk save.
-
-function loadLocal() {
-  try {
-    var raw=localStorage.getItem(STORE_KEY);
-    if(!raw) return false;
-    var d=JSON.parse(raw);
-    if(d.savedDate!==todayISO()) return false;
-    teorico=d.teorico||{}; fisico=d.fisico||{}; hallazgos=d.hallazgos||[];
-    asignaciones=d.asignaciones||{}; historial=d.historial||[];
-    loadedSheets=d.loadedSheets||{};
-    return true;
-  } catch(e){ return false; }
-}
-
-function todayISO(){ return new Date().toISOString().slice(0,10); }
-
-/* ══════════════════════════════════════════════════════════════════
-   UTILS
-══════════════════════════════════════════════════════════════════ */
-function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// Build an MHTML document from an HTML string. MHTML packs each image into a
-// separate MIME part, which is what Microsoft Word actually loads. Pure
-// data:base64 URLs inside `.doc` are silently dropped by Word desktop —
-// only browsers and online viewers display them.
-function htmlToMhtml(htmlBody, title){
-  var imgRe = /<img\s+[^>]*src="(data:image\/([a-z]+);base64,([^"]+))"[^>]*>/gi;
-  var parts = [];
-  var idx = 0;
-  // Replace each data: URL with a cid: reference and collect the binary parts
-  var newHtml = htmlBody.replace(imgRe, function(match, fullData, mime, b64){
-    idx++;
-    var cid = 'image' + idx + '@local';
-    parts.push({ cid: cid, mime: 'image/' + mime, b64: b64 });
-    return match.replace(fullData, 'cid:' + cid);
-  });
-  var boundary = '----=_NextPart_' + Math.random().toString(36).slice(2);
-  var lines = [];
-  lines.push('MIME-Version: 1.0');
-  lines.push('Content-Type: multipart/related; boundary="' + boundary + '"; type="text/html"');
-  lines.push('Subject: ' + (title || 'Document'));
-  lines.push('');
-  lines.push('--' + boundary);
-  lines.push('Content-Type: text/html; charset="utf-8"');
-  lines.push('Content-Transfer-Encoding: quoted-printable');
-  lines.push('Content-Location: index.html');
-  lines.push('');
-  // Encode HTML as quoted-printable (simplified: just keep ASCII and escape =)
-  var qp = newHtml.replace(/=/g, '=3D');
-  lines.push(qp);
-  parts.forEach(function(p){
-    lines.push('');
-    lines.push('--' + boundary);
-    lines.push('Content-Type: ' + p.mime);
-    lines.push('Content-Transfer-Encoding: base64');
-    lines.push('Content-Location: ' + p.cid);
-    lines.push('Content-ID: <' + p.cid + '>');
-    lines.push('');
-    // Wrap base64 every 76 chars (RFC standard)
-    var wrapped = p.b64.match(/.{1,76}/g);
-    lines.push(wrapped ? wrapped.join('\r\n') : p.b64);
-  });
-  lines.push('');
-  lines.push('--' + boundary + '--');
-  return lines.join('\r\n');
-}
-
-// Trigger download of a Word doc that displays embedded images correctly.
-// Uses MHTML (multipart) so Microsoft Word loads each image as a real attachment.
-function downloadWordWithImages(htmlBody, filename, title){
-  var mhtml = htmlToMhtml(htmlBody, title || filename);
-  var blob = new Blob([mhtml], { type: 'message/rfc822' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
-}
-
-// Reusable speech-to-text helper. Returns true if mic was attached, false if browser doesn't support it.
-function setupMic(btnId, langSelId, statusId, targetTextareaId){
-  var btn = document.getElementById(btnId);
-  var langSel = document.getElementById(langSelId);
-  var statusEl = document.getElementById(statusId);
-  var target = document.getElementById(targetTextareaId);
-  if(!btn || !target) return false;
-  if(btn.dataset.micAttached === '1') return true; // already wired
-  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SpeechRec) {
-    btn.disabled = true;
-    btn.title = 'Tu navegador no soporta dictado por voz';
-    btn.style.opacity = '0.5';
-    return false;
-  }
-  var rec = null;
-  var isRecording = false;
-  btn.addEventListener('click', function(e){
-    e.preventDefault();
-    if(isRecording) { if(rec) rec.stop(); return; }
-    rec = new SpeechRec();
-    rec.lang = (langSel && langSel.value) || 'es-ES';
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.onstart = function(){
-      isRecording = true;
-      btn.textContent = '⏹ Detener';
-      btn.style.background = '#fdecea';
-      btn.style.color = '#c0392b';
-      if(statusEl) statusEl.textContent = 'Escuchando…';
-    };
-    rec.onresult = function(ev){
-      var transcript = '';
-      for(var i = ev.resultIndex; i < ev.results.length; i++) {
-        if(ev.results[i].isFinal) transcript += ev.results[i][0].transcript + ' ';
-      }
-      if(transcript && target) {
-        target.value = (target.value ? target.value + ' ' : '') + transcript.trim();
-      }
-    };
-    rec.onerror = function(ev){
-      if(statusEl) statusEl.textContent = 'Error: '+ev.error;
-    };
-    rec.onend = function(){
-      isRecording = false;
-      btn.textContent = '🎤 Dictar';
-      btn.style.background = '';
-      btn.style.color = '';
-      if(statusEl) statusEl.textContent = '';
-    };
-    try { rec.start(); } catch(err) {
-      if(statusEl) statusEl.textContent = 'No disponible';
-    }
-  });
-  btn.dataset.micAttached = '1';
-  return true;
-}
-function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
-function nowStr(){ return new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}); }
-function makeId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
-function isSup(){ return currentUser&&currentUser.role==='supervisor'; }
-
-function findCol(hdr,terms){
-  var i,t;
-  for(t=0;t<terms.length;t++) for(i=0;i<hdr.length;i++) if(hdr[i]===norm(terms[t]))return i;
-  for(t=0;t<terms.length;t++) for(i=0;i<hdr.length;i++) if(hdr[i].indexOf(norm(terms[t]))>=0)return i;
-  return -1;
-}
-
-function getOrigen(p){
-  p=String(p||'').toUpperCase();
-  if(p.indexOf('LONGTAI')>=0)return'Truper China';
-  if(p.indexOf('TRUPER')>=0)return'Truper México';
-  return'';
-}
-function getCosto(sku){ return costos[String(sku).trim()]||0; }
-
-function showMsg(targetId,type,html){
-  var el=document.getElementById(targetId); if(!el)return;
-  var cls=type==='ok'?'msg-ok':type==='err'?'msg-err':type==='warn'?'msg-warn':'msg-info';
-  el.innerHTML='<div class="msg '+cls+'">'+html+'</div>';
-}
-function flashMsg(barId,type,html){
-  var bar=document.getElementById(barId); if(!bar)return;
-  var cls=type==='ok'?'msg-ok':type==='err'?'msg-err':type==='warn'?'msg-warn':'msg-info';
-  var div=document.createElement('div'); div.className='msg '+cls; div.style.width='100%'; div.innerHTML=html;
-  bar.appendChild(div);
-  setTimeout(function(){if(div.parentNode)div.parentNode.removeChild(div);},4500);
-}
-
-function addHist(accion){
-  historial.push({ts:nowStr(),usuario:currentUser?currentUser.name:'—',accion:accion});
-  if(historial.length>200)historial=historial.slice(-200);
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   NAVEGACIÓN POR PÁGINAS
-══════════════════════════════════════════════════════════════════ */
-var _pageStack=[];
-
-function showPage(id,title,showBack){
-  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
-  var el=document.getElementById(id); if(el)el.classList.add('active');
-  document.getElementById('topbar-title').textContent=title||'📦 Conteo de Inventario';
-  var backBtn=document.getElementById('btn-topbar-back');
-  backBtn.style.display=showBack?'':'none';
-  window.scrollTo(0,0);
-}
-
-function navTo(id,title){
-  _pageStack.push({id:id,title:title});
-  showPage(id,title,_pageStack.length>1);
-}
-
-function navBack(){
-  if(_pageStack.length>1){ _pageStack.pop(); var prev=_pageStack[_pageStack.length-1]; showPage(prev.id,prev.title,_pageStack.length>1); }
-}
-
-document.getElementById('btn-topbar-back').addEventListener('click',navBack);
-
-/* ══════════════════════════════════════════════════════════════════
-   GATE — clave de acceso (login v1, 27-may-2026)
-   - La clave vive en Supabase: key='app_config', value JSON { "accessKey": "..." }
-   - Interruptor de emergencia: si accessKey es '' o 'OFF' (o no existe el
-     registro), el gate se SALTA y la app entra directo al dropdown de nombres.
-   - Modo equilibrado: al pasar la clave se guarda una marca con la fecha de
-     hoy en sessionStorage; recargar el MISMO día no vuelve a pedir la clave.
-   - El gate NO se mete en el conteo: valida UNA vez al entrar y nada más.
-     Si la clave de Supabase cambia mientras alguien cuenta, el que ya está
-     adentro sigue sin interrupción (sus guardados no dependen del gate).
-══════════════════════════════════════════════════════════════════ */
-var GATE_MARK_KEY  = 'gate_ok_date';
-var GATE_SCOPE_KEY = 'gate_scope';
-
-// ¿Ya pasó el gate hoy? (modo equilibrado)
-function gatePassedToday(){
-  try {
-    var today    = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
-    var okDate   = sessionStorage.getItem(GATE_MARK_KEY) === today;
-    if(!okDate) return false;
-    var savedVer = sessionStorage.getItem('gate_version') || 'v1';
-    var currVer  = window._gateVersion || 'v1';
-    if(savedVer !== currVer) return false;
-    window.ACCESS_SCOPE = sessionStorage.getItem(GATE_SCOPE_KEY) || 'full';
-    return true;
-  } catch(e){ return false; }
-}
-function markGatePassed(scope){
-  try {
-    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
-    sessionStorage.setItem(GATE_MARK_KEY, today);
-    sessionStorage.setItem(GATE_SCOPE_KEY, scope || 'full');
-    sessionStorage.setItem('gate_version', window._gateVersion || 'v1');
-  } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
-}
-
-// Renderizar opciones del dropdown según el scope activo
-function renderLoginNameOptions(){
-  var sel = document.getElementById('login-name-sel');
-  if(!sel) return;
-  var html = '<option value="">— Selecciona tu nombre —</option>';
-  if(window.ACCESS_SCOPE === 'rgis'){
-    html += '<optgroup label="Usuarios RGIS">';
-    html += '<option>Operador 1</option><option>Operador 2</option>';
-    html += '<option>Operador 3</option><option>Operador 4</option>';
-    html += '<option>Operador 5</option>';
-    html += '</optgroup>';
-  } else if(window.ACCESS_SCOPE === 'bodega'){
-    html += '<optgroup label="Bodega CDG">';
-    html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
-    html += '<option>Angie Suar</option><option>Duma Pérez</option>';
-    html += '<option>Edgar Soto</option>';
-    html += '<option>Alejandra Galeros</option><option>Sharon Hernández</option>';
-    html += '</optgroup>';
-  } else {
-    html += '<optgroup label="Supervisores">';
-    html += '<option>Erick Vela</option><option>Steven Palencia</option>';
-    html += '<option>Edmar Guzman</option><option>Ever Garcia</option>';
-    html += '<option>Mario Hernandez</option><option>Oscar Ramirez</option>';
-    html += '<option>Vivi Gil</option><option>Carlos Andrino</option>';
-    html += '<option>Rodrigo Ruiz</option>';
-    html += '</optgroup>';
-    html += '<optgroup label="Contadores">';
-    html += '<option>Carlos Sandoval</option><option>Israel Gatica</option>';
-    html += '<option>Nelson Diaz</option><option>Julio Yoc</option>';
-    html += '<option>Ronald Gomez</option><option>William Garzona</option>';
-    html += '<option>Alexander Grijalva</option><option>Jaqueline Perez</option>';
-    html += '<option>Jeffry Telon</option><option>Bianca Montenegro</option>';
-    html += '</optgroup>';
-    html += '<optgroup label="Bodega CDG" id="login-optgroup-bodega">';
-    html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
-    html += '<option>Angie Suar</option><option>Duma Pérez</option>';
-    html += '<option>Edgar Soto</option>';
-    html += '<option>Alejandra Galeros</option><option>Sharon Hernández</option>';
-    html += '</optgroup>';
-  }
-  sel.innerHTML = html;
-  sel.value = '';
-}
-
-// Mostrar el dropdown de nombres (pasar del gate al login normal)
-function showNameLogin(){
-  renderLoginNameOptions();
-  var g = document.getElementById('pg-gate');
-  if(g) g.style.display='none';
-  document.getElementById('pg-login').style.display='flex';
-}
-
-// Leer la configuración de acceso desde Supabase.
-// Devuelve { accessKey, gateVersion } (ambos string; gateVersion='v1' si no existe).
-function fetchAccessKey(){
-  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.app_config&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  })
-  .then(function(r){ if(!r.ok) throw new Error('config HTTP '+r.status); return r.json(); })
-  .then(function(rows){
-    if(!rows || !rows.length) return { accessKey:'', bodegaKey:'12345', rgisKey:'', gateVersion:'v1' };
-    var v = rows[0].value;
-    try {
-      var cfg = (typeof v === 'string') ? JSON.parse(v) : v;
-      return {
-        accessKey:   (cfg && cfg.accessKey)   ? String(cfg.accessKey)   : '',
-        bodegaKey:   (cfg && cfg.bodegaKey)   ? String(cfg.bodegaKey)   : '12345',
-        rgisKey:     (cfg && cfg.rgisKey)     ? String(cfg.rgisKey)     : '',
-        gateVersion: (cfg && cfg.gateVersion) ? String(cfg.gateVersion) : 'v1'
-      };
-    }
-    catch(e){ return { accessKey:'', bodegaKey:'12345', rgisKey:'', gateVersion:'v1' }; }
-  });
-}
-
-// Inicializar el gate al cargar la página
-function initGate(){
-  // Cargar config primero para tener _gateVersion antes de verificar si ya pasó hoy
-  fetchAccessKey()
-    .then(function(cfg){
-      window._accessKey   = cfg.accessKey;
-      window._bodegaKey   = cfg.bodegaKey  || '12345';
-      window._rgisKey     = cfg.rgisKey    || '';
-      window._gateVersion = cfg.gateVersion || 'v1';
-      var key = cfg.accessKey;
-      if(!key || key.toUpperCase() === 'OFF'){
-        window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return;
-      }
-      if(gatePassedToday()){ showNameLogin(); return; }
-      // (el gate queda visible, esperando que el usuario escriba la clave)
-    })
-    .catch(function(){ showNameLogin(); });
-}
-
-// Validar la clave que escribe el usuario
-function tryGate(){
-  var inp = document.getElementById('gate-pass');
-  var err = document.getElementById('gate-err');
-  var val = (inp.value || '').trim();
-  if(!val){ err.textContent='Ingresa la clave.'; err.style.display='block'; return; }
-  var check = function(cfg){
-    var key = (cfg && typeof cfg === 'object') ? cfg.accessKey : cfg;
-    if(!key || key.toUpperCase()==='OFF'){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); return; }
-    if(window._bodegaKey && val === window._bodegaKey){ window.ACCESS_SCOPE='bodega'; markGatePassed('bodega'); showNameLogin(); return; }
-    if(window._rgisKey && val === window._rgisKey){ window.ACCESS_SCOPE='rgis'; markGatePassed('rgis'); showNameLogin(); return; }
-    if(val === key){ window.ACCESS_SCOPE='full'; markGatePassed('full'); showNameLogin(); }
-    else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
-  };
-  if(window._accessKey !== undefined){ check({ accessKey: window._accessKey }); }
-  else { fetchAccessKey().then(check).catch(function(){ showNameLogin(); }); }
-}
-document.getElementById('btn-gate-enter').addEventListener('click', tryGate);
-document.getElementById('gate-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') tryGate(); });
-
-// NOTA: initGate() se llama MÁS ABAJO, después de definir SUPABASE_URL/KEY
-// (si se llama acá, SUPABASE_URL aún es undefined → la lectura de la clave
-//  falla con 404 y el gate se salta por error. Bug detectado 27-may.)
-
-/* ══════════════════════════════════════════════════════════════════
-   LOGIN
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('btn-login-enter').addEventListener('click',function(){
-  var n=document.getElementById('login-name-sel').value;
-  if(!n){var e=document.getElementById('login-err');e.textContent='Selecciona tu nombre.';e.style.display='block';return;}
-  if(typeof window.bodCleanup === 'function') window.bodCleanup();
-  // Scope rgis: solo permite nombres de RGIS_LIST
-  if(window.ACCESS_SCOPE === 'rgis'){
-    var isRgisName = window.RGIS_LIST && window.RGIS_LIST.indexOf(n) >= 0;
-    if(!isRgisName){
-      var e2 = document.getElementById('login-err');
-      e2.textContent = 'Esta clave solo permite acceso a usuarios RGIS.';
-      e2.style.display = 'block';
-      return;
-    }
-    currentUser = { name:n, role:'rgis' };
-  // Scope bodega: solo permite nombres de BODEGA_LIST
-  } else if(window.ACCESS_SCOPE === 'bodega'){
-    var isBodName = window.BODEGA_LIST && window.BODEGA_LIST.indexOf(n) >= 0;
-    if(!isBodName){
-      var e2 = document.getElementById('login-err');
-      e2.textContent = 'Esta clave solo permite acceso a usuarios de Bodega CDG.';
-      e2.style.display = 'block';
-      return;
-    }
-    currentUser = { name:n, role:'bodega' };
-  } else {
-    var sup=SUPERVISORES.indexOf(n)>=0;
-    var bod=window.BODEGA_LIST && window.BODEGA_LIST.indexOf(n)>=0;
-    currentUser={name:n,role:sup?'supervisor':bod?'bodega':'contador'};
-  }
-  document.getElementById('pg-login').style.display='none';
-  document.getElementById('main-wrap').style.display='';
-  var _badgeIcon = (window.ACCESS_SCOPE==='rgis') ? '🔍 ' : (typeof sup!=='undefined'&&sup ? '🔑 ' : '📋 ');
-  document.getElementById('user-badge').textContent=_badgeIcon+n;
-  document.getElementById('fecha').textContent=new Date().toLocaleDateString('es',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  afterLogin();
-});
-
-document.getElementById('btn-logout').addEventListener('click',function(){
-  if(!confirm('¿Cerrar sesión?'))return;
-  stopPolling();
-  releaseAllLocks();
-  // FIX (lun 1-jun-2026, v5.2.27): limpiar estado CDG v2 al cerrar sesión.
-  // Las variables cdgv2* están en el IIFE — se acceden via window.cdgv2Cleanup
-  // para evitar ReferenceError en strict mode por cross-scope.
-  if(typeof window.cdgv2Cleanup === 'function') window.cdgv2Cleanup();
-  if(typeof window.bodCleanup === 'function') window.bodCleanup();
-  lastVersion = -1;
-  window.serverLocks = {};
-  window.ACCESS_SCOPE = 'full';
-  try { sessionStorage.removeItem(GATE_MARK_KEY); sessionStorage.removeItem(GATE_SCOPE_KEY); } catch(e){}
-  currentUser=null;
-  // Reset ALL role-specific UI before login screen
-  var tabAsign = document.getElementById('tab-btn-asign');
-  if(tabAsign) tabAsign.style.display='none';
-  var onlineBar = document.getElementById('online-bar');
-  if(onlineBar) onlineBar.style.display='none';
-  var tabAsignContent = document.getElementById('tab-asign');
-  if(tabAsignContent) tabAsignContent.style.display='none';
-  // Reset to conteo tab
-  var tbConteo = document.getElementById('tab-btn-conteo');
-  if(tbConteo) tbConteo.classList.add('on');
-  var tbAsignBtn = document.getElementById('tab-btn-asign');
-  if(tbAsignBtn) tbAsignBtn.classList.remove('on');
-  document.getElementById('main-wrap').style.display='none';
-  document.getElementById('pg-login').style.display='none';
-  var gate = document.getElementById('pg-gate');
-  if(gate) gate.style.display='flex';
-  var gp = document.getElementById('gate-pass');
-  if(gp) gp.value = '';
-  var ge = document.getElementById('gate-err');
-  if(ge) ge.style.display = 'none';
-  var le = document.getElementById('login-err');
-  if(le) le.style.display = 'none';
-  renderLoginNameOptions();
-});
-
-function afterLogin(){
-  loadLocal();
-  rebuildContsList();
-  updateOnlineBar();
-  updateSubmenúCounts();
-  _pageStack=[];
-  // BOD: usuario bodega — esperar /api/bod/status para evitar carrera de flag.
-  // BOD_ENABLED_CLIENT puede no estar listo aún si bodInit corrió antes que el login.
-  if(currentUser.role==='bodega'){
-    fetch('/api/bod/status').then(function(r){ return r.json(); })
-      .then(function(d){
-        if(d && d.enabled){
-          window.BOD_ENABLED_CLIENT = true;
-          navTo('pg-bod-menu','📦 Bodega CDG');
-          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
-          // mostrar opción auditoria si es supervisor (no aplica para bodega puro)
-        } else {
-          // Módulo no habilitado: mostrar mensaje y volver al login
-          window.BOD_ENABLED_CLIENT = false;
-          currentUser = null;
-          document.getElementById('pg-gate') &&
-            (document.getElementById('pg-gate').style.display='');
-          var errEl = document.getElementById('login-err');
-          if(errEl){
-            errEl.textContent = 'Módulo bodega no habilitado. Contactá al supervisor.';
-            errEl.style.display = '';
-          }
-          // No navegar a pg-menu — el usuario bodega no debe ver Hamilton/CDG
-        }
-      }).catch(function(){
-        currentUser = null;
-        var errEl = document.getElementById('login-err');
-        if(errEl){ errEl.textContent = 'Error al verificar módulo. Reintentá.'; errEl.style.display = ''; }
-      });
-    return; // no continuar hasta que resuelva la promesa
-  }
-  // RGIS: entrar directo a Hamilton sin ver menú principal
-  if(currentUser.role === 'rgis'){
-    navTo('pg-hamilton','Conteos Hamilton');
-    updateSubmenúCounts();
-    return;
-  }
-  navTo('pg-menu','📦 Conteo de Inventario');
-  // Revelar cards del menú — permisos ya resueltos, sin parpadeo
-  var _mgc = document.getElementById('menu-grid-cards');
-  if(_mgc) _mgc.style.visibility = '';
-  // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
-  if(currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'contador')) {
-    fetch('/api/bod/status').then(function(r){ return r.json(); })
-      .then(function(d){
-        if(d && d.enabled){
-          window.BOD_ENABLED_CLIENT = true;
-          if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
-          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
-        }
-      }).catch(function(){});
-  }
-  // Si ya hay teórico cargado, mostrar botones activos
-  var tabAsignEl = document.getElementById('tab-btn-asign');
-  var onlineBarEl = document.getElementById('online-bar');
-  if(isSup()){
-    if(tabAsignEl)  tabAsignEl.style.display  = '';
-    if(onlineBarEl) onlineBarEl.style.display = '';
-  } else {
-    // Contador: explicitly hide supervisor-only UI
-    if(tabAsignEl)  tabAsignEl.style.display  = 'none';
-    if(onlineBarEl) onlineBarEl.style.display = 'none';
-    // Switch to conteo tab if on asign
-    if(document.getElementById('tab-asign') &&
-       document.getElementById('tab-asign').style.display !== 'none') {
-      if(typeof switchTab === 'function') switchTab('conteo');
-    }
-  }
-  // Initial heartbeat. After that, the polling loop (every 5 s) sends
-  // heartbeats automatically via /api/heartbeat — no need for a separate
-  // timer.
-  heartbeat();
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   ONLINE BAR (offline: cada usuario al hacer algo se registra)
-══════════════════════════════════════════════════════════════════ */
-function heartbeat(){
-  if(!currentUser)return;
-  onlineUsers[currentUser.name]=Date.now();
-  updateOnlineBar();
-}
-function updateOnlineBar(){
-  if(!isSup())return;
-  var bar=document.getElementById('online-bar'); if(!bar)return;
-  var now=Date.now();
-  var activos=Object.keys(onlineUsers).filter(function(u){return now-onlineUsers[u]<15000;});
-  if(!activos.length){bar.innerHTML='👥 En línea: <em style="color:#aaa">Ninguno</em>';return;}
-  bar.innerHTML='👥 En línea: '+activos.map(function(u){return'<span style="margin-right:8px">🟢 '+escH(u)+'</span>';}).join('');
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   MENÚ PRINCIPAL
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('mc-hamilton').addEventListener('click',function(){
-  navTo('pg-hamilton','🏭 Conteos Hamilton');
-  updateSubmenúCounts();
-});
-document.getElementById('mc-cdg').addEventListener('click',function(){
-  // FIX (sáb 30-may-2026, v5.2.27): si CDG v2 está habilitado, mostrar selector.
-  // Si no, ir directo al clásico (comportamiento anterior sin cambios).
-  if(CDG_V2_HABILITADO) {
-    navTo('pg-cdg-menu','🏢 Conteos CDG');
-    return;
-  }
-  navTo('pg-cdg','🏢 Conteos CDG');
-  cdgSkus=[];
-  cdgFotos={};
-  cdgFotoGral=null;
-  document.getElementById('cdg-u25').value='';
-  document.getElementById('cdg-sku').value='';
-  document.getElementById('cdg-desc').value='';
-  document.getElementById('cdg-qty').value='';
-  renderCDGSkuList();
-  if(typeof renderCDGFotoGrid==='function') renderCDGFotoGrid();
-  document.getElementById('cdg-msg').innerHTML='';
-});
-document.getElementById('btn-reset').addEventListener('click',function(){
-  if(!confirm('¿Comenzar un nuevo día? Se borrará todo el conteo actual.'))return;
-  teorico={};fisico={};conts=[];current=null;loadedSheets={};hallazgos=[];cdgSkus=[];asignaciones={};historial=[];
-  locks={};
-  localStorage.removeItem(STORE_KEY);
-  document.getElementById('upload-msg').innerHTML='';
-  document.getElementById('fileinput').value='';
-  updateSubmenúCounts();
-  flashMsg('status-bar','ok','Nuevo día iniciado.');
-});
-
-function updateSubmenúCounts(){
-  var emb=conts.filter(function(c){return teorico[c]&&teorico[c].type==='Embarques';}).length;
-  var trasl=conts.filter(function(c){return teorico[c]&&teorico[c].type==='Traslados';}).length;
-  var cdg=conts.filter(function(c){return teorico[c]&&(teorico[c].type==='CDG'||teorico[c].cdgValidado);}).length;
-  document.getElementById('cnt-embarques').textContent=emb;
-  document.getElementById('cnt-traslados').textContent=trasl;
-  document.getElementById('cnt-cdg').textContent=cdg;
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   SUBMENÚ HAMILTON → filtra por tipo
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('sm-embarques').addEventListener('click',function(){
-  _currentFilter='Embarques';
-  openConteoPage('🚢 Embarques');
-});
-document.getElementById('sm-traslados').addEventListener('click',function(){
-  _currentFilter='Traslados';
-  openConteoPage('🚛 Traslados');
-});
-document.getElementById('sm-cdg-hamilton').addEventListener('click',function(){
-  _currentFilter='CDG';
-  openConteoPage('✅ Traslados CDG');
-});
-
-function openConteoPage(title){
-  navTo('pg-conteo',title);
-  rebuildContsList();
-  buildSelect();
-  renderConteo();
-  updateStatusBar();
-  renderHallazgosList();
-  if(isSup()) renderAsignaciones();
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   CARGA DE TEÓRICO
-══════════════════════════════════════════════════════════════════ */
-var dz=document.getElementById('dropzone');
-dz.addEventListener('click',function(){document.getElementById('fileinput').click();});
-dz.addEventListener('dragover',function(e){e.preventDefault();dz.style.borderColor='#888';dz.style.background='#fafaf8';});
-dz.addEventListener('dragleave',function(){dz.style.borderColor='#ccc';dz.style.background='';});
-dz.addEventListener('drop',function(e){e.preventDefault();dz.style.borderColor='#ccc';dz.style.background='';if(e.dataTransfer.files&&e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
-document.getElementById('fileinput').addEventListener('change',function(){if(this.files&&this.files[0])handleFile(this.files[0]);});
-
-function handleFile(fileObj){
-  var name=fileObj.name;
-  showMsg('upload-msg','info','Subiendo <strong>'+name+'</strong>...');
-  var form=new FormData();
-  form.append('file',fileObj);
-  form.append('usuario',currentUser?currentUser.name:'—');
-  fetch('/api/upload',{method:'POST',body:form})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok){showMsg('upload-msg','ok','✓ '+name+' cargado');lastVersion=-1;pollNow();}
-      else showMsg('upload-msg','err','Error: '+d.error);
-    })
-    .catch(function(e){showMsg('upload-msg','err','Error de red: '+e.message);});
-}
-
-function rebuildContsList(){
-  var trasl=[],emb=[],cdg=[],other=[];
-  Object.keys(teorico).forEach(function(c){
-    var t=teorico[c].type;
-    if(teorico[c].cdgValidado||t==='CDG')cdg.push(c);
-    else if(t==='Traslados')trasl.push(c);
-    else if(t==='Embarques')emb.push(c);
-    else other.push(c);
-  });
-  var sf=function(a,b){return a.localeCompare(b,undefined,{numeric:true});};
-  trasl.sort(sf);emb.sort(sf);cdg.sort(sf);other.sort(sf);
-  conts=trasl.concat(emb).concat(cdg).concat(other);
-}
-
-function contsFiltered(){
-  if(!_currentFilter)return conts;
-  return conts.filter(function(c){
-    var t=teorico[c];if(!t)return false;
-    if(_currentFilter==='CDG')return t.cdgValidado||t.type==='CDG';
-    return t.type===_currentFilter&&!t.cdgValidado;
-  });
-}
-
-function buildSelect(){
-  var sel=document.getElementById('sel-cont');
-  var fc=contsFiltered();
-  var html='';
-  fc.forEach(function(c){
-    var t=teorico[c];
-    var label=c+(t&&t.cdgValidado?' ✓CDG':'');
-    html+='<option value="'+escH(c)+'">'+escH(label)+'</option>';
-  });
-  sel.innerHTML=html||'<option value="">Sin contenedores</option>';
-  if(fc.length>0){sel.value=(current&&fc.indexOf(current)>=0)?current:fc[0];current=sel.value;}
-  else current=null;
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   STATUS BAR
-══════════════════════════════════════════════════════════════════ */
-function updateStatusBar(){
-  var bar=document.getElementById('status-bar'),html='';
-  ['Traslados','Embarques','CDG'].forEach(function(type){
-    var tc=conts.filter(function(c){
-      var t=teorico[c];if(!t)return false;
-      if(type==='CDG')return t.cdgValidado||t.type==='CDG';
-      return t.type===type&&!t.cdgValidado;
-    });
-    if(!tc.length)return;
-    var done=tc.filter(function(c){return fisico[c]!==null;}).length;
-    var dc=done===tc.length?'dot-ok':done>0?'dot-partial':'dot-empty';
-    html+='<div class="status-chip"><span class="dot '+dc+'"></span>'+type+': '+tc.length+' · '+done+'/'+tc.length+' contados</div>';
-  });
-  document.getElementById('status-bar').innerHTML=html;
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   CONTEO
-══════════════════════════════════════════════════════════════════ */
-function renderConteo(){
-  current=document.getElementById('sel-cont').value;
-  if(!current||!teorico[current]){document.getElementById('tbody-conteo').innerHTML='<tr><td colspan="7" class="empty">Selecciona un contenedor.</td></tr>';return;}
-  var items=teorico[current].items||[],saved=fisico[current],html='',now=Date.now();
-
-  // FIX (lun 1-jun-2026, v5.2.29): detectar si el contenedor es CDG (fromCDG=true).
-  // Si es CDG, el encabezado y la lógica de columnas cambian:
-  //   - Columna "Teórico" se renombra a "Teórico s/WMS" (fuente: cdg_wms si existe)
-  //   - Se agrega columna "Validado CDG" (qty = lo que se contó en CDG)
-  //   - Diferencia = Total físico − Teórico s/WMS (o −Validado CDG si no hay WMS)
-  //   - Embarques y Traslados normales NO CDG: sin cambios.
-  var esCDG = !!(teorico[current].fromCDG || teorico[current].cdgValidado);
-
-  // Actualizar thead según tipo de contenedor (solo si existe el elemento con ID)
-  var theadRow = document.getElementById('thead-conteo-row');
-  if(theadRow) {
-    if(esCDG) {
-      theadRow.innerHTML =
-        '<th>SKU</th><th>Nombre / Descripción</th>'
-        +'<th class="tc" title="Teórico según WMS cargado en CDG / Manifiesto">Teórico s/WMS</th>'
-        +'<th class="tc" title="Conteo validado en CDG">Validado CDG</th>'
-        +'<th class="tc">Físico</th>'
-        +'<th class="tc">Dañado</th>'
-        +'<th class="tc">Total físico</th>'
-        +'<th class="tc">Diferencia</th>';
-      // Cobertura no tiene th propio porque el select ya ocupa la celda
+const express     = require('express');
+const multer      = require('multer');
+const XLSX        = require('xlsx');
+const path        = require('path');
+const https       = require('https');
+const compression = require('compression');
+
+const app    = express();
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Límite a 5MB es suficiente para conteos por campo, asignaciones, hallazgos,
+// metadata, CDG. Antes era 50MB lo que abría puerta a payloads gigantes que
+// matan la RAM del free tier. Uploads de teorico/costos NO pasan por aquí,
+// usan multer (memoryStorage), que tiene su propio límite.
+app.use(compression({ level:6, threshold:1024 })); // Gzip reduce HTTP Responses ~70%
+app.use(express.json({ limit: '5mb' }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: function(res, filePath) {
+    if(filePath.endsWith('index.html')) {
+      // index.html: cache corto (5min) — cambia frecuentemente con deploys
+      res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
     } else {
-      theadRow.innerHTML =
-        '<th>SKU</th><th>Nombre / Descripción</th>'
-        +'<th class="tc">Teórico</th>'
-        +'<th class="tc">Físico</th>'
-        +'<th class="tc">Dañado</th>'
-        +'<th class="tc">Total físico</th>'
-        +'<th class="tc">Diferencia</th>';
+      // otros assets: cache 1h
+      res.setHeader('Cache-Control', 'public, max-age=3600');
     }
   }
+}));
 
-  for(var i=0;i<items.length;i++){
-    var it=items[i],sv=saved?saved[i]:null;
-    // Treat null/undefined as empty (not 0). Only show actual numbers entered by the user.
-    var fval = (sv!=null && sv.fisico!==undefined && sv.fisico!==null) ? sv.fisico : '';
-    var dval = (sv!=null && sv.daniado!==undefined && sv.daniado!==null) ? sv.daniado : '';
-    // FIX (dom 24-may-2026): Total físico = solo físico, Dañado es informativo.
-    // Antes era (fval + dval) lo que confundía al equipo: si físico=100 y
-    // dañado=2, el total mostraba 102 y la diferencia daba +2 (sobrante falso).
-    // La regla de negocio (confirmada por Erick): Dañado NO suma ni resta al
-    // físico. Total Físico = Físico. Diferencia = Físico - Teórico. Dañado
-    // solo aparece como columna informativa y en el export para auditoría.
-    var total=fval!==''?Number(fval):'';
+// ── Supabase config (set via environment variables in Render) ─────────────
+const SUPABASE_URL = process.env.SUPABASE_URL;  // https://xxx.supabase.co
+const SUPABASE_KEY = process.env.SUPABASE_KEY;  // anon/publishable key (RLS allow_all)
 
-    var quien=sv&&sv.quien?sv.quien:'';
-    var ts=sv&&sv.ts?sv.ts:'';
-    var hint=quien?'<div class="trace-hint">✏️ '+escH(quien)+(ts?' · '+escH(ts):'')+'</div>':'';
-
-    // Field locking
-    var lockKey=current+'_'+i;
-    var lock=locks[lockKey];
-    var isLocked=lock&&lock.quien!==currentUser.name&&(now-lock.at)<90000;
-    var lockLabel=isLocked?'<div class="lock-label">🔒 '+escH(lock.quien)+' lo está editando</div>':'';
-    var disabled=isLocked?'disabled':'';
-
-    var cobSel='<td class="tc"><select class="cob-sel" data-i="'+i+'" '+disabled
-      +' style="font-size:.72rem;padding:3px 4px;border:1px solid #e0e0e0;border-radius:5px;background:'
-      +(sv&&sv.cobertura==='Auditado'?'#eafaf1':sv&&sv.cobertura==='No auditado'?'#fdecea':'#fef9e7')+'"><option value="En revisión"'
-      +((!sv||!sv.cobertura||sv.cobertura==='En revisión')?' selected':'')+'>En revisión</option><option value="Auditado"'
-      +(sv&&sv.cobertura==='Auditado'?' selected':'')+'>Auditado</option><option value="No auditado"'
-      +(sv&&sv.cobertura==='No auditado'?' selected':'')+'>No auditado</option></select></td>';
-
-    if(esCDG) {
-      // ── Modo CDG: Teórico s/WMS | Validado CDG | Físico | Dañado | Total | Dif ──
-      // it.qty = Validado CDG (lo que se contó en CDG).
-      // it.teoricoWMS = teórico del WMS si fue enriquecido al cerrar.
-      var validadoCDG = it.qty;
-      var hasWMS = (it.teoricoWMS !== undefined && it.teoricoWMS !== null);
-      var teorWMS = hasWMS ? it.teoricoWMS : null;
-      // Diferencia: Total físico − Teórico WMS (o −Validado CDG como fallback)
-      var baseRef = hasWMS ? teorWMS : validadoCDG;
-      var diff = total !== '' ? total - baseRef : null;
-      var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
-      var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
-      // Teórico s/WMS display
-      var teorWMSCell = hasWMS
-        ? '<td class="tc">'+teorWMS+'</td>'
-        : '<td class="tc" style="color:#bbb" title="Sin WMS cargado para esta licencia">—</td>';
-      html+='<tr>'
-        +'<td>'+escH(it.sku||'—')+'</td>'
-        +'<td>'+escH(it.desc||'—')+'</td>'
-        +teorWMSCell
-        +'<td class="tc" style="font-weight:600">'+validadoCDG+'</td>'
-        +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
-        +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
-        +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
-        +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
-        +cobSel
-        +'</tr>';
-    } else {
-      // ── Modo normal: Teórico | Físico | Dañado | Total | Dif ──
-      var diff=total!==''?total-it.qty:null;
-      var dc=diff===null?'gray':diff>0?'blue':diff<0?'red':'green';
-      var dv=diff===null?'&mdash;':(diff>0?'+':'')+diff;
-      html+='<tr>'
-        +'<td>'+escH(it.sku||'—')+'</td>'
-        +'<td>'+escH(it.desc||'—')+'</td>'
-        +'<td class="tc">'+it.qty+'</td>'
-        +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="fi'+i+'" '+disabled+'>'+hint+lockLabel+'</td>'
-        +'<td class="tc"><input type="number" min="0" step="1" value="'+dval+'" id="da'+i+'" '+disabled+'></td>'
-        +'<td class="tc" id="tot'+i+'">'+(total!==''?total:'&mdash;')+'</td>'
-        +'<td class="tc '+dc+'" id="d'+i+'">'+dv+'</td>'
-        +cobSel
-        +'</tr>';
+// ── Simple Supabase REST client ───────────────────────────────────────────
+function supabase(method, table, body, query) {
+  return new Promise((resolve, reject) => {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return resolve(null); // No Supabase configured — use memory only
     }
-  }
-  var cols = esCDG ? 9 : 8;
-  document.getElementById('tbody-conteo').innerHTML=html||'<tr><td colspan="'+cols+'" class="empty">Sin items</td></tr>';
-  updateProg();
-  updateSelfAssignBtn();
-
-  // NOTE: Event listeners are registered by the renderConteo patch further down
-  // (acquireLock / scheduleFieldSave / saveField). Don't add listeners here —
-  // they cause double-save bugs.
-}
-
-// Direct Supabase save (bypass server when it's down)
-var SUPABASE_URL = 'https://uzwhcoztwlxkhrmyeybe.supabase.co';
-var SUPABASE_KEY = 'sb_publishable_NTQKwnemAsOitW0JAIHauQ_xci8VT75';
-var _supaTimer = null;
-
-// FIX (27-may-2026): arrancar el gate ACÁ, ya con SUPABASE_URL/KEY definidas.
-// (antes initGate() corría más arriba, cuando SUPABASE_URL aún era undefined,
-//  y la lectura de la clave fallaba con 404 → el gate se saltaba por error.)
-initGate();
-
-// FIX (vie 22-may-2026 noche): banner persistente de errores de red.
-// Cuenta los errores consecutivos y muestra detalle. NO se auto-oculta:
-// solo lo cierra el usuario explícitamente con confirmación. Diseño
-// post-incidente Carlos donde el auto-hide reproducía falsa tranquilidad.
-window._netErrorCount = 0;
-window._netErrorVisible = false;
-window.showNetworkBanner = function(detail) {
-  window._netErrorCount = (window._netErrorCount || 0) + 1;
-  var banner = document.getElementById('network-error-banner');
-  var detailEl = document.getElementById('network-error-detail');
-  var countEl = document.getElementById('network-error-count');
-  if(!banner) return;
-  // FIX (rev ChatGPT, vie 22-may-2026): texto operativo más directo.
-  // Versión anterior era técnica ("error de guardado") — el operario
-  // cansado no procesa. "El conteo dejó de guardarse" es operacional.
-  if(detailEl) {
-    detailEl.innerHTML = 'NO sigas contando.<br>NO cierres la app: podrías perder SKUs y fotos.<br>Avisá a tu supervisor.';
-  }
-  if(countEl) {
-    countEl.textContent = 'Errores acumulados: ' + window._netErrorCount + ' · Última: ' + new Date().toLocaleTimeString('es') + (detail ? ' · ' + detail : '');
-  }
-  banner.style.display = '';
-  window._netErrorVisible = true;
-  // Scroll arriba para que sea imposible no verlo
-  try { window.scrollTo({top: 0, behavior: 'smooth'}); } catch(_e){}
-};
-window.hideNetworkBanner = function() {
-  var banner = document.getElementById('network-error-banner');
-  if(banner) banner.style.display = 'none';
-  window._netErrorVisible = false;
-  window._netErrorCount = 0;
-};
-// FIX (rev Claude 2 C, vie 22-may-2026): registrar listener directo sin
-// wrapper DOMContentLoaded. El botón existe en el DOM cuando este script
-// corre (parseo inline) y depender de DOMContentLoaded es frágil ante
-// refactors futuros (defer, async, mover script).
-(function(){
-  var dismissBtn = document.getElementById('network-error-dismiss');
-  if(dismissBtn) {
-    dismissBtn.addEventListener('click', function(){
-      // FIX (rev ChatGPT D, vie 22-may-2026): confirm más corto.
-      // El texto largo bajo estrés no se lee. Mensaje directo.
-      if(confirm('¿Confirmás cerrar esta alerta?\nPodrían faltar datos del conteo.')) {
-        window.hideNetworkBanner();
-      }
-    });
-  }
-})();
-
-// Save a single CDG conteo directly to Supabase, merging with existing state.
-// Used as fallback when Render is sleeping/unavailable.
-function saveCDGDirectToSupabase(contId, conteoData) {
-  if(!contId || !conteoData) return Promise.resolve();
-  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){
-    // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok explícitamente.
-    // fetch() NO rechaza en 502/520/521 — el caso de Carlos. Sin esto,
-    // un GET con error HTTP devuelve body HTML que rompe r.json() solo
-    // por suerte. Lo hacemos explícito.
-    if(!r.ok) throw new Error('GET state HTTP ' + r.status);
-    return r.json();
-  }).then(function(rows){
-    var current = {};
-    if(rows && rows.length > 0) {
-      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
-    }
-    if(!current.cdg) current.cdg = {};
-    // FIX (sáb 30-may-2026, v5.2.27): guardia B1 — misma lógica que el servidor
-    // en /api/cdg/save. Sin esta guardia, la escritura directa a Supabase
-    // bypasseaba el servidor y sobreescribía igualmente los datos de otro usuario.
-    // Verificar contra el dato REAL en Supabase (current) recién leído, no contra
-    // el estado local del cliente que puede estar desactualizado.
-    var _existentes    = ((current.cdg[contId] || {}).items || []).length;
-    var _nuevos        = (conteoData.items || []).length;
-    var _autorOriginal = (current.cdg[contId] || {}).autor;
-    var _usuarioActual = conteoData.autor;
-    if(_existentes > 2 && _nuevos < _existentes / 2 && _autorOriginal && _autorOriginal !== _usuarioActual) {
-      console.warn('CDG direct save BLOQUEADO: ' + _usuarioActual + ' intentó reducir ' +
-        contId + ' de ' + _existentes + ' a ' + _nuevos + ' items (autor: ' + _autorOriginal + ')');
-      if(typeof window.showNetworkBanner === 'function') {
-        window.showNetworkBanner(
-          'No se guardó: "' + contId + '" ya tiene ' + _existentes +
-          ' líneas de ' + _autorOriginal + '. No podés sobreescribir ese conteo.'
-        );
-      }
-      return '__BLOQUEADO__'; // señal para que el .then final no loguee "OK" engañoso
-    }
-    current.cdg[contId] = conteoData;
-    // Also update teorico/fisico if the CDG was finalized
-    if(conteoData.bloqueado && conteoData.items) {
-      if(!current.teorico) current.teorico = {};
-      if(!current.fisico)  current.fisico  = {};
-      if(!current.teorico[contId]) {
-        current.teorico[contId] = {
-          items: conteoData.items.map(function(s){return{sku:s.sku,desc:s.desc,qty:s.qty,raw:{origen:'CDG',status:'CDG Validado'}};}),
-          type: conteoData.tipo || 'CDG',
-          fromCDG: true, cdgRef: contId,
-          cdgValidado: true, cdgBloqueado: true
-        };
-        current.fisico[contId] = null;
-      }
-    }
-    current.version = (current.version||0) + 1;
-    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
-      method: 'POST',
+    const url  = new URL(`${SUPABASE_URL}/rest/v1/${table}${query||''}`);
+    const data = body ? JSON.stringify(body) : null;
+    // FIX BUG LATENTE (mié 20-may-2026): agregar 'resolution=merge-duplicates'
+    // al header Prefer. Sin esto, los POST con ?on_conflict=key fallan con
+    // HTTP 409 'duplicate key' porque PostgREST no sabe que debe hacer UPSERT.
+    // Antes el error se tragaba silenciosamente (resolve null) y el save NUNCA
+    // persistía vía server.js — los datos llegaban a Supabase solo por
+    // saveDirectToSupabase del cliente (que usa PATCH directo).
+    // Con el fix v8 que ahora detecta errores HTTP, este 409 se hizo visible.
+    // Esta línea lo arregla de raíz.
+    const opts = {
+      hostname: url.hostname,
+      path:     url.pathname + url.search,
+      method,
       headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
-    }).then(function(r){
-      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
-      // Éste es el agujero del incidente Carlos — POST puede devolver
-      // 502 sin lanzar. Sin esta línea el banner no aparece.
-      if(!r.ok) throw new Error('POST state HTTP ' + r.status);
-      return r;
-    });
-  }).then(function(result){
-    if(result === '__BLOQUEADO__') return; // aborto por guardia B1, banner ya mostrado
-    console.log('CDG direct Supabase save OK:', contId);
-    // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar
-    // banner. Si está visible, queda visible hasta cierre manual.
-    // El auto-hide reproducía la falsa tranquilidad del incidente original
-    // (save exitoso de otra cosa ocultaba aviso de dato perdido).
-  }).catch(function(e){
-    console.warn('CDG direct Supabase save failed:', e);
-    if(typeof window.showNetworkBanner === 'function') {
-      window.showNetworkBanner('Error guardando el conteo CDG "' + (contId||'sin nombre') + '".');
-    }
-  });
-}
-
-// Save a single hallazgo directly to Supabase, merging with existing state.
-// Used as guaranteed backup (not just on catch — runs in parallel with /api/hallazgo).
-function saveHallazgoDirectToSupabase(hall, action) {
-  if(!hall) return Promise.resolve();
-  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){
-    // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del GET.
-    if(!r.ok) throw new Error('GET state HTTP ' + r.status);
-    return r.json();
-  }).then(function(rows){
-    var current = {};
-    if(rows && rows.length > 0) {
-      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
-    }
-    if(!Array.isArray(current.hallazgos)) current.hallazgos = [];
-    if(action === 'edit') {
-      var idx = current.hallazgos.findIndex(function(h){ return h.id === hall.id; });
-      if(idx >= 0) current.hallazgos[idx] = hall;
-      else current.hallazgos.push(hall);
-    } else {
-      // 'add' or default — avoid duplicating if id already exists
-      var existsIdx = current.hallazgos.findIndex(function(h){ return h.id === hall.id; });
-      if(existsIdx >= 0) current.hallazgos[existsIdx] = hall;
-      else current.hallazgos.push(hall);
-    }
-    current.version = (current.version||0) + 1;
-    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
-    }).then(function(r){
-      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
-      if(!r.ok) throw new Error('POST state HTTP ' + r.status);
-      return r;
-    });
-  }).then(function(){
-    console.log('Hallazgo direct Supabase save OK:', hall.id);
-    // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar banner.
-  }).catch(function(e){
-    console.warn('Hallazgo direct Supabase save failed:', e);
-    if(typeof window.showNetworkBanner === 'function') {
-      window.showNetworkBanner('Error guardando hallazgo.');
-    }
-  });
-}
-
-// FIX (mié 20-may-2026 noche): eliminar hallazgo directo en Supabase.
-// Mismo patrón que saveHallazgoDirectToSupabase: read → modify → write.
-// Llamado desde el botón "Eliminar" visible solo para Erick Vela.
-function deleteHallazgoDirectToSupabase(hallId) {
-  if(!hallId) return Promise.resolve();
-  return fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
-    var current = {};
-    if(rows && rows.length > 0) {
-      try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
-    }
-    if(!Array.isArray(current.hallazgos)) current.hallazgos = [];
-    var before = current.hallazgos.length;
-    current.hallazgos = current.hallazgos.filter(function(h){ return h.id !== hallId; });
-    if(current.hallazgos.length === before){
-      console.warn('Hallazgo no encontrado en Supabase para eliminar:', hallId);
-      return;
-    }
-    current.version = (current.version||0) + 1;
-    return fetch(SUPABASE_URL + '/rest/v1/app_state', {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(current) })
-    });
-  }).then(function(){
-    console.log('Hallazgo direct Supabase delete OK:', hallId);
-  }).catch(function(e){
-    console.warn('Hallazgo direct Supabase delete failed:', e);
-  });
-}
-
-// Helper para chequear si el usuario actual es admin (puede eliminar hallazgos).
-// Por ahora solo Erick Vela. Si esto se quisiera escalar, mover a una lista.
-function isHallazgoAdmin(){
-  return !!(currentUser && currentUser.name === 'Erick Vela');
-}
-
-function saveDirectToSupabase() {
-  if(_supaTimer) clearTimeout(_supaTimer);
-  _supaTimer = setTimeout(function(){
-    // STEP 1: Read current state from Supabase so we don't blow away fields
-    // the client doesn't track locally (cdg, costos, etc.)
-    fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+        'Prefer':        'resolution=merge-duplicates,return=representation'
       }
-    }).then(function(r){
-      // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del GET.
-      if(!r.ok) throw new Error('GET state HTTP ' + r.status);
-      return r.json();
-    }).then(function(rows){
-      var current = {};
-      if(rows && rows.length > 0) {
-        try { current = JSON.parse(rows[0].value); } catch(e) { current = {}; }
-      }
-      // STEP 2: Merge — overwrite the fields the client owns, KEEP the rest
-      // FIX (sáb 23-may-2026 PM, rev Claude2+ChatGPT): merge SELECTIVO de teorico
-      // por contenedor. Antes hacíamos `teorico: teorico`, lo que reemplazaba el
-      // teorico entero de Supabase con el local de esta tablet. Si la tablet
-      // tenía estado desactualizado (polling no había traído clasificaciones
-      // recientes), las pisaba silenciosamente. Es la contraparte cliente del
-      // bug que arreglamos en server v14 (mergeSheet).
-      //
-      // Estrategia: para cada contenedor, partir del remoto (tiene clasificacion,
-      // clasificacionManual, cdgTipo, fromCDG, etc.) y sobreescribir SOLO los 3
-      // campos que el cliente realmente owns: items, type, fechaCarga.
-      //
-      // IMPORTANTE (rev Claude2 sobre v5.2.14): usar lista EXPLÍCITA, no localT
-      // completo. Razón: el polling (línea 3857: teorico = s.teorico) trae al
-      // teorico local también las propiedades clasificacion/cdgTipo. Si usáramos
-      // Object.assign({}, remoteT, localT), una tablet con clasificación vieja
-      // en su polling podría pisar el cambio reciente del supervisor en una
-      // ventana de 5s (entre cambio del supervisor y próximo polling de la
-      // tablet). El cliente NO owns clasificacion — esa la owns
-      // /api/clasificacion/set. La lista explícita la deja siempre del remoto.
-      //
-      // Simétrico con server v14 (mergeSheet también usa lista explícita
-      // {items, type, fechaCarga}).
-      var mergedTeorico = {};
-      Object.keys(teorico||{}).forEach(function(cont){
-        var localT = teorico[cont] || {};
-        var remoteT = (current.teorico && current.teorico[cont]) || {};
-        // FIX (dom 24-may-2026): NO pisar fechaCarga del remoto si el local
-        // está vacío. Caso reportado por Erick: tras re-subir Excel maestro,
-        // algunas fechaCarga se "cambiaron". Causa: una tablet con state
-        // cacheado (sin fechaCarga local) hizo saveDirectToSupabase, y el
-        // Object.assign con fechaCarga:undefined sobrescribió el remoto.
-        // Solo el supervisor tocando explícitamente la fecha debería poder
-        // cambiarla. Si el local no tiene, preservamos el remoto.
-        var fcLocal = localT.fechaCarga;
-        var fcEfectiva = (fcLocal !== undefined && fcLocal !== null && fcLocal !== '')
-          ? fcLocal
-          : remoteT.fechaCarga;
-        mergedTeorico[cont] = Object.assign({}, remoteT, {
-          items:      localT.items,
-          type:       localT.type,
-          fechaCarga: fcEfectiva,
-          // FIX (v5.2.24): mantener meta ALINEADO con los items que se suben.
-          // Si el local tiene meta (formato v16), usarlo; si no (state viejo
-          // pre-v16, items con raw completo), dejar meta vacío para que el raw
-          // viejo del item gane sin conflicto. Evita que items viejos queden
-          // pegados a un meta nuevo del remoto (dato stale pisando al fresco).
-          meta:       (localT.meta !== undefined ? localT.meta : (localT.items && localT.items.length ? {} : remoteT.meta))
-        });
-      });
-      // Preservar contenedores remotos que el cliente local no tenga (defensa)
-      Object.keys(current.teorico||{}).forEach(function(cont){
-        if(!mergedTeorico[cont]) mergedTeorico[cont] = current.teorico[cont];
-      });
-      // FIX (sáb 23-may-2026 PM, BLINDADO COMPLETO rev Erick+Claude2+ChatGPT):
-      // El mismo patrón de pisado total existía en fisico/asignaciones/puertas/
-      // conteoMetadata. Aunque la ventana de pérdida es más estrecha que la de
-      // teorico (mitigada por polling 5s y el server.js como fuente principal),
-      // el físico es el dato MEDULAR del sistema y no podemos arriesgarlo.
-      //
-      // Estrategia por campo:
-      //
-      // FISICO: merge por celda usando timestamp más reciente. Si solo una
-      //   tablet tiene dato en [cont][idx], esa gana. Si ambas tienen, la del
-      //   ts más reciente gana. Es lo correcto: nunca se pierde un conteo.
-      //
-      // ASIGNACIONES: unión sin duplicados por contenedor. Nunca se pierde una
-      //   asignación de nadie. Es seguro mezclar.
-      //
-      // PUERTAS y CONTEOMETADATA: el cliente solo "owns" lo que tocó
-      //   explícitamente vía saveMetadata. Mantenemos un set window._dirtyMeta
-      //   con los contenedores tocados localmente. En el merge, solo esos
-      //   ganan vs el remoto. Lo demás siempre del remoto. Esto cierra el bug
-      //   reportado por ChatGPT donde saveMetadata podría pisar puertas/meta
-      //   de otra tablet.
-      //
-      // HISTORIAL: ya estaba con .slice(-50) pero seguía siendo reemplazo total.
-      //   Cambio: merge por timestamp, manteniendo los últimos 100 de la unión
-      //   (más seguro contra pérdida de auditoría).
-      //
-      // HALLAZGOS: ya se maneja vía saveHallazgoDirectToSupabase con merge
-      //   por id. Acá solo preservamos lo que ya hay.
-
-      // ─── FISICO merge por celda (ts wins) ──────────────────────────────
-      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG#7): recortar fisico a la
-      // longitud del teorico para evitar resurrección de items eliminados.
-      // Escenario: HP26-0627 estaba duplicado con 126 items. La dedup SQL lo
-      // reduce a 63 items. Si una tablet con fisico viejo de 126 entradas
-      // hace saveDirectToSupabase, el merge usaba maxLen=max(126,63)=126,
-      // resucitando los conteos de los índices 64-126 que la dedup eliminó.
-      // Mismo patrón aplica si se elimina un contenedor: items huérfanos
-      // pueden quedar en fisico inflando el state.
-      //
-      // El recorte usa la longitud del teorico YA MERGEADO (mergedTeorico),
-      // que es la fuente de verdad post-merge. Se hace en TODOS los paths
-      // (solo local, solo remoto, ambos) porque cualquiera puede tener
-      // entradas huérfanas.
-      function trimFisicoToTeorico(arr, contKey){
-        if(!Array.isArray(arr)) return arr;
-        var teoLen = (mergedTeorico[contKey] && Array.isArray(mergedTeorico[contKey].items))
-          ? mergedTeorico[contKey].items.length : 0;
-        if(teoLen > 0 && arr.length > teoLen) {
-          // Log diagnóstico (rev Claude3): útil para verificar post-dedup que el
-          // recorte está funcionando. Si vemos esto en consola, significa que
-          // una tablet tenía state viejo y el recorte salvó la integridad.
-          console.warn('[BUG#7] trimFisicoToTeorico: recortando', contKey, 'de', arr.length, 'a', teoLen);
-          return arr.slice(0, teoLen);
-        }
-        return arr;
-      }
-      var mergedFisico = {};
-      var allContsFisico = {};
-      Object.keys(fisico||{}).forEach(function(c){ allContsFisico[c]=1; });
-      Object.keys(current.fisico||{}).forEach(function(c){ allContsFisico[c]=1; });
-      Object.keys(allContsFisico).forEach(function(cont){
-        var localArr  = (fisico && fisico[cont]) || null;
-        var remoteArr = (current.fisico && current.fisico[cont]) || null;
-        if(!localArr && !remoteArr) { mergedFisico[cont] = null; return; }
-        if(!localArr)  { mergedFisico[cont] = trimFisicoToTeorico(remoteArr, cont); return; }
-        if(!remoteArr) { mergedFisico[cont] = trimFisicoToTeorico(localArr, cont);  return; }
-        // Ambos tienen array: merge por índice
-        var maxLen = Math.max(localArr.length, remoteArr.length);
-        var out = new Array(maxLen);
-        for(var i=0; i<maxLen; i++){
-          var L = localArr[i]  || null;
-          var R = remoteArr[i] || null;
-          if(!L && !R) { out[i] = null; continue; }
-          if(!L) { out[i] = R; continue; }
-          if(!R) { out[i] = L; continue; }
-          // Ambos tienen datos: el de ts más reciente gana
-          var lAt = L.lastAt || 0;
-          var rAt = R.lastAt || 0;
-          // Si ninguno tiene lastAt, intentar con ts (string, peor comparación pero algo)
-          if(!lAt && !rAt) {
-            out[i] = (L.ts && R.ts) ? (L.ts >= R.ts ? L : R) : (L.fisico !== undefined && L.fisico !== '' ? L : R);
-          } else {
-            out[i] = lAt >= rAt ? L : R;
-          }
-        }
-        mergedFisico[cont] = trimFisicoToTeorico(out, cont);
-      });
-
-      // ─── ASIGNACIONES unión sin duplicados ──────────────────────────────
-      var mergedAsign = {};
-      var allContsA = {};
-      Object.keys(asignaciones||{}).forEach(function(c){ allContsA[c]=1; });
-      Object.keys(current.asignaciones||{}).forEach(function(c){ allContsA[c]=1; });
-      Object.keys(allContsA).forEach(function(cont){
-        var L = (asignaciones && asignaciones[cont]) || [];
-        var R = (current.asignaciones && current.asignaciones[cont]) || [];
-        if(!Array.isArray(L)) L = [];
-        if(!Array.isArray(R)) R = [];
-        var seen = {};
-        var out = [];
-        R.forEach(function(u){ if(u && !seen[u]) { seen[u]=1; out.push(u); } });
-        L.forEach(function(u){ if(u && !seen[u]) { seen[u]=1; out.push(u); } });
-        mergedAsign[cont] = out;
-      });
-
-      // ─── PUERTAS solo lo dirty del local gana ──────────────────────────
-      var dirtyMeta = window._dirtyMetadata || {};
-      var mergedPuertas = Object.assign({}, current.puertas || {});
-      Object.keys(puertas||{}).forEach(function(cont){
-        if(dirtyMeta[cont]) mergedPuertas[cont] = puertas[cont];
-      });
-
-      // ─── CONTEOMETADATA solo lo dirty del local gana ───────────────────
-      var mergedConteoMeta = Object.assign({}, current.conteoMetadata || {});
-      Object.keys(conteoMetadata||{}).forEach(function(cont){
-        if(dirtyMeta[cont]) mergedConteoMeta[cont] = conteoMetadata[cont];
-      });
-
-      // ─── HISTORIAL merge por ts, top 100 ───────────────────────────────
-      var localHist  = Array.isArray(historial) ? historial : [];
-      var remoteHist = Array.isArray(current.historial) ? current.historial : [];
-      // Concat, ordenar por ts/at descendente, top 100
-      var allHist = remoteHist.concat(localHist);
-      // Deduplicar por (ts + usuario + accion) para evitar entradas idénticas
-      var seenHist = {};
-      var dedupHist = [];
-      allHist.forEach(function(h){
-        if(!h) return;
-        var k = (h.ts||'') + '|' + (h.usuario||'') + '|' + (h.accion||'');
-        if(!seenHist[k]) { seenHist[k]=1; dedupHist.push(h); }
-      });
-      // Ordenar por at numérico si existe, sino por ts string
-      dedupHist.sort(function(a,b){
-        var aV = a.at || 0;
-        var bV = b.at || 0;
-        if(aV && bV) return bV - aV;
-        return (b.ts||'').localeCompare(a.ts||'');
-      });
-      var mergedHist = dedupHist.slice(0, 100);
-
-      // ─── HALLAZGOS merge por id (preservar remoto, agregar solo locales nuevos) ──
-      // FIX (sáb 23-may-2026 PM, rev Claude2): saveDirectToSupabase NO debería
-      // hacer cambios de hallazgos (eso lo maneja saveHallazgoDirectToSupabase
-      // con merge por id). Acá protegemos contra el pisado del array entero.
-      //
-      // Estrategia: el remoto es fuente de verdad para hallazgos. Solo agregamos
-      // hallazgos locales que el remoto NO tiene (caso raro: el cliente creó un
-      // hallazgo y todavía no se sincronizó). Si el remoto eliminó un hallazgo
-      // (tombstone implícito), NO lo reintroducimos.
-      var remoteHallazgos = Array.isArray(current.hallazgos) ? current.hallazgos : [];
-      var localHallazgos  = Array.isArray(hallazgos) ? hallazgos : [];
-      var remoteIds = {};
-      remoteHallazgos.forEach(function(h){ if(h && h.id) remoteIds[h.id] = 1; });
-      var mergedHallazgos = remoteHallazgos.slice();  // copia del remoto
-      // Agregar SOLO los locales que el remoto no tenga (id ausente en remoto)
-      localHallazgos.forEach(function(h){
-        if(h && h.id && !remoteIds[h.id]) {
-          mergedHallazgos.push(h);
-        }
-      });
-
-      var today = new Date();
-      var merged = Object.assign({}, current, {
-        teorico:        mergedTeorico,
-        fisico:         mergedFisico,
-        asignaciones:   mergedAsign,
-        historial:      mergedHist,
-        hallazgos:      mergedHallazgos,
-        conteoMetadata: mergedConteoMeta,
-        puertas:        mergedPuertas,
-        date:           today.toDateString(),
-        version:        (typeof lastVersion !== 'undefined' ? lastVersion : 0) + 1
-        // NOTE: cdg, costos, chat — preserved from `current` via Object.assign
-      });
-      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG-A): la limpieza de
-      // window._dirtyMetadata se mueve al .then de éxito del POST (más abajo).
-      // Si la dejamos acá y el POST falla por red, perdemos el tracking de
-      // qué contenedores tenían metadata local pendiente, y un save posterior
-      // no re-aplicará los cambios de puerta/metadata del usuario.
-      // Es el mismo principio del rollback en error path: no descartar estado
-      // optimista hasta confirmar persistencia.
-      // STEP 3: Write the merged payload back
-      return fetch(SUPABASE_URL + '/rest/v1/app_state', {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': 'Bearer ' + SUPABASE_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({ key: 'daily_state', value: JSON.stringify(merged) })
-      }).then(function(r){
-        // FIX (rev Claude 2, vie 22-may-2026): verificar r.ok del POST.
-        // ESTE es el agujero del incidente Carlos.
-        if(!r.ok) throw new Error('POST state HTTP ' + r.status);
-        return r;
-      });
-    }).then(function(){
-      console.log('Direct Supabase save OK');
-      // FIX (rev Claude 2 + ChatGPT, vie 22-may-2026): NO auto-ocultar banner.
-      // FIX (sáb 23-may-2026 PM, rev Claude2 BUG-A): limpiar _dirtyMetadata
-      // SOLO tras éxito confirmado del POST. Si el POST falló (red), el dirty
-      // sobrevive y se re-aplica en el próximo save.
-      if(window._dirtyMetadata) window._dirtyMetadata = {};
-    }).catch(function(e){
-      console.warn('Direct Supabase save failed:', e);
-      if(typeof window.showNetworkBanner === 'function') {
-        window.showNetworkBanner('Error guardando conteo principal.');
-      }
-    });
-  }, 500);
-}
-
-function updateTotDiff(idx){
-  var fv=parseFloat((document.getElementById('fi'+idx)||{}).value);
-  var dv=parseFloat((document.getElementById('da'+idx)||{}).value)||0;
-  var totEl=document.getElementById('tot'+idx),difEl=document.getElementById('d'+idx);
-  var item=teorico[current]?teorico[current].items[idx]:null;
-  if(!item){if(totEl)totEl.innerHTML='&mdash;';if(difEl){difEl.className='tc gray';difEl.innerHTML='&mdash;';}return;}
-  // FIX (lun 1-jun-2026, v5.2.29): para CDG con WMS, la diferencia usa teoricoWMS.
-  // Para CDG sin WMS: usa qty (Validado CDG) como fallback.
-  // Para Embarques/Traslados normales: usa qty (teórico WMS subido por Hamilton).
-  var esCDG = !!(teorico[current].fromCDG || teorico[current].cdgValidado);
-  var ref = esCDG && (item.teoricoWMS !== undefined && item.teoricoWMS !== null)
-    ? item.teoricoWMS
-    : item.qty;
-  if(isNaN(fv)){if(totEl)totEl.innerHTML='&mdash;';if(difEl){difEl.className='tc gray';difEl.innerHTML='&mdash;';}return;}
-  var total=fv;  // Dañado es solo informativo, NO se suma al total
-  var diff=total-ref;
-  if(totEl)totEl.textContent=total;
-  if(difEl){difEl.className='tc '+(diff>0?'blue':diff<0?'red':'green');difEl.textContent=(diff>0?'+':'')+diff;}
-
-  if(typeof updateSummaryCard==='function') updateSummaryCard();
-}
-
-// FIX (lun 18-may-2026): saveConteo reescrito para evitar pérdida de datos
-// cuando varios usuarios cuentan el mismo contenedor al mismo tiempo.
-//
-// PROBLEMA ANTERIOR: la función reconstruía el array completo de fisico[current]
-// leyendo del DOM y poniendo quien=currentUser.name en TODAS las líneas, luego
-// hacía un POST /api/conteo que sobreescribía todo el contenedor en el server.
-// Resultado: si Usuario3 guardaba con su DOM, podía borrar líneas que Usuario1
-// y Usuario2 habían contado, y se llevaba el "quien" de ellos.
-//
-// COMPORTAMIENTO NUEVO: el botón ya no sobreescribe nada. Solo hace flush de
-// los campos pendientes en debounce del usuario actual (a través de saveField),
-// que es campo-por-campo y preserva quien por línea. Los datos del contenedor
-// ya están guardados en tiempo real al escribir; el botón es confirmación
-// visual de que cualquier cambio pendiente ya se mandó.
-function saveConteo(){
-  if(!teorico[current]) return;
-  if(!currentUser) return;
-
-  // 1. Hacer flush de cualquier campo que tenga debounce pendiente.
-  //    saveField envía cada cambio individualmente a /api/conteo/field
-  //    y preserva el "quien" por línea (solo cambia el quien de la línea
-  //    que ESTE usuario tocó).
-  var items = teorico[current].items || [];
-  var pendingCount = 0;
-  items.forEach(function(_, i){
-    if(saveTimers && saveTimers[i]) {
-      flushFieldSave(i);
-      pendingCount++;
-    }
-  });
-
-  addHist('Confirmó conteo: ' + current + (pendingCount ? ' ('+pendingCount+' cambios pendientes guardados)' : ''));
-  updateProg(); updateStatusBar();
-
-  // 2. Feedback visual al usuario — el botón se ve igual que antes.
-  var btn = document.getElementById('btn-save');
-  if(btn) {
-    var orig = btn.textContent;
-    btn.textContent = '✓ Guardado';
-    btn.style.background = '#1e7e34';
-    btn.style.borderColor = '#1e7e34';
-    btn.style.color = '#fff';
-    setTimeout(function(){
-      btn.textContent = orig;
-      btn.style.background = '';
-      btn.style.borderColor = '';
-      btn.style.color = '';
-    }, 1500);
-  }
-}
-
-function updateProg(){
-  var fc=contsFiltered();
-  var done=fc.filter(function(c){return fisico[c]!==null;}).length;
-  // Show both: container progress AND current container line progress
-  var progEl = document.getElementById('prog-text');
-  if(!progEl) return;
-  if(current && teorico[current]) {
-    var items = teorico[current].items||[];
-    var fis   = fisico[current]||[];
-    var linesDone = 0;
-    if(Array.isArray(fis)) {
-      linesDone = fis.filter(function(f){ return f && f.fisico!==null && f.fisico!==undefined; }).length;
-    }
-    progEl.textContent = linesDone + ' de ' + items.length + ' líneas · ' + done + ' de ' + fc.length + ' contenedores';
-  } else {
-    progEl.textContent = done + ' de ' + fc.length + ' contados';
-  }
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   AUTO-ASIGNACIÓN
-══════════════════════════════════════════════════════════════════ */
-function updateSelfAssignBtn(){
-  var wrap=document.getElementById('self-assign-wrap');if(!wrap)return;
-  if(isSup()||!current){wrap.style.display='none';return;}
-  var assigned=(asignaciones[current]||[]);
-  wrap.style.display=(assigned.indexOf(currentUser.name)<0)?'':'none';
-}
-
-document.getElementById('btn-self-assign').addEventListener('click',function(){
-  if(!current||!currentUser)return;
-  if(!asignaciones[current])asignaciones[current]=[];
-  if(asignaciones[current].indexOf(currentUser.name)<0){
-    asignaciones[current].push(currentUser.name);
-    addHist('Se registró en '+current);
-    // Send to server immediately so all devices see it
-    fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({cont:current,name:currentUser.name,action:'self',usuario:currentUser.name})})
-      .then(function(r){return r.json();})
-      .then(function(d){if(d.ok){lastVersion=d.version;pollNow();}})
-      .catch(function(e){console.warn('self-assign error:',e);});
-  }
-  document.getElementById('self-assign-wrap').style.display='none';
-  flashMsg('status-bar','ok','📋 Registrado en '+current);
-});
-
-/* ══════════════════════════════════════════════════════════════════
-   REPORTE
-══════════════════════════════════════════════════════════════════ */
-function buildReporte(){
-  var totalItems=0,done=0,totalDiffs=0,totalCosto=0,sumRows='',detRows='';
-  // Read filters
-  var fechaDesde = (document.getElementById('filter-fecha-desde')||{}).value || '';
-  var fechaHasta = (document.getElementById('filter-fecha-hasta')||{}).value || '';
-  // FIX (vie 22-may-2026 noche): filtro Tipo (Embarques / Traslados / Ambos).
-  // Estado guardado en window._filterTipo ('todos' | 'Embarques' | 'Traslados').
-  // Default 'todos' (sin filtrar). Se persiste en memoria mientras dura la sesión.
-  var filterTipo = window._filterTipo || 'todos';
-  // FIX (dom 24-may-2026): filtro Clasificación. Mismo patrón que filterTipo.
-  // Valores: 'todos' | 'Auditado' | 'En Revisión' | 'No auditado'.
-  var filterClasif = window._filterClasif || 'todos';
-  var contsFiltrados = conts.slice();
-
-  // Aplicar filtro Tipo (antes que filtros de fecha para mejor performance)
-  // FIX (dom 24-may-2026): contar cuántos contenedores quedan ocultos por cada
-  // filtro, para mostrarlos al usuario en el banner informativo.
-  var ocultosTipo = 0;
-  if(filterTipo && filterTipo !== 'todos') {
-    var antesT = contsFiltrados.length;
-    contsFiltrados = contsFiltrados.filter(function(c){
-      return teorico[c] && teorico[c].type === filterTipo;
-    });
-    ocultosTipo = antesT - contsFiltrados.length;
-  }
-
-  // Aplicar filtro Clasificación. Usa getClasifContenedor (helper global) que
-  // ya replica la lógica del Resumen (manual si existe, automática si no).
-  var ocultosClasif = 0;
-  if(filterClasif && filterClasif !== 'todos') {
-    var antesC = contsFiltrados.length;
-    contsFiltrados = contsFiltrados.filter(function(c){
-      return getClasifContenedor(c) === filterClasif;
-    });
-    ocultosClasif = antesC - contsFiltrados.length;
-  }
-
-  // FIX (mar 19-may-2026): el filtro ahora opera sobre fechaCarga del teorico
-  // (no sobre lastAt de fisico). Soporta rango Desde/Hasta inclusive.
-  // Contenedores SIN fechaCarga se ocultan cuando hay cualquier filtro activo.
-  //
-  // FIX (rev ChatGPT): contar cuántos quedaron ocultos para mostrar al usuario.
-  var ocultosSinFecha = 0;
-  var ocultosFueraRango = 0;
-  if(fechaDesde || fechaHasta) {
-    contsFiltrados = contsFiltrados.filter(function(c){
-      var fc = teorico[c] && teorico[c].fechaCarga;
-      if(!fc) { ocultosSinFecha++; return false; }
-      if(fechaDesde && fc < fechaDesde) { ocultosFueraRango++; return false; }
-      if(fechaHasta && fc > fechaHasta) { ocultosFueraRango++; return false; }
-      return true;
-    });
-  }
-
-  // Sort por fechaCarga (controlado por header). Estado guardado en
-  // window._sortFechaTrabajo: null=sin orden, 'asc', 'desc'.
-  if(window._sortFechaTrabajo) {
-    var dir = window._sortFechaTrabajo;
-    contsFiltrados.sort(function(a, b){
-      var fa = (teorico[a] && teorico[a].fechaCarga) || '';
-      var fb = (teorico[b] && teorico[b].fechaCarga) || '';
-      // Sin fecha siempre va al final, independiente de dir
-      if(!fa && !fb) return 0;
-      if(!fa) return 1;
-      if(!fb) return -1;
-      return dir === 'asc' ? (fa < fb ? -1 : fa > fb ? 1 : 0)
-                           : (fa > fb ? -1 : fa < fb ? 1 : 0);
-    });
-  }
-
-  // Helper para formatear fechaCarga (YYYY-MM-DD → dd/mm/yyyy)
-  function fmtFC(fc) {
-    if(!fc) return '—';
-    var p = String(fc).split('-');
-    if(p.length !== 3) return fc;
-    return p[2] + '/' + p[1] + '/' + p[0];
-  }
-
-  // FIX (vie 22-may-2026 noche): helper para calcular clasificación automática
-  // a partir del % de cobertura. Esta es la clasificación POR DEFECTO si el
-  // supervisor no la ha editado manualmente.
-  function clasificacionAutomatica(cobertura){
-    if(cobertura >= 100) return 'Auditado';
-    if(cobertura > 0)    return 'En Revisión';
-    return 'No auditado';
-  }
-
-  // Helper para color del badge de clasificación
-  function clasifBadge(clasif){
-    if(clasif === 'Auditado')    return '<span class="badge" style="background:#d4edda;color:#155724">Auditado</span>';
-    if(clasif === 'En Revisión') return '<span class="badge" style="background:#fef9e7;color:#7d6608">En Revisión</span>';
-    if(clasif === 'No auditado') return '<span class="badge" style="background:#fdecea;color:#922b21">No auditado</span>';
-    return '<span class="badge" style="background:#f0f0ee;color:#888">—</span>';
-  }
-
-  // Helper para construir celda de clasificación: dropdown si es supervisor,
-  // badge si no. La clasificación efectiva es teorico[c].clasificacion o el cálculo.
-  function clasifCellHtml(c, clasifEfectiva){
-    var esSup = (typeof isSup === 'function') && isSup();
-    var override = teorico[c] && teorico[c].clasificacion;
-    var isOverride = !!override;
-    if(esSup) {
-      // Dropdown editable
-      var opciones = ['Auditado', 'En Revisión', 'No auditado'];
-      var html = '<select class="clasif-select" data-cont="'+escH(c)+'" style="font-size:.78rem;padding:4px 6px;border:1px solid '+(isOverride?'#1a73e8':'#ccc')+';border-radius:6px;background:#fff;min-height:30px;cursor:pointer" title="'+(isOverride?'Override manual del supervisor (no coincide con cálculo automático)':'Calculado automáticamente por % cobertura. Si lo cambiás, queda como override manual.')+'">';
-      opciones.forEach(function(opt){
-        html += '<option value="'+escH(opt)+'"'+(opt===clasifEfectiva?' selected':'')+'>'+escH(opt)+'</option>';
-      });
-      html += '</select>';
-      // FIX (rev ChatGPT C, vie 22-may-2026): mostrar "★ Manual" como texto
-      // junto al dropdown si hay override, para que se entienda qué significa
-      // la estrella. La sola ★ es críptica.
-      if(isOverride) {
-        html += '<div style="font-size:.65rem;color:#1a73e8;font-weight:600;margin-top:2px" title="Esta clasificación la asignó manualmente un supervisor (no es la calculada por cobertura)">★ Manual</div>';
-      }
-      return '<td>' + html + '</td>';
-    } else {
-      // Solo badge read-only.
-      // FIX (rev ChatGPT E, vie 22-may-2026): tooltip explicativo para no-sup
-      // de por qué no pueden editar. Mejora UX sin agregar permisos.
-      var tooltipNoSup = 'Solo los supervisores pueden cambiar esta clasificación. Estado calculado automáticamente por % cobertura' + (isOverride ? ' o ajustado manualmente por un supervisor (★ Manual)' : '') + '.';
-      return '<td title="'+escH(tooltipNoSup)+'">' + clasifBadge(clasifEfectiva) + (isOverride ? ' <span style="font-size:.65rem;color:#1a73e8;font-weight:600" title="Manual - asignado por supervisor">★ Manual</span>' : '') + '</td>';
-    }
-  }
-
-  contsFiltrados.forEach(function(c){
-    var items=teorico[c].items,fis=fisico[c],type=teorico[c].type;
-    var fechaCargaCont = (teorico[c] && teorico[c].fechaCarga) || '';
-    totalItems+=items.length;
-    // Celda de Fecha de trabajo: editable click
-    var fechaCellHtml = '<td class="fecha-trabajo-cell" data-cont="'+escH(c)+'" style="font-size:.78rem;cursor:pointer;color:'+(fechaCargaCont?'#333':'#999')+'" title="Click para editar">'+
-      (fechaCargaCont ? fmtFC(fechaCargaCont) : '— ✏️')+'</td>';
-    var puerta=(typeof puertas!=='undefined'&&puertas[c])||'—';
-    // Compute container cost total using teórico × costo unitario (most reliable baseline)
-    var contCosto = 0;
-    items.forEach(function(item){
-      var cu = (typeof getCosto==='function') ? (Number(getCosto(item.sku))||0) : 0;
-      contCosto += cu * (Number(item.qty)||0);
-    });
-    totalCosto += contCosto;
-
-    // FIX (vie 22-may-2026): cálculo de % cobertura y clasificación.
-    // Cobertura = (líneas con físico no vacío) / total líneas * 100.
-    // Clasificación efectiva: si supervisor la editó (teorico[c].clasificacion
-    // existe) se usa esa; si no, se calcula automáticamente por cobertura.
-    var lineasContadas = 0;
-    if(fis) {
-      for(var k=0; k<fis.length; k++) {
-        var fObj = fis[k];
-        if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== '') {
-          lineasContadas++;
-        } else if(typeof fObj === 'number' && !isNaN(fObj)) {
-          lineasContadas++;
-        }
-      }
-    }
-    var cobertura = items.length > 0 ? Math.round((lineasContadas / items.length) * 100) : 0;
-    // FIX (rev ChatGPT B, vie 22-may-2026): mostrar también "18/126 líneas"
-    // debajo del % para que el operario vea cuántas son en absoluto, no solo
-    // el ratio. Más útil operativamente.
-    var coberturaCellHtml = '<td class="tc" style="font-family:monospace;font-size:.85rem;color:'+(cobertura>=100?'#155724':cobertura>0?'#7d6608':'#888')+';font-weight:'+(cobertura>=100?'700':'500')+';line-height:1.2">'+cobertura+'%<div style="font-size:.68rem;font-weight:400;color:#888;font-family:inherit">'+lineasContadas+'/'+items.length+' líneas</div></td>';
-    var clasifEfectiva = (teorico[c] && teorico[c].clasificacion) || clasificacionAutomatica(cobertura);
-    var clasifHtml = clasifCellHtml(c, clasifEfectiva);
-
-    if(!fis){
-      sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+'</td><td class="tc">'+items.length+'</td><td class="tc">—</td><td class="tc">—</td><td class="tc">—</td>'+coberturaCellHtml+'<td>'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td><span class="badge b-pend">Pendiente</span></td>'+clasifHtml+'</tr>';
-      return;
-    }
-    done++;var ok=0,over=0,under=0;
-    items.forEach(function(item,i){
-      var fiObj=fis[i];
-      var fv=fiObj!=null?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:Number(fiObj)||0):0;
-      var dv=fiObj!=null&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-      var tot=fv,d=tot-item.qty;  // dañado es informativo, no suma
-      if(d===0)ok++;else if(d>0)over++;else under++;
-      if(d!==0)detRows+='<tr><td>'+escH(c)+'</td><td>'+escH(item.sku||'—')+'</td><td>'+escH(item.desc||'—')+'</td><td class="tc">'+item.qty+'</td><td class="tc">'+tot+'</td><td class="tc '+(d>0?'blue':'red')+'">'+(d>0?'+':'')+d+'</td></tr>';
-    });
-    if(over+under>0)totalDiffs++;
-    var badge=over+under===0?'<span class="badge b-ok">OK</span>':over>0&&under===0?'<span class="badge b-over">Sobrante</span>':under>0&&over===0?'<span class="badge b-under">Faltante</span>':'<span class="badge b-diff">Diferencias</span>';
-    // FIX (dom 24-may-2026, v5.2.22): badge WMS si hay alerta pendiente para este contenedor
-    var alertaWMS = alertasWMS && alertasWMS[c];
-    var wmsBadge = alertaWMS
-      ? ' <span class="badge-wms-alert" data-cont="'+escH(c)+'" title="El WMS tiene cambios pendientes (click para ver detalle)" style="background:#fff3cd;color:#856404;border:1px solid #ffeaa7;font-size:.65rem;padding:2px 6px;border-radius:10px;font-weight:600;cursor:pointer">⚠ WMS difiere</span>'
-      : '';
-    sumRows+='<tr><td><span class="badge b-type">'+escH(type)+'</span></td><td>'+escH(c)+(teorico[c].cdgValidado?' <span class="badge b-cdg">CDG</span>':'')+wmsBadge+'</td><td class="tc">'+items.length+'</td><td class="tc">'+ok+'</td><td class="tc">'+over+'</td><td class="tc">'+under+'</td>'+coberturaCellHtml+'<td style="font-size:.8rem">'+escH(puerta)+'</td><td class="tc" style="font-family:monospace">Q'+Math.round(contCosto).toLocaleString('es-GT')+'</td>'+fechaCellHtml+'<td>'+badge+'</td>'+clasifHtml+'</tr>';
-  });
-  document.getElementById('m-total').textContent=contsFiltrados.length;
-  document.getElementById('m-done').textContent=done;
-  document.getElementById('m-diffs').textContent=totalDiffs;
-  document.getElementById('m-items').textContent=totalItems;
-  var mCosto = document.getElementById('m-costo');
-  if(mCosto) mCosto.textContent = 'Q' + Math.round(totalCosto).toLocaleString('es-GT');
-  // FIX (vie 22-may-2026): colspan ahora 12 (antes 10) por las 2 columnas nuevas
-  document.getElementById('tbody-resumen').innerHTML=sumRows||'<tr><td colspan="12" class="empty">Sin contenedores en esta fecha.</td></tr>';
-  document.getElementById('tbody-detalle').innerHTML=detRows||'<tr><td colspan="6" class="empty">Sin diferencias ✓</td></tr>';
-
-  // FIX (rev ChatGPT): mostrar contador de contenedores ocultos por filtro
-  // FIX (dom 24-may-2026): incluir también ocultos por Tipo y Clasificación
-  // (antes solo se contaban los ocultos por filtros de fecha).
-  var infoEl = document.getElementById('filter-ocultos-info');
-  if(infoEl) {
-    var partes = [];
-    if(ocultosTipo > 0)        partes.push(ocultosTipo + ' por tipo');
-    if(ocultosClasif > 0)      partes.push(ocultosClasif + ' por clasificación');
-    if(ocultosSinFecha > 0)    partes.push(ocultosSinFecha + ' sin fecha');
-    if(ocultosFueraRango > 0)  partes.push(ocultosFueraRango + ' fuera de rango');
-    infoEl.textContent = partes.length ? '(' + partes.join(', ') + ' ocultos)' : '';
-  }
-
-  // Wire click-to-edit en cada celda de fecha trabajo (después de pintar tbody)
-  document.querySelectorAll('.fecha-trabajo-cell').forEach(function(td){
-    td.addEventListener('click', function(){
-      if(td.querySelector('input')) return; // ya está en modo edición
-      var cont = td.getAttribute('data-cont');
-      var current = (teorico[cont] && teorico[cont].fechaCarga) || '';
-      td.innerHTML = '<input type="date" value="'+escH(current)+'" style="font-size:.78rem;padding:2px 4px;width:130px;border:1px solid #5a6fd8;border-radius:4px">';
-      var inp = td.querySelector('input');
-      inp.focus();
-      var saved = false;
-      function saveAndExit() {
-        if(saved) return;
-        saved = true;
-        var nuevoValor = inp.value || '';
-        if(nuevoValor === current) {
-          buildReporte(); // re-render sin cambios
-          return;
-        }
-        // Optimistic update local
-        if(teorico[cont]) teorico[cont].fechaCarga = nuevoValor || null;
-        // FIX (rev Claude2): marcar como pendiente para que el polling no lo pise
-        window._pendingFechaCarga = window._pendingFechaCarga || {};
-        window._pendingFechaCarga[cont] = nuevoValor || null;
-        // Re-render
-        buildReporte();
-        // Enviar al server
-        fetch('/api/teorico/fecha-carga', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            cont: cont,
-            fechaCarga: nuevoValor,
-            usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
-          })
-        }).then(function(r){
-          // Liberar pending sin importar éxito/fallo (el polling traerá el server-side)
-          if(window._pendingFechaCarga) delete window._pendingFechaCarga[cont];
-          if(!r.ok) {
-            console.warn('No se pudo guardar fechaCarga');
-            // Revertir
-            if(teorico[cont]) teorico[cont].fechaCarga = current || null;
-            buildReporte();
-            showToast('No se pudo guardar la fecha. Intentá de nuevo.', 'error');
-          } else {
-            showToast('Fecha guardada ✓', 'ok');
-          }
-        }).catch(function(e){
-          if(window._pendingFechaCarga) delete window._pendingFechaCarga[cont];
-          console.warn('Error al guardar fechaCarga:', e);
-          if(teorico[cont]) teorico[cont].fechaCarga = current || null;
-          buildReporte();
-          showToast('Error de conexión. Intentá de nuevo.', 'error');
-        });
-      }
-      inp.addEventListener('blur', saveAndExit);
-      inp.addEventListener('keydown', function(e){
-        if(e.key === 'Enter') saveAndExit();
-        else if(e.key === 'Escape') { saved = true; buildReporte(); }
-      });
-    });
-  });
-
-  // FIX (dom 24-may-2026, v5.2.22): wire del badge ⚠ WMS difiere.
-  // Click abre modal con detalle de cambios pendientes + botón Sincronizar
-  // (solo supervisores).
-  document.querySelectorAll('.badge-wms-alert').forEach(function(b){
-    b.addEventListener('click', function(e){
-      e.stopPropagation();
-      var cont = this.dataset.cont;
-      if(!cont) return;
-      showWMSAlertModal(cont);
-    });
-  });
-
-  // FIX (vie 22-may-2026 noche): wire dropdown Clasificación.
-  // Solo se renderiza para supervisores. Al cambiar:
-  //  1. Optimistic update local: teorico[c].clasificacion = nuevo valor
-  //  2. POST a /api/clasificacion/set (server v11+) — actualiza memoria del
-  //     server Y persiste a Supabase atómicamente. ANTES (pre-v5.2.7) se
-  //     usaba saveDirectToSupabase directo, pero eso dejaba el state del
-  //     server desactualizado y causaba el bug B1 (pisado de clasificaciones).
-  //  3. Si el supervisor elige el mismo valor que el calculado automático,
-  //     igual lo guardamos como override (el badge ★ aparece)
-  //  4. Esto NO mete clasificacion al state si el usuario es no-sup
-  //     (los no-sup solo ven badge, no dropdown)
-  document.querySelectorAll('.clasif-select').forEach(function(sel){
-    sel.addEventListener('change', function(){
-      var cont = this.dataset.cont;
-      var nuevoValor = this.value;
-      if(!cont || !teorico[cont]) return;
-      var anterior = teorico[cont].clasificacion;
-
-      // FIX (rev ChatGPT F, vie 22-may-2026): si el supervisor elige
-      // el mismo valor que el cálculo automático, quitar el override.
-      // Razón: estrella ★ "Manual" debe indicar criterio supervisor que
-      // DIFIERE del automático. Si el supervisor confirma el automático,
-      // mantener override confunde (no hay nada que distinguir).
-      var items = teorico[cont].items || [];
-      var fis = fisico[cont];
-      var lineasContadasLoc = 0;
-      if(fis) {
-        for(var k=0; k<fis.length; k++) {
-          var fObj = fis[k];
-          if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== '') {
-            lineasContadasLoc++;
-          } else if(typeof fObj === 'number' && !isNaN(fObj)) {
-            lineasContadasLoc++;
-          }
-        }
-      }
-      var coberturaLoc = items.length > 0 ? Math.round((lineasContadasLoc / items.length) * 100) : 0;
-      var automaticoLoc = coberturaLoc >= 100 ? 'Auditado' : (coberturaLoc > 0 ? 'En Revisión' : 'No auditado');
-
-      // Optimistic update
-      if(nuevoValor === automaticoLoc) {
-        // Coincide con automático → quitar override (no persistir clasificacion)
-        delete teorico[cont].clasificacion;
-      } else {
-        teorico[cont].clasificacion = nuevoValor;
-      }
-
-      // FIX (rev Claude 2 B.2, vie 22-may-2026): registrar pending para que
-      // el polling no pise el optimistic update. Mismo patrón que
-      // _pendingFechaCarga ya implementado para fechaCarga.
-      window._pendingClasificacion = window._pendingClasificacion || {};
-      // Si quitamos override (matchea automático), marcamos pending con
-      // valor especial null para que el polling también lo respete.
-      window._pendingClasificacion[cont] = (nuevoValor === automaticoLoc) ? null : nuevoValor;
-
-      // FIX (sáb 23-may-2026): usar endpoint /api/clasificacion/set en lugar de
-      // saveDirectToSupabase (que persistía a Supabase pero dejaba el server.js
-      // con state desactualizado en memoria — bug B1). El endpoint nuevo
-      // actualiza memoria del server Y persiste a Supabase atómicamente.
-      // La limpieza del pending se hace en finally para que pase en éxito o error.
-      var bodyClasif = {
-        cont: cont,
-        clasificacion: (nuevoValor === automaticoLoc) ? null : nuevoValor,
-        manual: (nuevoValor !== automaticoLoc),
-        usuario: (currentUser && currentUser.name) || '—'
-      };
-
-      // FIX (rev ChatGPT, sáb 23-may-2026): feedback visual durante el guardado.
-      // El endpoint puede tardar hasta 15s en mala señal. Sin esto, el supervisor
-      // no sabe si la app está procesando o se colgó, y puede volver a tocar.
-      //   1) Deshabilitar dropdown durante el fetch (evita doble cambio)
-      //   2) Mostrar toast persistente "Guardando..." con spinner
-      //   3) Cerrar toast al terminar + mostrar toast definitivo (✓ o error)
-      var dropdown = this;
-      dropdown.disabled = true;
-      var savingToast = (typeof showToastPersistent === 'function')
-        ? showToastPersistent('Guardando clasificación...')
-        : null;
-
-      fetch('/api/clasificacion/set', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(bodyClasif)
-      }).then(function(r){ return r.json(); })
-        .then(function(resp){
-          if(!resp || !resp.ok) {
-            console.log('Clasificación set FAILED:', (resp && resp.error) || 'sin respuesta');
-            if(typeof showToast === 'function') showToast('Error al guardar clasificación: ' + ((resp && resp.error) || 'reintenta'), 'error');
-          } else {
-            if(typeof showToast === 'function') showToast('Clasificación guardada ✓', 'ok');
-          }
-        })
-        .catch(function(err){
-          console.log('Clasificación set network error:', err.message);
-          if(typeof showToast === 'function') showToast('Sin conexión al guardar clasificación. Reintentá.', 'error');
-        })
-        .finally(function(){
-          // Cerrar toast persistente, rehabilitar dropdown, limpiar pending,
-          // y re-render. El re-render aquí (en vez de antes del fetch) garantiza
-          // que el dropdown queda deshabilitado durante TODO el fetch — si
-          // re-renderizáramos antes, buildReporte() recrearía el dropdown sin
-          // el .disabled aplicado. El optimistic update ya está en memoria
-          // (líneas 2104-2109) así que el re-render muestra el nuevo color.
-          if(savingToast) savingToast.close();
-          dropdown.disabled = false;
-          if(window._pendingClasificacion) delete window._pendingClasificacion[cont];
-          if(typeof buildReporte === 'function') buildReporte();
-        });
-      // FIX (rev Claude2, sáb 23-may-2026): historial.push del cliente removido.
-      // El server.js ahora hace addHistorial en /api/clasificacion/set y es la
-      // fuente autoritativa. Tener ambos generaba entradas duplicadas en el
-      // log de auditoría (con timestamps y wording ligeramente distintos).
-    });
-  });
-}
-
-// FIX (rev Claude2/ChatGPT, mar 19-may): toast no-bloqueante para reemplazar
-// los alert() en operaciones de fechaCarga. UX mucho mejor en tablets.
-function showToast(msg, kind) {
-  var t = document.createElement('div');
-  t.textContent = msg;
-  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
-    'background:'+(kind==='error'?'#e74c3c':'#27ae60')+';color:#fff;' +
-    'padding:10px 16px;border-radius:8px;font-size:.85rem;' +
-    'box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;' +
-    'opacity:0;transition:opacity 0.2s';
-  document.body.appendChild(t);
-  // Trigger animation
-  requestAnimationFrame(function(){ t.style.opacity = '1'; });
-  setTimeout(function(){
-    t.style.opacity = '0';
-    setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 250);
-  }, 2200);
-}
-
-// FIX (rev ChatGPT, sáb 23-may-2026): toast PERSISTENTE para operaciones que
-// pueden tardar hasta 15s (clasificación, fecha-carga, etc). Retorna un objeto
-// con close() para cerrarlo cuando termina la operación. Sin esto, en mala
-// señal el supervisor no tiene feedback de que el guardado está en proceso,
-// y puede volver a tocar el dropdown pensando que no respondió.
-function showToastPersistent(msg) {
-  var t = document.createElement('div');
-  // Texto con un pequeño spinner CSS
-  t.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;animation:claudeSpin 0.7s linear infinite;margin-right:8px;vertical-align:middle"></span><span style="vertical-align:middle">' + msg + '</span>';
-  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
-    'background:#34495e;color:#fff;padding:10px 16px;border-radius:8px;font-size:.85rem;' +
-    'box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:10000;' +
-    'opacity:0;transition:opacity 0.2s';
-  // Inyectar keyframes una sola vez
-  if(!document.getElementById('claude-spin-style')){
-    var st = document.createElement('style');
-    st.id = 'claude-spin-style';
-    st.textContent = '@keyframes claudeSpin { to { transform: rotate(360deg); } }';
-    document.head.appendChild(st);
-  }
-  document.body.appendChild(t);
-  requestAnimationFrame(function(){ t.style.opacity = '1'; });
-  return {
-    close: function(){
-      try {
-        t.style.opacity = '0';
-        setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 250);
-      } catch(_e){}
-    }
-  };
-}
-
-// Wire date filters (Desde / Hasta) + sort por header de Fecha de trabajo
-//   + FIX (vie 22-may-2026 noche): filtro Tipo (Embarques/Traslados/Ambos)
-(function(){
-  var fechaDesde = document.getElementById('filter-fecha-desde');
-  var fechaHasta = document.getElementById('filter-fecha-hasta');
-  var btnClear   = document.getElementById('btn-filter-fecha-clear');
-  if(fechaDesde) fechaDesde.addEventListener('change', function(){ buildReporte(); });
-  if(fechaHasta) fechaHasta.addEventListener('change', function(){ buildReporte(); });
-  if(btnClear)   btnClear.addEventListener('click', function(){
-    if(fechaDesde) fechaDesde.value='';
-    if(fechaHasta) fechaHasta.value='';
-    buildReporte();
-  });
-
-  // FIX (vie 22-may-2026 noche): wire filtro Tipo. 3 botones tipo toggle.
-  // Estado en window._filterTipo ('todos' por defecto, 'Embarques', 'Traslados').
-  // Persiste mientras dure la sesión del navegador (no se guarda en state).
-  window._filterTipo = window._filterTipo || 'todos';
-  function refreshFilterTipoUI(){
-    document.querySelectorAll('.filter-tipo-btn').forEach(function(b){
-      var activo = b.dataset.tipo === window._filterTipo;
-      if(activo) {
-        b.style.background = '#1a1a1a';
-        b.style.color = '#fff';
-      } else {
-        b.style.background = 'transparent';
-        b.style.color = '#666';
-      }
-    });
-  }
-  refreshFilterTipoUI();
-  document.querySelectorAll('.filter-tipo-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      window._filterTipo = this.dataset.tipo || 'todos';
-      refreshFilterTipoUI();
-      buildReporte();
-    });
-  });
-
-  // FIX (dom 24-may-2026): wire filtro Clasificación. Mismo patrón que Tipo.
-  window._filterClasif = window._filterClasif || 'todos';
-  function refreshFilterClasifUI(){
-    document.querySelectorAll('.filter-clasif-btn').forEach(function(b){
-      var activo = b.dataset.clasif === window._filterClasif;
-      if(activo) {
-        b.style.background = '#1a1a1a';
-        b.style.color = '#fff';
-      } else {
-        b.style.background = 'transparent';
-        b.style.color = '#666';
-      }
-    });
-  }
-  refreshFilterClasifUI();
-  document.querySelectorAll('.filter-clasif-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      window._filterClasif = this.dataset.clasif || 'todos';
-      refreshFilterClasifUI();
-      buildReporte();
-    });
-  });
-
-  // Sort por header de Fecha de trabajo (ciclo de 2 estados: asc ↔ desc).
-  // FIX (rev ChatGPT): 2 estados en vez de 3 (sin orden / asc / desc).
-  // Por defecto arranca en 'desc' (más reciente primero), que es el caso de uso
-  // más común en bodega: ver lo cargado hoy/última semana primero.
-  var thFecha = document.getElementById('th-fecha-trabajo');
-  var arrow   = document.getElementById('th-fecha-trabajo-arrow');
-  // Inicializar default
-  if(!window._sortFechaTrabajo) {
-    window._sortFechaTrabajo = 'desc';
-    if(arrow) { arrow.textContent = '↓'; arrow.style.color = '#5a6fd8'; }
-  }
-  if(thFecha) thFecha.addEventListener('click', function(){
-    window._sortFechaTrabajo = (window._sortFechaTrabajo === 'asc') ? 'desc' : 'asc';
-    if(arrow) {
-      arrow.textContent = window._sortFechaTrabajo === 'asc' ? '↑' : '↓';
-      arrow.style.color = '#5a6fd8';
-    }
-    buildReporte();
-  });
-})();
-
-/* ══════════════════════════════════════════════════════════════════
-   HALLAZGOS
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('btn-hallazgo').addEventListener('click',function(){
-  document.getElementById('hall-cont-name').textContent=current||'—';
-  ['hall-input','hall-condicion','hall-criterio','hall-causa','hall-efecto','hall-recomendacion'].forEach(function(id){document.getElementById(id).value='';});
-  // Reset photo state on open
-  var preview=document.getElementById('hall-foto-preview');
-  var img=document.getElementById('hall-foto-img');
-  var status=document.getElementById('hall-foto-status');
-  var input=document.getElementById('hall-foto-input');
-  if(preview) preview.style.display='none';
-  if(img)     img.src='';
-  if(status)  status.textContent='';
-  if(input)   input.value='';
-  window._hallFotoData=null;
-  window._editingHallId=null;
-  // Wire microphone if not already
-  setupMic('btn-hall-mic', 'hall-mic-lang', 'hall-mic-status', 'hall-input');
-  document.getElementById('modal-hallazgo').classList.add('open');
-});
-
-// Fix Bug 3: Wire the foto button in the hallazgo modal
-(function(){
-  var btnFoto    = document.getElementById('btn-hall-foto');
-  var fotoInput  = document.getElementById('hall-foto-input');
-  var fotoPrev   = document.getElementById('hall-foto-preview');
-  var fotoImg    = document.getElementById('hall-foto-img');
-  var fotoStatus = document.getElementById('hall-foto-status');
-  var btnFotoDel = document.getElementById('btn-hall-foto-del');
-  if(btnFoto && fotoInput) {
-    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change', function(){
-      var file=this.files[0]; if(!file) return;
-      var reader=new FileReader();
-      reader.onload=function(e){
-        window._hallFotoData=e.target.result;
-        if(fotoImg)    fotoImg.src=e.target.result;
-        if(fotoPrev)   fotoPrev.style.display='';
-        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-  if(btnFotoDel) {
-    btnFotoDel.addEventListener('click', function(){
-      window._hallFotoData=null;
-      if(fotoImg)    fotoImg.src='';
-      if(fotoPrev)   fotoPrev.style.display='none';
-      if(fotoStatus) fotoStatus.textContent='';
-      if(fotoInput)  fotoInput.value='';
-    });
-  }
-})();
-
-document.getElementById('btn-hall-cancel').addEventListener('click',function(){document.getElementById('modal-hallazgo').classList.remove('open');});
-document.getElementById('btn-hall-save').addEventListener('click',async function(){
-  var desc=document.getElementById('hall-input').value.trim();
-  if(!desc){alert('Describe qué pasó.');return;}
-  var editingId = window._editingHallId;
-  var saveBtn = this;
-
-  // FIX (mié 20-may-2026): subir foto a Storage ANTES de armar el hallazgo.
-  // Antes incrustábamos base64 directo en el JSON → state crecía rápido +
-  // PayloadTooLargeError. Ahora la foto va a Supabase Storage y guardamos
-  // solo la URL.
-  var fotoFinal = window._hallFotoData; // puede ser null, base64, o URL existente
-  if(fotoFinal && typeof fotoFinal === 'string' && fotoFinal.indexOf('data:') === 0) {
-    // Es base64 nuevo, hay que subirlo
-    saveBtn.disabled = true;
-    var originalText = saveBtn.textContent;
-    saveBtn.textContent = '⏳ Subiendo foto...';
-    var onSlow = function(){
-      saveBtn.textContent = '⏳ Subiendo foto... puede tardar por la señal';
     };
-    try {
-      var refId = editingId || ('h' + Date.now());
-      var url = await window.uploadFotoAndGetUrl(fotoFinal, 'hallazgo', refId, onSlow);
-      fotoFinal = url; // ahora es URL pública
-      console.log('Foto subida a Storage:', url);
-    } catch(e) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-      console.warn('Upload foto Hamilton falló:', e && e.message);
-      alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá la foto y guardá sin ella.');
-      return; // no cerrar modal, dejar que el usuario reintente
-    }
-    saveBtn.textContent = originalText;
-    saveBtn.disabled = false;
-  }
-
-  var hall;
-  if(editingId) {
-    var existing = hallazgos.find(function(x){ return x.id===editingId; });
-    // FIX (rev Claude2, mié 20-may-2026): si el polling reemplazó hallazgos
-    // mientras el upload de foto estaba en vuelo (puede tardar 5-30s), el
-    // existing puede ser undefined. Re-crear con el mismo id para que el
-    // merge en server funcione idempotente. Sin esto, la foto quedaba
-    // huérfana en Storage y el hallazgo NO se guardaba.
-    if(!existing) {
-      existing = { id: editingId };
-      hallazgos.push(existing);
-    }
-    if(existing) {
-      existing.quePaso       = desc;
-      existing.condicion     = document.getElementById('hall-condicion').value.trim();
-      existing.criterio      = document.getElementById('hall-criterio').value.trim();
-      existing.causa         = document.getElementById('hall-causa').value.trim();
-      existing.efecto        = document.getElementById('hall-efecto').value.trim();
-      existing.recomendacion = document.getElementById('hall-recomendacion').value.trim();
-      existing.foto          = fotoFinal || null;
-      existing.modificadoPor = currentUser.name;
-      existing.modificadoTs  = new Date().toLocaleString('es');
-      hall = existing;
-      addHist('Modificó hallazgo en '+existing.cont);
-      // GUARANTEED save: write to Supabase directly
-      saveHallazgoDirectToSupabase(hall, 'edit');
-      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
-        .then(function(r){return r.json();})
-        .then(function(d){if(d.ok)lastVersion=d.version;})
-        .catch(function(){});
-    }
-  } else {
-    hall = {
-      id:makeId(), cont:current, quePaso:desc,
-      condicion:document.getElementById('hall-condicion').value.trim(),
-      criterio:document.getElementById('hall-criterio').value.trim(),
-      causa:document.getElementById('hall-causa').value.trim(),
-      efecto:document.getElementById('hall-efecto').value.trim(),
-      recomendacion:document.getElementById('hall-recomendacion').value.trim(),
-      foto:fotoFinal||null,
-      autor:currentUser.name, ts:new Date().toLocaleString('es')
-    };
-    hallazgos.push(hall);
-    addHist('Registró hallazgo en '+current);
-    // GUARANTEED save: write to Supabase directly
-    saveHallazgoDirectToSupabase(hall, 'add');
-    fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({hallazgo:hall, action:'add'})})
-      .then(function(r){return r.json();})
-      .then(function(d){if(d.ok)lastVersion=d.version;})
-      .catch(function(){});
-  }
-  window._hallFotoData=null;
-  window._editingHallId=null;
-  document.getElementById('modal-hallazgo').classList.remove('open');
-  renderHallazgosList();
-  flashMsg('status-bar','ok', editingId ? '✅ Hallazgo modificado.' : '✅ Hallazgo guardado.');
-});
-document.getElementById('modal-hallazgo').addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});
-
-function renderHallazgosList(){
-  var list=document.getElementById('hall-list');
-  var empty=document.getElementById('hall-empty');
-  // FIX (mié 20-may-2026 noche): excluir hallazgos creados desde CDG.
-  // Estos tienen tipo === 'CDG' y se renderizan en renderCDGHallazgosPanel.
-  // Antes aparecían duplicados en ambos listados.
-  var visibleHall = hallazgos.filter(function(h){ return h.tipo !== 'CDG'; });
-  if(!visibleHall.length){
-    list.innerHTML='';
-    if(empty) empty.style.display='';
-    return;
-  }
-  if(empty) empty.style.display='none';
-
-  // Toolbar with Word export
-  var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
-    +'<span style="font-size:.85rem;color:#666">Total: <strong>'+visibleHall.length+'</strong> hallazgo'+(visibleHall.length!==1?'s':'')+' en '+Object.keys(visibleHall.reduce(function(a,h){a[h.cont]=1;return a;},{})).length+' contenedor(es)</span>'
-    +'<button class="btn btn-sm btn-blue" id="btn-hall-word">📥 Exportar Word</button>'
-    +'</div>';
-
-  // Group by container
-  var byCont = {};
-  visibleHall.forEach(function(h){
-    if(!byCont[h.cont]) byCont[h.cont]=[];
-    byCont[h.cont].push(h);
-  });
-  var groupKeys = Object.keys(byCont).sort();
-  var globalIdx = 0;
-  var html = toolbar;
-  groupKeys.forEach(function(cont){
-    html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+escH(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
-    byCont[cont].forEach(function(hh){
-      globalIdx++;
-      var metaLine = [];
-      if(hh.fecha)        metaLine.push('📅 '+escH(hh.fecha));
-      if(hh.turno)        metaLine.push('⏱ '+escH(hh.turno));
-      if(hh.area)         metaLine.push('📍 '+escH(hh.area));
-      if(hh.tipoHallazgo) metaLine.push('🏷 '+escH(hh.tipoHallazgo));
-      html += '<div class="card" style="margin-bottom:.75rem">'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
-        +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
-        +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
-        +'</div>'
-        +(metaLine.length?'<p style="font-size:.72rem;color:#666;margin-bottom:.4rem">'+metaLine.join(' · ')+'</p>':'')
-        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.quePaso||hh.desc||'')+'</p>'
-        +(hh.condicion?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Condición:</strong> '+escH(hh.condicion)+'</p>':'')
-        +(hh.criterio?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Criterio:</strong> '+escH(hh.criterio)+'</p>':'')
-        +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+escH(hh.causa)+'</p>':'')
-        +(hh.efecto?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Efecto:</strong> '+escH(hh.efecto)+'</p>':'')
-        +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+escH(hh.recomendacion)+'</p>':'')
-        +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
-        +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs)+'</p>':'')
-        +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-warn edit-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button>'
-        +(isHallazgoAdmin()?'<button class="btn btn-sm del-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px;background:#c0392b;color:#fff">🗑 Eliminar</button>':'')
-        +'</div>'
-        +'</div>';
-    });
-  });
-  list.innerHTML = html;
-
-  // Wire Word export
-  var btnWord = document.getElementById('btn-hall-word');
-  if(btnWord) btnWord.addEventListener('click', exportHallazgosWord);
-
-  // Wire edit buttons
-  list.querySelectorAll('.edit-hall-btn').forEach(function(btn){
-    btn.addEventListener('click',function(){
-      openHallazgoModal(this.dataset.id);
-    });
-  });
-  // Wire delete buttons (admin only — checked at render time and again on click)
-  list.querySelectorAll('.del-hall-btn').forEach(function(btn){
-    btn.addEventListener('click',function(){
-      if(!isHallazgoAdmin()){ alert('Sin permiso para eliminar.'); return; }
-      var id = this.dataset.id;
-      var h = hallazgos.find(function(x){ return x.id===id; });
-      var label = h ? (h.cont+' — '+(h.quePaso||h.desc||'(sin descripción)').substring(0,60)) : id;
-      if(!confirm('¿Eliminar este hallazgo?\n\n'+label+'\n\nEsta acción NO se puede deshacer.')) return;
-      // Local remove
-      hallazgos = hallazgos.filter(function(x){ return x.id !== id; });
-      // Direct Supabase delete (guarantee)
-      deleteHallazgoDirectToSupabase(id);
-      // Optional server notify (best-effort, no rollback if it fails)
-      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'delete', id:id})})
-        .then(function(r){return r.json();})
-        .then(function(d){if(d&&d.ok)lastVersion=d.version;})
-        .catch(function(){});
-      addHist('Eliminó hallazgo '+(h?h.cont:id));
-      renderHallazgosList();
-      if(typeof renderCDGHallazgosPanel==='function') renderCDGHallazgosPanel();
-      flashMsg('status-bar','ok','✅ Hallazgo eliminado.');
-    });
-  });
-}
-
-// Open the hallazgo modal pre-filled with an existing hallazgo for editing
-function openHallazgoModal(id){
-  var h = hallazgos.find(function(x){ return x.id===id; });
-  if(!h) return;
-  document.getElementById('hall-cont-name').textContent = h.cont||'—';
-  document.getElementById('hall-input').value         = h.quePaso       || '';
-  document.getElementById('hall-condicion').value     = h.condicion     || '';
-  document.getElementById('hall-criterio').value      = h.criterio      || '';
-  document.getElementById('hall-causa').value         = h.causa         || '';
-  document.getElementById('hall-efecto').value        = h.efecto        || '';
-  document.getElementById('hall-recomendacion').value = h.recomendacion || '';
-  // Photo
-  var preview=document.getElementById('hall-foto-preview');
-  var img    =document.getElementById('hall-foto-img');
-  var status =document.getElementById('hall-foto-status');
-  if(h.foto){
-    window._hallFotoData = h.foto;
-    if(img)     img.src=h.foto;
-    if(preview) preview.style.display='';
-    if(status)  status.textContent='Foto existente';
-  } else {
-    window._hallFotoData = null;
-    if(preview) preview.style.display='none';
-    if(img)     img.src='';
-    if(status)  status.textContent='';
-  }
-  // Mark modal as edit mode
-  window._editingHallId = id;
-  setupMic('btn-hall-mic', 'hall-mic-lang', 'hall-mic-status', 'hall-input');
-  document.getElementById('modal-hallazgo').classList.add('open');
-}
-
-// Build and download a single Word document with all hallazgos grouped by container
-function exportHallazgosWord(){
-  // FIX (mié 20-may-2026 noche): mismo filtro que renderHallazgosList — el
-  // Word de Hamilton no debe incluir hallazgos creados desde CDG (tienen su
-  // propio export Word en renderCDGHallazgosPanel).
-  var exportHall = hallazgos.filter(function(h){ return h.tipo !== 'CDG'; });
-  if(!exportHall.length){ alert('No hay hallazgos para exportar.'); return; }
-  var today  = new Date();
-  var fecha  = today.toLocaleDateString('es');
-  var autor  = currentUser ? currentUser.name : '—';
-
-  // Group by container
-  var byCont = {};
-  exportHall.forEach(function(h){
-    if(!byCont[h.cont]) byCont[h.cont]=[];
-    byCont[h.cont].push(h);
-  });
-
-  var sections = '';
-  var globalIdx = 0;
-  Object.keys(byCont).sort().forEach(function(cont){
-    sections += '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:24pt">Contenedor: '+escH(cont)+'</h2>';
-    byCont[cont].forEach(function(h){
-      globalIdx++;
-      sections += '<h3 style="color:#b7770d;margin-top:18pt">Hallazgo #'+globalIdx+'</h3>'
-        +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:11pt">'
-        +'<tr><td style="width:160px;background:#f0f0ee;font-weight:bold">Auditor</td><td>'+escH(h.autor||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Fecha y hora</td><td>'+escH(h.ts||'')+'</td></tr>'
-        +(h.fecha?'<tr><td style="background:#f0f0ee;font-weight:bold">Fecha del hallazgo</td><td>'+escH(h.fecha)+'</td></tr>':'')
-        +(h.turno?'<tr><td style="background:#f0f0ee;font-weight:bold">Turno</td><td>'+escH(h.turno)+'</td></tr>':'')
-        +(h.area?'<tr><td style="background:#f0f0ee;font-weight:bold">Área o proceso</td><td>'+escH(h.area)+'</td></tr>':'')
-        +(h.tipoHallazgo?'<tr><td style="background:#f0f0ee;font-weight:bold">Tipo de hallazgo</td><td>'+escH(h.tipoHallazgo)+'</td></tr>':'')
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">¿Qué pasó?</td><td>'+escH(h.quePaso||h.desc||'')+'</td></tr>'
-        +(h.condicion?'<tr><td style="background:#f0f0ee;font-weight:bold">Condición</td><td>'+escH(h.condicion)+'</td></tr>':'')
-        +(h.criterio?'<tr><td style="background:#f0f0ee;font-weight:bold">Criterio</td><td>'+escH(h.criterio)+'</td></tr>':'')
-        +(h.causa?'<tr><td style="background:#f0f0ee;font-weight:bold">Causa</td><td>'+escH(h.causa)+'</td></tr>':'')
-        +(h.efecto?'<tr><td style="background:#f0f0ee;font-weight:bold">Efecto</td><td>'+escH(h.efecto)+'</td></tr>':'')
-        +(h.recomendacion?'<tr><td style="background:#f0f0ee;font-weight:bold">Recomendación</td><td>'+escH(h.recomendacion)+'</td></tr>':'')
-        +(h.modificadoPor?'<tr><td style="background:#f0f0ee;font-weight:bold">Modificado por</td><td>'+escH(h.modificadoPor)+' · '+escH(h.modificadoTs||'')+'</td></tr>':'')
-        +'</table>'
-        +(h.foto?'<p style="margin-top:6pt"><img src="'+h.foto+'" style="max-width:480px;max-height:360px;border:1px solid #ccc"></p>':'');
-    });
-  });
-
-  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
-    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
-    +'<head><meta charset="utf-8"><title>Hallazgos</title></head>'
-    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
-    +'<h1 style="color:#1a1a1a">Reporte de Hallazgos de Auditoría</h1>'
-    +'<p><strong>Fecha:</strong> '+escH(fecha)+'<br><strong>Exportado por:</strong> '+escH(autor)+'<br>'
-    +'<strong>Total de hallazgos:</strong> '+exportHall.length+'</p>'
-    +sections
-    +'</body></html>';
-
-  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  downloadWordWithImages(docHtml, 'Hallazgos_'+ds+'.doc', 'Reporte de Hallazgos');
-  addHist('Exportó reporte Word de hallazgos ('+exportHall.length+')');
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   ASIGNACIONES (solo supervisores)
-══════════════════════════════════════════════════════════════════ */
-function renderAsignaciones(){
-  var div=document.getElementById('asign-content'); if(!div)return;
-  var allPeople=SUPERVISORES.concat(CONTADORES_LIST);
-  var html='';
-
-  // Asignación de contenedores
-  html+='<div class="collapsible-hdr" id="asign-hdr-main"><span class="ch-title">Asignación de contenedores</span><span class="ch-ico">▼</span></div>';
-  html+='<div id="asign-body-main" class="collapsible-body">';
-  if(!conts.length){html+='<p class="empty">Carga el teórico primero.</p>';}
-  else{
-    conts.forEach(function(c){
-      var assigned=asignaciones[c]||[];
-      var fis=fisico[c];
-      var estado=fis?'<span class="badge b-ok">Contado</span>':assigned.length?'<span class="badge b-diff">En proceso</span>':'<span class="badge b-pend">Pendiente</span>';
-      html+='<div class="asign-row">'
-        +'<div style="flex:1;min-width:120px"><strong style="font-size:.875rem">'+escH(c)+'</strong>'
-        +(teorico[c].cdgValidado?' <span class="badge b-cdg" style="font-size:.65rem">CDG</span>':'')
-        +'<div style="font-size:.75rem;color:#aaa">'+escH(teorico[c].type||'')+'</div></div>'
-        +'<div style="display:flex;flex-wrap:wrap;gap:4px;flex:2">'
-        +assigned.map(function(a){return'<span class="asign-chip">'+escH(a)+'<button data-cont="'+escH(c)+'" data-name="'+escH(a)+'" class="btn-rm-asign">×</button></span>';}).join('')
-        +'</div>'
-        +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'+estado
-        +'<select class="asign-sel" data-cont="'+escH(c)+'" style="font-size:.8rem;padding:5px 8px;border:1px solid #ccc;border-radius:8px;min-height:36px;max-width:150px">'
-        +'<option value="">+ Asignar</option>'
-        +allPeople.filter(function(p){return assigned.indexOf(p)<0;}).map(function(p){return'<option value="'+escH(p)+'">'+escH(p)+'</option>';}).join('')
-        +'</select></div>'
-        +'</div>';
-    });
-  }
-  html+='</div>';
-
-  // Historial del día
-  html+='<div class="collapsible-hdr" id="asign-hdr-hist" style="margin-top:1rem"><span class="ch-title">Historial del día</span><span class="ch-ico">▼</span></div>';
-  html+='<div id="asign-body-hist" class="collapsible-body">';
-  if(!historial.length){html+='<p class="empty">Sin actividad registrada.</p>';}
-  else{
-    var sorted=historial.slice().reverse();
-    html+='<div style="max-height:300px;overflow-y:auto">';
-    sorted.forEach(function(h){html+='<div class="hist-item"><span class="hist-time">'+escH(h.ts)+'</span> <strong>'+escH(h.usuario)+'</strong> — '+escH(h.accion)+'</div>';});
-    html+='</div>';
-  }
-  html+='</div>';
-
-  div.innerHTML=html;
-
-  // Collapsible
-  ['main','hist'].forEach(function(k){
-    var hdr=div.querySelector('#asign-hdr-'+k);
-    var body=div.querySelector('#asign-body-'+k);
-    var ico=hdr&&hdr.querySelector('.ch-ico');
-    if(!hdr||!body)return;
-    hdr.addEventListener('click',function(){
-      var open=body.style.display!=='none';
-      body.style.display=open?'none':'';
-      if(ico)ico.textContent=open?'►':'▼';
-    });
-  });
-
-  // Remove asignación
-  div.querySelectorAll('.btn-rm-asign').forEach(function(btn){
-    btn.addEventListener('click',function(){
-      var c=btn.dataset.cont,n=btn.dataset.name;
-      if(!asignaciones[c])return;
-      asignaciones[c]=asignaciones[c].filter(function(x){return x!==n;});
-      addHist('Quitó a '+n+' de '+c);
-      fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({cont:c,name:n,action:'remove',usuario:currentUser?currentUser.name:'—'})})
-        .then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;});
-      renderAsignaciones();
-    });
-  });
-
-  // Asignar desde select
-  div.querySelectorAll('.asign-sel').forEach(function(sel){
-    sel.addEventListener('change',function(){
-      var c=sel.dataset.cont,n=sel.value;
-      if(!n)return;
-      if(!asignaciones[c])asignaciones[c]=[];
-      if(asignaciones[c].indexOf(n)<0){
-        asignaciones[c].push(n);
-        addHist('Asignó a '+n+' en '+c);
-        fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({cont:c,name:n,action:'add',usuario:currentUser?currentUser.name:'—'})})
-          .then(function(r){return r.json();}).then(function(d){if(d.ok)lastVersion=d.version;});
-      }
-      renderAsignaciones();
-    });
-  });
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   CDG → HAMILTON
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('btn-cdg-add-sku').addEventListener('click',function(){
-  var sku  = document.getElementById('cdg-sku').value.trim();
-  var desc = document.getElementById('cdg-desc').value.trim();
-  var qty  = parseFloat(document.getElementById('cdg-qty').value)||0;
-  if(!sku){showMsg('cdg-msg','warn','Ingresa el SKU.');return;}
-  if(!qty){showMsg('cdg-msg','warn','Ingresa una cantidad mayor a 0.');return;}
-  var costo = getCosto(sku) || 0;
-  if(!desc) desc = sku;
-  cdgSkus.push({sku:sku, desc:desc, qty:qty, costo:costo, foto:null});
-  renderCDGSkuList();
-  document.getElementById('cdg-sku').value='';
-  document.getElementById('cdg-desc').value='';
-  document.getElementById('cdg-qty').value='';
-  document.getElementById('cdg-costo').value='';
-  document.getElementById('cdg-desc-auto').textContent='';
-  document.getElementById('cdg-sku').focus();
-  // Auto-save to server after each SKU added (and directly to Supabase as backup)
-  var u25Auto = (document.getElementById('cdg-u25')||{}).value||'';
-  if(u25Auto.trim()) {
-    var tipoAuto = (document.getElementById('cdg-tipo')||{}).value||'CDG';
-    if(tipoAuto==='otro'){var oi=document.getElementById('cdg-tipo-otro');tipoAuto=oi&&oi.value.trim()||'Otro';}
-    // FIX (rev Claude 2, mié 20-may-2026 noche, sesión 2): Opción A.
-    // Antes este auto-save enviaba cdgFotos con base64 directo →
-    // PayloadTooLargeError 5MB cada vez que un usuario agregaba un SKU
-    // teniendo fotos cargadas en memoria. El auto-save es para captar
-    // SKUs en tiempo real, no fotos — las fotos viajan en Guardar
-    // Progreso (btn-cdg-save-draft) o Finalizar (btn-cdg-finish), ambos
-    // con subida a Storage previa.
-    // Solo se incluyen fotos que YA son URLs (Storage), nunca base64.
-    var fotosSoloUrl = {};
-    Object.keys(cdgFotos).forEach(function(k){
-      var v = cdgFotos[k];
-      if(v && typeof v === 'string' && v.indexOf('http') === 0) {
-        fotosSoloUrl[k] = v;
-      }
-      // Si es base64 (data:) o null/undefined, se omite del auto-save.
-    });
-    var fotoGralAuto = fotosSoloUrl.marchamo || (
-      cdgFotoGral && typeof cdgFotoGral === 'string' && cdgFotoGral.indexOf('http') === 0
-        ? cdgFotoGral : null
-    );
-    var conteoAutoData = {
-      items: cdgSkus.slice(),
-      status: 'open',
-      autor: currentUser?currentUser.name:'—',
-      fecha: new Date().toLocaleDateString('es'),
-      tipo: tipoAuto,
-      fotoGral: fotoGralAuto,
-      fotos: fotosSoloUrl,
-      lastEditor: currentUser?currentUser.name:'—',
-      ts: new Date().toLocaleString('es')
-    };
-    saveCDGDirectToSupabase(u25Auto.trim(), conteoAutoData);
-    fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({contId:u25Auto.trim(),items:cdgSkus.slice(),tipo:tipoAuto,
-        fotoGral:fotoGralAuto,
-        fotos:fotosSoloUrl,
-        usuario:currentUser?currentUser.name:'—'})})
-      .catch(function(){ /* already saved direct */ });
-  }
-});
-document.getElementById('cdg-sku').addEventListener('blur', function(){
-  var sku = this.value.trim();
-  if(!sku) return;
-  var costo = getCosto(sku);
-  var costoInp = document.getElementById('cdg-costo');
-  var autoLbl  = document.getElementById('cdg-desc-auto');
-  if(costo) {
-    if(costoInp) costoInp.value = 'Q'+Number(costo).toFixed(2);
-    if(autoLbl)  autoLbl.textContent = '✓ Costo encontrado';
-  } else {
-    if(costoInp) costoInp.value = 'No encontrado';
-    if(autoLbl)  autoLbl.textContent = '';
-  }
-});
-
-// FIX (sáb 30-may-2026, v5.2.27): al salir del campo U25, verificar si ya
-// existe un conteo para ese correlativo. Si hay items guardados de otro
-// usuario, cargarlos en cdgSkus para que el form muestre lo que ya hay y
-// no se pueda guardar encima accidentalmente.
-document.getElementById('cdg-u25').addEventListener('blur', function(){
-  var u25 = this.value.trim();
-  if(!u25 || cdgSkus.length > 0) return; // ya tiene items en pantalla, no pisar
-  fetch('/api/cdg')
-    .then(function(r){ return r.json(); })
-    .then(function(cdgState){
-      var existente = cdgState[u25];
-      if(!existente || !existente.items || existente.items.length === 0) return;
-      var autor = existente.autor || 'otro usuario';
-      if(existente.status === 'locked') {
-        showMsg('cdg-msg','warn','Este conteo está BLOQUEADO (finalizado por '+autor+'). Solo un supervisor puede desbloquearlo.');
-        return;
-      }
-      if(existente.items.length > 0) {
-        var cargar = confirm(
-          '⚠️ '+u25+' ya tiene '+existente.items.length+' líneas guardadas por '+autor+'.\n\n'+
-          '¿Cargar esas líneas para continuar desde donde quedaron?\n\n'+
-          '(Si elegís NO, cualquier guardado sobreescribirá los datos existentes.)'
-        );
-        if(cargar) {
-          cdgSkus = existente.items.slice();
-          if(existente.fotos) cdgFotos = Object.assign({}, existente.fotos);
-          if(existente.tipo) {
-            var tipoSel = document.getElementById('cdg-tipo');
-            if(tipoSel) tipoSel.value = existente.tipo;
-          }
-          renderCDGSkuList();
-          if(typeof renderCDGFotoGrid === 'function') renderCDGFotoGrid();
-          showMsg('cdg-msg','ok','✓ Cargadas '+cdgSkus.length+' líneas de '+autor+'. Podés continuar agregando.');
-        }
-      }
-    })
-    .catch(function(){}); // silencioso si no hay conexión
-});
-
-function renderCDGSkuList(){
-  var el=document.getElementById('cdg-sku-list');
-  if(!el) return;
-  if(!cdgSkus.length){el.innerHTML='';return;}
-  var html='<div class="tbl-wrap" style="margin-bottom:.75rem"><table>'
-    +'<thead><tr><th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th class="tc">Costo</th><th class="tc">Evidencia</th><th></th></tr></thead><tbody>';
-  cdgSkus.forEach(function(sk,i){
-    var hasFoto = sk.foto ? '✓ Foto' : '';
-    html+='<tr>'
-      +'<td>'+escH(sk.sku)+'</td>'
-      +'<td>'+escH(sk.desc)+'</td>'
-      +'<td class="tc">'+sk.qty+'</td>'
-      +'<td class="tc" style="font-size:.78rem;color:#888">'+(sk.costo?'Q'+Number(sk.costo).toFixed(2):'—')+'</td>'
-      +'<td class="tc">'
-        +(sk.foto?'<img src="'+escH(sk.foto)+'" style="height:32px;border-radius:4px;border:1px solid #e0e0e0">':'')
-        +'<button class="btn btn-sm cdg-foto-line-btn" data-i="'+i+'" style="font-size:.72rem;padding:2px 6px;min-height:28px;margin-left:4px">📷</button>'
-        +'<input type="file" class="cdg-foto-line-input" data-i="'+i+'" accept="image/*" style="display:none">'
-      +'</td>'
-      +'<td class="tc"><button class="cdg-del-sku btn btn-sm" data-i="'+i+'" style="color:#c0392b;font-size:.9rem;min-height:28px">×</button></td>'
-      +'</tr>';
-  });
-  html+='</tbody></table></div>';
-  el.innerHTML=html;
-  el.querySelectorAll('.cdg-del-sku').forEach(function(btn){
-    btn.addEventListener('click',function(){ cdgSkus.splice(+this.dataset.i,1); renderCDGSkuList(); });
-  });
-  el.querySelectorAll('.cdg-foto-line-btn').forEach(function(btn){
-    btn.addEventListener('click',function(){ el.querySelectorAll('.cdg-foto-line-input')[+this.dataset.i].click(); });
-  });
-  el.querySelectorAll('.cdg-foto-line-input').forEach(function(inp){
-    // FIX (jue 21-may-2026 madrugada): subir foto a Storage al MOMENTO de
-    // seleccionarla, no al guardar. Antes guardaba base64 en cdgSkus[i].foto
-    // → inflaba el state → PayloadTooLargeError en auto-save SKU y al
-    // guardar/finalizar. Ahora cdgSkus[i].foto siempre es una URL (~150
-    // bytes) o null. Patrón inspirado en la migración de hallazgos.
-    inp.addEventListener('change', async function(){
-      var i = +this.dataset.i;
-      var file = this.files[0];
-      if(!file) return;
-      if(this.disabled) return; // evita doble selección concurrente
-
-      // FIX (rev Claude 2, jue 21-may-2026): capturar referencia al SKU
-      // por identidad de objeto, no por índice. Si el usuario elimina otro
-      // SKU mientras la foto sube, el índice i deja de apuntar al SKU
-      // original. Usar indexOf(skuRef) al asignar previene asignar la
-      // foto al SKU equivocado.
-      var skuRef = cdgSkus[i];
-      if(!skuRef) return;
-
-      // FIX (rev ChatGPT, jue 21-may-2026): bloquear foto si U25 vacío.
-      // Antes se permitía con fallback tmp_<ts>. Funcional pero confuso
-      // operativamente: las fotos quedaban descolgadas de su correlativo
-      // en Storage. Forzar U25 primero ordena el flujo.
-      var u25Now = (document.getElementById('cdg-u25')||{}).value||'';
-      if(!u25Now.trim()) {
-        try { this.value = ''; } catch(_e){}
-        alert('Primero escribí el correlativo U25.');
-        return;
-      }
-
-      // Leer el archivo como data URL para pasárselo a uploadFotoAndGetUrl
-      var dataUrl;
-      try {
-        dataUrl = await new Promise(function(resolve, reject){
-          var reader = new FileReader();
-          reader.onload = function(e){ resolve(e.target.result); };
-          reader.onerror = function(){ reject(new Error('No se pudo leer el archivo')); };
-          reader.readAsDataURL(file);
-        });
-      } catch(e) {
-        console.warn('Read foto SKU falló:', e && e.message);
-        alert('No se pudo leer el archivo. Intentá otra vez.');
-        return;
-      }
-
-      // Feedback visual mientras sube. Modificamos el botón hermano (el 📷).
-      var btnFoto = this.parentElement && this.parentElement.querySelector('.cdg-foto-line-btn');
-      var originalBtnText = btnFoto ? btnFoto.textContent : null;
-      this.disabled = true;
-      if(btnFoto) {
-        btnFoto.textContent = '⏳';
-        btnFoto.disabled = true;
-      }
-
-      // Sanitizar U25 y SKU para path
-      var safeU25 = String(u25Now.trim()).replace(/[^A-Za-z0-9_\-]/g, '_');
-      var skuCode = skuRef.sku ? String(skuRef.sku).replace(/[^A-Za-z0-9_\-]/g, '_') : ('idx' + i);
-      var refId = safeU25 + '_sku_' + skuCode;
-
-      // FIX (rev ChatGPT, jue 21-may-2026): mensaje menos técnico.
-      var onSlow = function(){
-        if(btnFoto) btnFoto.textContent = '⏳ señal lenta...';
-      };
-
-      try {
-        var url = await window.uploadFotoAndGetUrl(dataUrl, 'cdg-sku', refId, onSlow);
-        // FIX (rev Claude 2, jue 21-may-2026): asignar por identidad del
-        // objeto, NO por índice. Si el array se reordenó (eliminación de
-        // otro SKU), indexOf(skuRef) encuentra la posición correcta. Si
-        // skuRef ya fue eliminado, devuelve -1 y registramos foto huérfana.
-        var currentIdx = cdgSkus.indexOf(skuRef);
-        if(currentIdx >= 0) {
-          cdgSkus[currentIdx].foto = url;
-          console.log('CDG SKU foto subida (' + skuCode + '):', url);
-        } else {
-          console.warn('SKU "' + skuCode + '" eliminado durante upload. Foto huérfana en Storage:', url);
-        }
-        renderCDGSkuList();
-      } catch(e) {
-        console.warn('Upload foto SKU falló:', e && e.message);
-        // FIX (rev ChatGPT, jue 21-may-2026): mensaje más operativo.
-        alert('No se pudo guardar la foto de este SKU. Intentá otra vez. Si sigue fallando, dejá el SKU guardado sin foto.');
-      } finally {
-        // Restaurar UI — renderCDGSkuList recrea elementos, pero por si acaso:
-        try { this.disabled = false; this.value = ''; } catch(_e){}
-        if(btnFoto) {
-          btnFoto.disabled = false;
-          if(originalBtnText) btnFoto.textContent = originalBtnText;
-        }
-      }
-    });
-  });
-}
-
-document.getElementById('btn-cdg-finish').addEventListener('click',async function(){
-  var u25  = document.getElementById('cdg-u25').value.trim();
-  var tipoSel = document.getElementById('cdg-tipo').value;
-  var tipo = tipoSel==='otro'
-    ? (document.getElementById('cdg-tipo-otro').value.trim()||'Otro')
-    : tipoSel;
-  if(!u25){showMsg('cdg-msg','warn','Ingresa el correlativo U25.');return;}
-  if(!cdgSkus.length){showMsg('cdg-msg','warn','Agrega al menos un SKU.');return;}
-  if(!confirm('¿Finalizar y bloquear el conteo '+u25+'? Solo un supervisor podrá desbloquearlo.')){return;}
-
-  var btnFinish = this;
-
-  // FIX (mié 20-may-2026): subir TODAS las fotos del CDG a Storage antes de
-  // armar el payload. Antes incluíamos base64 directo en el JSON → state
-  // crecía y PayloadTooLargeError. Ahora cada foto va a Supabase Storage
-  // y guardamos solo la URL.
-  var fotosOriginales = Object.assign({}, cdgFotos);
-  var fotosFinales = {};
-  var fotoGralFinal = null;
-
-  // Contar fotos a subir para mostrar progreso
-  var fotosABubir = [];
-  Object.keys(fotosOriginales).forEach(function(slotKey){
-    var data = fotosOriginales[slotKey];
-    if(data && typeof data === 'string' && data.indexOf('data:') === 0) {
-      fotosABubir.push(slotKey);
-    } else if(data) {
-      // Ya es URL u otra cosa, no re-subir
-      fotosFinales[slotKey] = data;
-    }
-  });
-
-  if(fotosABubir.length > 0) {
-    btnFinish.disabled = true;
-    var originalText = btnFinish.textContent;
-    showMsg('cdg-msg', 'ok', '⏳ Subiendo ' + fotosABubir.length + ' foto(s)... no cierres la app.');
-
-    var safeU25 = String(u25).replace(/[^A-Za-z0-9_\-]/g, '_');
-    try {
-      for(var i=0; i<fotosABubir.length; i++){
-        var slotKey = fotosABubir[i];
-        btnFinish.textContent = '⏳ Foto ' + (i+1) + '/' + fotosABubir.length + '...';
-        // kind: cdg-gral para 'marchamo', cdg-sku para el resto
-        var kind = (slotKey === 'marchamo') ? 'cdg-gral' : 'cdg-sku';
-        var refId = safeU25 + '_' + slotKey;
-        var onSlowCdg = (function(idx, total){
-          return function(){
-            btnFinish.textContent = '⏳ Foto ' + (idx+1) + '/' + total + '... puede tardar por la señal';
-          };
-        })(i, fotosABubir.length);
-        try {
-          var url = await window.uploadFotoAndGetUrl(fotosOriginales[slotKey], kind, refId, onSlowCdg);
-          fotosFinales[slotKey] = url;
-          console.log('CDG foto subida (' + slotKey + '):', url);
-        } catch(e) {
-          btnFinish.disabled = false;
-          btnFinish.textContent = originalText;
-          // FIX (rev ChatGPT): mostrar cuántas fotos ya están guardadas
-          // para que el usuario sepa que puede reintentar SOLO la que falló.
-          var yaGuardadas = i; // las anteriores (0..i-1) tuvieron éxito
-          var totalFotos = fotosABubir.length;
-          var msgYa = yaGuardadas > 0
-            ? '\n\nFotos ya guardadas: ' + yaGuardadas + ' de ' + totalFotos + '.'
-            : '';
-          alert('No se pudo guardar la foto "' + slotKey + '". Intentá otra vez. Si vuelve a fallar, quitá esa foto y finalizá sin ella.' + msgYa + '\n\nDetalle: ' + e.message);
-          showMsg('cdg-msg', 'err', '⚠️ Error subiendo fotos. Reintentá.');
-          return;
-        }
-      }
-    } finally {
-      btnFinish.disabled = false;
-      btnFinish.textContent = originalText;
-    }
-  }
-
-  // fotoGral: usamos la URL ya subida de marchamo, o cdgFotoGral si era URL
-  fotoGralFinal = fotosFinales.marchamo || (
-    cdgFotoGral && typeof cdgFotoGral === 'string' && cdgFotoGral.indexOf('http') === 0
-      ? cdgFotoGral
-      : null
-  );
-
-  var fotoGral = fotoGralFinal;
-  var fotos    = fotosFinales;
-  var conteo = {
-    u25:u25, tipo:tipo, skus:cdgSkus.slice(),
-    fotoGral:fotoGral, fotos:fotos,
-    autor:currentUser?currentUser.name:'—',
-    ts:new Date().toLocaleString('es'), bloqueado:true
-  };
-
-  // Anti-duplicado: si ya existe fusionar
-  var existente=Object.keys(teorico).find(function(c){return c.toLowerCase()===u25.toLowerCase();});
-  if(existente){
-    cdgSkus.forEach(function(cs){
-      var found=teorico[existente].items.find(function(it){return it.sku===cs.sku;});
-      if(found){found.qty=cs.qty;}
-      else{teorico[existente].items.push({sku:cs.sku,desc:cs.desc,qty:cs.qty,raw:{}});}
-    });
-    teorico[existente].cdgValidado=true;
-    teorico[existente].cdgBloqueado=true;
-  } else {
-    teorico[u25]={
-      items:cdgSkus.map(function(s){return{sku:s.sku,desc:s.desc,qty:s.qty,raw:{}};}),
-      type:tipo, cdgValidado:true, cdgBloqueado:true
-    };
-    fisico[u25]=null;
-  }
-
-  addHist('Finalizó y bloqueó CDG: '+u25+' ('+cdgSkus.length+' SKUs)');
-
-  var conteoData = {
-    items: cdgSkus.slice(),
-    status: 'closed',
-    autor: currentUser?currentUser.name:'—',
-    fecha: new Date().toLocaleDateString('es'),
-    tipo: tipo,
-    fotoGral: fotoGral,
-    fotos: fotos,
-    bloqueado: true,
-    ts: new Date().toLocaleString('es')
-  };
-
-  // Save to BOTH Render and Supabase direct (Render may be sleeping)
-  // FIX (rev Claude2, mié 20-may-2026): NO mostrar éxito incondicional.
-  // Antes el código mostraba "✅ finalizado" sin esperar respuesta del server,
-  // ocultando errores del nuevo handling async. Ahora esperamos confirmación
-  // o mostramos error claro.
-  saveCDGDirectToSupabase(u25, conteoData);
-  fetch('/api/cdg/finalizar',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({contId:u25,tipo:tipo,items:cdgSkus.slice(),
-      fotoGral:fotoGral, fotos:fotos, usuario:currentUser?currentUser.name:'—',bloqueado:true})})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok){
-        lastVersion=-1; pollNow();
-        showMsg('cdg-msg','ok','✅ Conteo <strong>'+escH(u25)+'</strong> finalizado y bloqueado. Aparece en Hamilton → Traslados CDG.');
-      } else {
-        // Server respondió con error. NO limpiar el form para que el usuario
-        // pueda reintentar sin reescribir todo.
-        var msg = '⚠️ ' + (d.error || 'No se pudo guardar el CDG. Reintentá.');
-        showMsg('cdg-msg','err', msg);
-        alert(msg);
-        return; // skip el reset del form de abajo
-      }
-      // Solo limpiar form si guardó OK
-      cdgSkus=[]; cdgFotos={}; cdgFotoGral=null; renderCDGSkuList(); renderCDGFotoGrid();
-      document.getElementById('cdg-u25').value='';
-    })
-    .catch(function(e){
-      // Error de red. saveCDGDirectToSupabase ya intentó guardar directo,
-      // pero no podemos asegurar éxito. Mejor que el usuario reintente.
-      var msg = '⚠️ Error de red al finalizar CDG. Verificá conexión y reintentá.';
-      showMsg('cdg-msg','err', msg);
-      alert(msg);
-    });
-});
-
-/* ══════════════════════════════════════════════════════════════════
-   COSTOS SAP
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('btn-load-cost').addEventListener('click',function(){document.getElementById('cost-input').click();});
-document.getElementById('cost-input').addEventListener('change',function(){if(this.files&&this.files[0])loadCostFile(this.files[0]);});
-
-function loadCostFile(fileObj){
-  var name = fileObj.name;
-  var cs = document.getElementById('cost-status');
-  if(cs){ cs.textContent='Procesando...'; cs.style.color='#888'; }
-  var reader = new FileReader();
-  reader.onload = async function(ev){
-    try{
-      var wb = await XLSX.readAsync(ev.target.result);
-      var sheetName = wb.SheetNames[0];
-      for(var si=0;si<wb.SheetNames.length;si++){
-        var nl=wb.SheetNames[si].toLowerCase();
-        if(nl.indexOf('existencia')>=0||nl.indexOf('sap')>=0||nl.indexOf('costo')>=0){sheetName=wb.SheetNames[si];break;}
-      }
-      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,defval:'',raw:false});
-      if(!rows||rows.length<2){if(cs)cs.textContent='✗ Archivo vacío';return;}
-      var hdr = rows[0].map(function(h){return norm(h);});
-      var colSku  = findCol(hdr,['articulo','artículo','sku','codigo','código']);
-      var colCost = findCol(hdr,['costo promedio','costo_promedio','precio promedio','costo']);
-      if(colSku<0||colCost<0){
-        if(cs)cs.textContent='✗ No se encontraron columnas SKU/Costo. Cols: '+rows[0].slice(0,6).join(' | ');
-        return;
-      }
-      var raw_costos={};
-      for(var i=1;i<rows.length;i++){
-        var sku=String(rows[i][colSku]||'').trim();
-        var cost=parseFloat(String(rows[i][colCost]).replace(',','.'));
-        if(sku&&!isNaN(cost)&&cost>0){
-          if(!raw_costos[sku])raw_costos[sku]={sum:0,count:0};
-          raw_costos[sku].sum+=cost;
-          raw_costos[sku].count+=1;
-        }
-      }
-      costos={};
-      var count=0;
-      Object.keys(raw_costos).forEach(function(sku){
-        costos[sku]=raw_costos[sku].sum/raw_costos[sku].count;
-        count++;
-      });
-      if(cs){cs.textContent='✓ '+name+' — '+count+' SKUs';cs.style.color='#1e7e34';}
-      var btn=document.getElementById('btn-load-cost'); if(btn) btn.textContent='Actualizar costos';
-      flashMsg('status-bar','ok','✓ Costos cargados: '+count+' SKUs');
-      // FIX (rev Claude2, mié 20-may-2026): NO tragar errores silenciosamente.
-      // Antes el .catch(function(){}) ocultaba cualquier fallo de guardado en
-      // Supabase. Si Supabase fallaba, los costos solo vivían en memoria y se
-      // perdían al primer restart de Render.
-      fetch('/api/costos-save',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({costos:costos})})
-        .then(function(r){return r.json();})
-        .then(function(d){
-          if(!d.ok) {
-            var msg = '⚠️ ' + (d.error || 'Los costos no se guardaron permanentemente. Reintentá.');
-            flashMsg('status-bar','err', msg);
-            alert(msg);
-          }
-        })
-        .catch(function(e){
-          var msg = '⚠️ Error de red al guardar costos: ' + e.message + '. Reintentá.';
-          flashMsg('status-bar','err', msg);
-          alert(msg);
-        });
-    }catch(err){
-      if(cs)cs.textContent='✗ Error: '+err.message;
-      console.error('Cost load error:', err);
-    }
-  };
-  reader.readAsArrayBuffer(fileObj);
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   EXPORT PT-ANALÍTICA
-══════════════════════════════════════════════════════════════════ */
-
-// FIX (dom 24-may-2026): los 6 helpers de export estaban anidados dentro
-// de exportExcel() (closure local). Eso impedía que exportCDGAnalitica
-// (función global) los usara — tiraba "getClasifContenedor is not defined".
-// Solución: extraerlos a scope global. Las declaraciones function se
-// hoistean en su scope, así que exportExcel() los sigue usando por
-// closure léxico igual que antes.
-
-// Helper: origen description (works for both embarques and traslados)
-function getOrigenDesc(nomProv, origenCod){
-  // Traslado: check origen code first (lógica del comparativo Ever García 22-may)
-  // Primera letra del Origen: 7→Carga Global Z21, 4→CATM2, 5→Tical Unisur 4, T→Tical Unisur 3
-  // Lo que no esté en eso es CDG.
-  var cod = String(origenCod||'').trim();
-  if(cod){
-    // FIX (sáb 23-may-2026, rev Claude2): respetar KTM como categoría propia.
-    // El server v13 marca raw.origen='KTM' al finalizar conteos CDG con tipo='KTM'.
-    // Antes todos caían al fallback "CDG", mezclando KTM con CDG en el export.
-    // Ever García confirmó 23-may que KTM debe verse como categoría distinta.
-    // NOTA: la opción "Otro..." del select CDG no se usa en producción hoy;
-    // si en el futuro se usa, hay que cerrar el flujo cliente→server→export
-    // (Claude2 detectó que el texto libre del usuario se exporta como "CDG").
-    // Documentado en backlog.
-    var codUpper = cod.toUpperCase();
-    if(codUpper === 'KTM') return 'KTM';
-    var first = cod.charAt(0).toUpperCase();
-    if(first === '7') return 'Carga Global Z21';
-    if(first === '4') return 'CATM2';
-    if(first === '5') return 'Tical Unisur 4';
-    if(first === 'T') return 'Tical Unisur 3';
-    return 'CDG';
-  }
-  // Embarque: check provider name (lógica del comparativo Ever García 22-may)
-  // LONGTAI TRADING FZCO → Truper China; TRUPER HERRAMIENTAS → Truper México
-  var p = String(nomProv||'').toUpperCase();
-  if(p.indexOf('LONGTAI')>=0||p.indexOf('CHINA')>=0) return 'Truper China';
-  if(p.indexOf('TRUPER')>=0) return 'Truper México';
-  return nomProv||cod||'';
-}
-
-// Helper: cobertura
-function getCobertura(fiObj){
-  if(!fiObj) return 'En revisión';
-  if(fiObj.cobertura) return fiObj.cobertura;
-  if(fiObj.fisico!==undefined && fiObj.fisico!==null && fiObj.fisico!=='') return 'Auditado';
-  return 'En revisión';
-}
-
-// FIX (sáb 23-may-2026): helpers nuevos para los exportables Embarques+Traslados
-// según el comparativo validado por Ever García.
-
-// Helper: mapping de Status del WMS → Status sistema (lógica de cadena)
-// Por Recibir → Recibiendose | Recibiendose → Ubicandose | Ubicandose → Cerrados | Cerrados → Cerrados
-function mapStatusSistema(status){
-  var s = String(status||'').trim().toLowerCase();
-  if(!s) return '';
-  if(s.indexOf('por recibir')>=0) return 'Recibiendose';
-  if(s.indexOf('recibiend')>=0) return 'Ubicandose';
-  if(s.indexOf('ubicand')>=0) return 'Cerrados';
-  if(s.indexOf('cerrad')>=0) return 'Cerrados';
-  return status || '';
-}
-
-// Helper: formatear cualquier fecha a DD/MM/AAAA.
-// Acepta: 'YYYY-MM-DD', 'DD/MM/YYYY', 'DD-MM-YYYY', Date, número Excel, ISO.
-// Devuelve '' si no se puede parsear.
-function fmtFechaDMA(val){
-  if(val === null || val === undefined || val === '') return '';
-  var s = String(val).trim();
-  if(!s) return '';
-  // Si ya está en formato DD/MM/YYYY, devolvemos tal cual
-  var m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if(m){
-    var d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3];
-    if(y.length===2) y = '20'+y;
-    // Detectar si viene como YYYY-MM-DD (año primero)
-    if(parseInt(m[1],10) > 31){
-      return m[3].padStart(2,'0')+'/'+mo+'/'+m[1];
-    }
-    return d+'/'+mo+'/'+y;
-  }
-  // YYYY-MM-DD ISO (con T opcional)
-  var m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(m2){
-    return m2[3]+'/'+m2[2]+'/'+m2[1];
-  }
-  // Intentar parsear como Date
-  try {
-    var d2 = new Date(s);
-    if(!isNaN(d2.getTime())){
-      var dd = String(d2.getDate()).padStart(2,'0');
-      var mm = String(d2.getMonth()+1).padStart(2,'0');
-      var yy = d2.getFullYear();
-      return dd+'/'+mm+'/'+yy;
-    }
-  } catch(_e){}
-  return s;
-}
-
-// Helper: clasificación efectiva del contenedor (manual si existe, automática si no)
-// Replica la lógica de buildReporte para que el export refleje exactamente lo que
-// el supervisor ve en el Resumen.
-function getClasifContenedor(contId){
-  var t = teorico[contId];
-  if(!t) return '';
-  // 1) Override manual del supervisor (v5.2.7+)
-  if(t.clasificacion) return t.clasificacion;
-  // 2) Automática: por % cobertura
-  var items = t.items || [];
-  var fis = fisico[contId];
-  var lineasContadas = 0;
-  if(fis){
-    for(var k=0;k<fis.length;k++){
-      var fObj = fis[k];
-      if(fObj && fObj.fisico !== undefined && fObj.fisico !== null && fObj.fisico !== ''){
-        lineasContadas++;
-      } else if(typeof fObj === 'number' && !isNaN(fObj)){
-        lineasContadas++;
-      }
-    }
-  }
-  var cobertura = items.length > 0 ? Math.round((lineasContadas / items.length) * 100) : 0;
-  if(cobertura >= 100) return 'Auditado';
-  if(cobertura > 0)    return 'En Revisión';
-  return 'No auditado';
-}
-
-// Helper: fecha de trabajo del contenedor (la que aparece en el Resumen).
-// FIX bug 3a (vie 22-may-2026 PM): el export usaba la fecha de descarga del Excel,
-// pero el equipo necesita la fecha asignada al contenedor (fechaCarga del teorico).
-function getFechaTrabajo(contId){
-  var t = teorico[contId];
-  if(!t || !t.fechaCarga) return '';
-  return fmtFechaDMA(t.fechaCarga);
-}
-
-// FIX (dom 24-may-2026, v5.2.22): Modal de alerta WMS.
-// Muestra los cambios pendientes que el WMS reportó para un contenedor
-// "congelado" (que ya tiene físico contado). Permite al supervisor:
-//   - Ver detalle de cambios (líneas eliminadas, agregadas, cantidades modificadas)
-//   - Decidir si sincronizar (sobreescribe items con los del WMS) o ignorar
-// Solo supervisores pueden sincronizar. El resto solo ve el detalle.
-function showWMSAlertModal(cont){
-  var alerta = alertasWMS && alertasWMS[cont];
-  if(!alerta) {
-    if(typeof showToast === 'function') showToast('No hay alerta WMS para este contenedor', 'warn');
-    return;
-  }
-
-  var diffs = Array.isArray(alerta.diffs) ? alerta.diffs : [];
-  var esSup = typeof isSup === 'function' && isSup();
-
-  // Construir HTML del detalle
-  var detalleHtml = '';
-  if(diffs.length === 0) {
-    detalleHtml = '<p style="color:#888">Sin diferencias específicas reportadas.</p>';
-  } else {
-    detalleHtml += '<div style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px">';
-    detalleHtml += '<table style="width:100%;font-size:.82rem;border-collapse:collapse">';
-    detalleHtml += '<thead style="background:#f5f5f5"><tr>'
-      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">Cambio</th>'
-      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">SKU</th>'
-      +'<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e0e0e0">Detalle</th>'
-      +'</tr></thead><tbody>';
-    diffs.forEach(function(d){
-      var tipoLabel = '', tipoColor = '#666', detalle = '';
-      if(d.tipo === 'eliminado') {
-        tipoLabel = '🗑️ Eliminado';
-        tipoColor = '#c0392b';
-        detalle = 'Cantidad antes: ' + (d.qty || '—');
-      } else if(d.tipo === 'agregado') {
-        tipoLabel = '➕ Agregado';
-        tipoColor = '#27ae60';
-        detalle = 'Cantidad nueva: ' + (d.qty || '—');
-      } else if(d.tipo === 'qty_cambio') {
-        tipoLabel = '✏️ Cantidad';
-        tipoColor = '#d68910';
-        detalle = (d.qtyAntes || '—') + ' → ' + (d.qtyNueva || '—');
-      }
-      detalleHtml += '<tr>'
-        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;color:'+tipoColor+';font-weight:600">'+tipoLabel+'</td>'
-        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace">'+escH(d.sku||'')+'</td>'
-        +'<td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">'+escH(detalle)+'</td>'
-        +'</tr>';
-    });
-    detalleHtml += '</tbody></table></div>';
-    if(alerta.totalDiffs > diffs.length) {
-      detalleHtml += '<p style="font-size:.78rem;color:#888;margin-top:8px">Mostrando '+diffs.length+' de '+alerta.totalDiffs+' cambios (resto omitido).</p>';
-    }
-  }
-
-  // Construir modal HTML
-  var modalId = 'modal-wms-alert';
-  var existing = document.getElementById(modalId);
-  if(existing) existing.remove();
-
-  var modal = document.createElement('div');
-  modal.id = modalId;
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
-  modal.innerHTML = ''
-    +'<div style="background:#fff;border-radius:10px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:1.5rem;box-shadow:0 10px 40px rgba(0,0,0,.2)">'
-    +  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">'
-    +    '<h3 style="margin:0;font-size:1.1rem;color:#856404">⚠ Cambios pendientes del WMS</h3>'
-    +    '<button id="wms-modal-close" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#888;padding:0 8px">×</button>'
-    +  '</div>'
-    +  '<div style="background:#fff3cd;border:1px solid #ffeaa7;border-radius:6px;padding:.75rem;margin-bottom:1rem;font-size:.85rem;color:#856404">'
-    +    '<strong>Contenedor: '+escH(cont)+'</strong><br>'
-    +    'Este contenedor ya tiene físico contado, por eso el WMS no lo actualizó automáticamente. '
-    +    'Detectado el '+escH(alerta.detectadoEn||'—')+'. Líneas antes: '+(alerta.itemsAntes||0)+', líneas nuevas: '+(alerta.itemsNuevos||0)+'.'
-    +  '</div>'
-    +  '<h4 style="font-size:.9rem;margin:1rem 0 .5rem">Detalle de cambios ('+alerta.totalDiffs+'):</h4>'
-    +  detalleHtml
-    +  '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;flex-wrap:wrap">'
-    +    '<button id="wms-modal-cancel" class="btn" style="background:#f0f0f0;color:#333">Cerrar sin sincronizar</button>'
-    +    (esSup
-      ? '<button id="wms-modal-sync" class="btn" style="background:#d68910;color:#fff;font-weight:600">🔄 Sincronizar con WMS</button>'
-      : '<span style="font-size:.78rem;color:#888;align-self:center">Solo supervisores pueden sincronizar</span>')
-    +  '</div>'
-    +'</div>';
-  document.body.appendChild(modal);
-
-  function closeModal(){ if(modal && modal.parentNode) modal.parentNode.removeChild(modal); }
-  document.getElementById('wms-modal-close').addEventListener('click', closeModal);
-  document.getElementById('wms-modal-cancel').addEventListener('click', closeModal);
-  modal.addEventListener('click', function(e){ if(e.target === modal) closeModal(); });
-
-  var btnSync = document.getElementById('wms-modal-sync');
-  if(btnSync) {
-    btnSync.addEventListener('click', function(){
-      if(!confirm('¿Aplicar los cambios del WMS al contenedor '+cont+'?\n\n'
-        + 'El sistema preserva los conteos físicos por SKU (cada conteo se queda con su SKU).\n'
-        + 'Pero si el WMS ELIMINÓ líneas, los conteos de esas líneas SE PIERDEN definitivamente.\n'
-        + 'Y si AGREGÓ líneas, esas quedarán sin físico (hay que volver a contar).\n\n'
-        + 'Recomendación: revisar el contenedor después de sincronizar para confirmar que todo está bien.')) {
-        return;
-      }
-      btnSync.disabled = true;
-      btnSync.textContent = 'Sincronizando...';
-      fetch('/api/wms/sincronizar', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          cont: cont,
-          usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
-        })
-      }).then(function(r){ return r.json(); })
-        .then(function(resp){
-          if(!resp || !resp.ok) {
-            if(typeof showToast === 'function') showToast('Error al sincronizar: ' + ((resp && resp.error) || 'reintenta'), 'error');
-            btnSync.disabled = false;
-            btnSync.textContent = '🔄 Sincronizar con WMS';
-            return;
-          }
-          if(typeof showToast === 'function') showToast('Sincronizado ✓ ('+resp.cambiosAplicados+' cambios)', 'ok');
-          // Actualizar local: eliminar alerta + recargar polling
-          delete alertasWMS[cont];
-          closeModal();
-          if(typeof buildReporte === 'function') buildReporte();
-        })
-        .catch(function(err){
-          console.warn('Error sincronizar WMS:', err);
-          if(typeof showToast === 'function') showToast('Error de red. Intentá de nuevo.', 'error');
-          btnSync.disabled = false;
-          btnSync.textContent = '🔄 Sincronizar con WMS';
-        });
-    });
-  }
-}
-
-function exportExcel(){
-  // Build container selection
-  var scope = (document.getElementById('export-scope')||{}).value||'all-one';
-  var filtConts;
-  var oneFile = (scope === 'all-one'); // all in one file vs individual files
-  if(scope==='pick'){
-    filtConts = [];
-    document.querySelectorAll('.export-pick-cb:checked').forEach(function(cb){
-      filtConts.push(cb.value);
-    });
-    if(!filtConts.length){ alert('Selecciona al menos un contenedor.'); return; }
-  } else if(scope==='Embarques'){
-    filtConts = conts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
-  } else if(scope==='Traslados'){
-    filtConts = conts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
-  } else {
-    filtConts = conts.slice();
-  }
-
-  if(!filtConts.length){ alert('No hay contenedores para exportar.'); return; }
-
-  var userName = currentUser ? currentUser.name.toLowerCase().replace(/\s+/g,'') : 'auditor';
-  var today = new Date();
-  var dateStr = today.getFullYear()+'_'
-    + String(today.getMonth()+1).padStart(2,'0')+'_'
-    + String(today.getDate()).padStart(2,'0');
-
-  // Separate by type
-  var filtEmb   = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type==='Embarques'; });
-  var filtTrasl = filtConts.filter(function(c){ return teorico[c]&&teorico[c].type!=='Embarques'; });
-
-  // NOTE: los helpers getOrigenDesc, getCobertura, mapStatusSistema, fmtFechaDMA,
-  // getClasifContenedor y getFechaTrabajo se extrajeron a scope global (arriba
-  // de exportExcel) para que también exportCDGAnalitica los pueda usar.
-  // Acá los seguimos accediendo por scope global (sin cambio funcional).
-
-  // ONE FILE mode: all containers in one workbook
-  if(oneFile) {
-    var wb = XLSX.utils.book_new();
-    var today2 = new Date();
-    var ds2 = today2.getFullYear()+'_'+String(today2.getMonth()+1).padStart(2,'0')+'_'+String(today2.getDate()).padStart(2,'0');
-    if(filtEmb.length) {
-      // FIX (sáb 23-may-2026 - Bloque B comparativo Ever García)
-      // Rango ampliado a c:46 para incluir nueva columna AU (Clasificación)
-      var ws={},rng={s:{r:0,c:0},e:{r:6,c:46}};
-      function sc2(r,c,v){if(v===null||v===undefined||v==='')return;var ref=XLSX.utils.encode_cell({r:r,c:c});ws[ref]={v:v,t:typeof v==='number'?'n':'s'};if(r>rng.e.r)rng.e.r=r;if(c>rng.e.c)rng.e.c=c;}
-      sc2(1,1,'Compañía');sc2(1,3,'PT-Analítica Embarques');sc2(4,1,'Fecha');sc2(4,3,ds2.replace(/_/g,'-'));
-      // Headers nuevos (comparativo Ever García): renombres + 3 cols nuevas Q/R/AU, sin Accesorios
-      var H2=['','Número de embarque','Fecha','Código de Proveedor','Nombre Proveedor','Líneas','Status','# Orden de Compra','SKU','Descripción','Cantidad','Ingresado','Colocado','Faltantes','Sobrantes','Dañado','Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón','Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría','Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría','Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia','Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto','Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos','Auditado por','Fecha de revisión por el auditor','Clasificación de Contenedor'];
-      H2.forEach(function(h,c){sc2(6,c,h);});
-      var dr2=7;
-      filtEmb.forEach(function(cont){
-        var items2=teorico[cont].items||[],fis2=fisico[cont]||[];
-        var puerta2=(typeof puertas!=='undefined'&&puertas[cont])||'',cm2=(typeof conteoMetadata!=='undefined'&&conteoMetadata[cont])||{};
-        // Pre-calcular valores por contenedor (clasificación + fecha de trabajo del Resumen)
-        var clasifCont = getClasifContenedor(cont);
-        var fechaTrabCont = getFechaTrabajo(cont);
-        items2.forEach(function(item,i){
-          var fo=fis2[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
-          var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
-          var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
-          var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-          var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{}),cU=getCosto(item.sku);
-          var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
-          // FIX bug 3b: usar fo.quien por línea (no userName del que descarga)
-          var quien=fo&&fo.quien?fo.quien:'';
-          sc2(dr2,1,cont);                                          // B Número de embarque
-          sc2(dr2,2,fmtFechaDMA(raw.fecha));                        // C Fecha (DD/MM/AAAA)
-          sc2(dr2,3,raw.codProv||'');                               // D Código de Proveedor
-          sc2(dr2,4,raw.nomProv||'');                               // E Nombre Proveedor
-          sc2(dr2,5,raw.lineas||'');                                // F Líneas
-          sc2(dr2,6,raw.status||'');                                // G Status (WMS original)
-          sc2(dr2,7,raw.oc||'');                                    // H # Orden de Compra
-          sc2(dr2,8,item.sku);                                      // I SKU
-          sc2(dr2,9,item.desc);                                     // J Descripción
-          sc2(dr2,10,item.qty);                                     // K Cantidad (era col 11)
-          sc2(dr2,11,raw.ingresado||'');                            // L Ingresado
-          sc2(dr2,12,raw.colocado||'');                             // M Colocado
-          sc2(dr2,13,raw.faltantes||'');                            // N Faltantes
-          sc2(dr2,14,raw.sobrantes||'');                            // O Sobrantes
-          sc2(dr2,15,raw.daniado||'');                              // P Dañado
-          sc2(dr2,16,getOrigenDesc(raw.nomProv||raw.codProv||'')); // Q Descripción de origen
-          sc2(dr2,17,mapStatusSistema(raw.status||''));             // R Status sistema (mapping cadena)
-          sc2(dr2,18,fmtFechaDMA(cm2.fechaIngreso));                // S Fecha de ingreso a Hamilton
-          sc2(dr2,19,fmtFechaDMA(cm2.fechaFurgon));                 // T Fecha apertura de furgón
-          sc2(dr2,20,getCobertura(fo));                             // U Cobertura
-          sc2(dr2,21,puerta2);                                      // V Número de puerta
-          sc2(dr2,22,cm2.placas||'');                               // W Placas de Furgón
-          sc2(dr2,23,tot!==null?tot:'');                            // X Físico S/Auditoría
-          sc2(dr2,24,diff!==null?diff:'');                          // Y Diferencia auditoría
-          sc2(dr2,25,diff!==null?Math.abs(diff):'');                // Z Diferencia auditoría [ABS]
-          sc2(dr2,26,fU||'');                                       // AA Unidades faltantes
-          sc2(dr2,27,sU||'');                                       // AB Unidades sobrantes
-          sc2(dr2,28,dv||'');                                       // AC Unidades dañada
-          // AD Unidades incompletos — sin dato
-          sc2(dr2,30,eva);                                          // AE Evaluación
-          sc2(dr2,31,cU||'');                                       // AF Costo unitario
-          sc2(dr2,32,cU?cU*item.qty:'');                            // AG Costo total
-          sc2(dr2,33,tot!==null&&cU?cU*tot:'');                     // AH Costo físico
-          sc2(dr2,34,diff!==null&&cU?cU*diff:'');                   // AI Costo diferencia
-          sc2(dr2,35,diff!==null&&cU?Math.abs(cU*diff):'');         // AJ Costo físico [ABS]
-          sc2(dr2,36,cU?cU*fU:'');                                  // AK Costo faltante
-          sc2(dr2,37,cU?cU*sU:'');                                  // AL Costo sobrante
-          sc2(dr2,38,cU?cU*dv:'');                                  // AM Costo dañado
-          // AN/AO/AP/AQ/AR sin dato (incompleto/comentarios/refs)
-          sc2(dr2,44,quien);                                        // AS Auditado por (FIX bug 3b)
-          sc2(dr2,45,fechaTrabCont);                                // AT Fecha de revisión (FIX bug 3a)
-          sc2(dr2,46,clasifCont);                                   // AU Clasificación de Contenedor (nueva)
-          dr2++;
-        });
-      });
-      ws['!ref']=XLSX.utils.encode_range(rng);
-      XLSX.utils.book_append_sheet(wb,ws,'PT-Analítica Embarques');
-    }
-    if(filtTrasl.length) {
-      // FIX (sáb 23-may-2026 - Bloque C comparativo Ever García)
-      // Rango ampliado a c:45 para incluir nueva columna AT (Clasificación)
-      var wst={},rngt={s:{r:0,c:0},e:{r:6,c:45}};
-      function sct(r,c,v){if(v===null||v===undefined||v==='')return;var ref=XLSX.utils.encode_cell({r:r,c:c});wst[ref]={v:v,t:typeof v==='number'?'n':'s'};if(r>rngt.e.r)rngt.e.r=r;if(c>rngt.e.c)rngt.e.c=c;}
-      sct(1,1,'Compañía');sct(1,3,'PT-Analítica Traslados');
-      // Headers nuevos (comparativo Ever García): renombre AS + 2 cols nuevas Q/AT, sin Accesorios
-      var HT=['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Lineas','Status','SKU','Descripción','Cantidad','Unidad','Unidades','Origen','Destino','Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón','Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría','Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría','Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia','Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto','Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos','Auditado por','Fecha de la revisión por el auditor','Clasificación de Contenedor'];
-      HT.forEach(function(h,c){sct(6,c,h);});
-      var drt=7;
-      filtTrasl.forEach(function(cont){
-        var items3=teorico[cont].items||[],fis3=fisico[cont]||[];
-        var puerta3=(typeof puertas!=='undefined'&&puertas[cont])||'',cm3=(typeof conteoMetadata!=='undefined'&&conteoMetadata[cont])||{};
-        // Pre-calcular valores por contenedor
-        var clasifCont = getClasifContenedor(cont);
-        var fechaTrabCont = getFechaTrabajo(cont);
-        items3.forEach(function(item,i){
-          var fo=fis3[i],fv=fo?(fo.fisico!==undefined?Number(fo.fisico)||0:null):null;
-          var dv=fo&&fo.daniado!==undefined?Number(fo.daniado)||0:0;
-          var tot=fv,diff=tot!==null?tot-item.qty:null;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
-          var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-          var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{}),cU=getCosto(item.sku);
-          var fU=diff!==null&&diff<0?Math.abs(diff):0,sU=diff!==null&&diff>0?diff:0;
-          // FIX bug 3b: usar fo.quien por línea (no userName del que descarga)
-          var quien=fo&&fo.quien?fo.quien:'';
-          sct(drt,1,cont);                                          // B Número
-          sct(drt,2,raw.ingreso||'');                               // C # Ingreso
-          sct(drt,3,raw.docSap||'');                                // D Doc. SAP
-          sct(drt,4,fmtFechaDMA(raw.fecha));                        // E Fecha (DD/MM/AAAA)
-          sct(drt,5,raw.tipo||'');                                  // F Tipo
-          sct(drt,6,raw.lineas||'');                                // G Lineas
-          sct(drt,7,raw.status||'');                                // H Status (WMS original)
-          sct(drt,8,item.sku);                                      // I SKU
-          sct(drt,9,item.desc);                                     // J Descripción
-          sct(drt,10,item.qty);                                     // K Cantidad (era col 11)
-          sct(drt,11,raw.unidad||'');                               // L Unidad
-          sct(drt,12,raw.unidades||'');                             // M Unidades
-          sct(drt,13,raw.origen||'');                               // N Origen
-          sct(drt,14,raw.destino||'');                              // O Destino
-          sct(drt,15,getOrigenDesc('',raw.origen||''));             // P Descripción de origen (mapping 7/4/5/T/CDG)
-          sct(drt,16,'Cerrado');                                    // Q Status sistema (fijo "Cerrado")
-          sct(drt,17,fmtFechaDMA(cm3.fechaIngreso));                // R Fecha de ingreso a Hamilton
-          sct(drt,18,fmtFechaDMA(cm3.fechaFurgon));                 // S Fecha apertura de furgón
-          sct(drt,19,getCobertura(fo));                             // T Cobertura
-          sct(drt,20,puerta3);                                      // U Número de puerta
-          sct(drt,21,cm3.placas||'');                               // V Placas de Furgón
-          sct(drt,22,tot!==null?tot:'');                            // W Físico S/Auditoría
-          sct(drt,23,diff!==null?diff:'');                          // X Diferencia auditoría
-          sct(drt,24,diff!==null?Math.abs(diff):'');                // Y Diferencia auditoría [ABS]
-          sct(drt,25,fU||'');                                       // Z Unidades faltantes
-          sct(drt,26,sU||'');                                       // AA Unidades sobrantes
-          sct(drt,27,dv||'');                                       // AB Unidades dañada
-          // AC Unidades incompletos — sin dato
-          sct(drt,29,eva);                                          // AD Evaluación
-          sct(drt,30,cU||'');                                       // AE Costo unitario
-          sct(drt,31,cU?cU*item.qty:'');                            // AF Costo total
-          sct(drt,32,tot!==null&&cU?cU*tot:'');                     // AG Costo físico
-          sct(drt,33,diff!==null&&cU?cU*diff:'');                   // AH Costo diferencia
-          sct(drt,34,diff!==null&&cU?Math.abs(cU*diff):'');         // AI Costo físico [ABS]
-          sct(drt,35,cU?cU*fU:'');                                  // AJ Costo faltante
-          sct(drt,36,cU?cU*sU:'');                                  // AK Costo sobrante
-          sct(drt,37,cU?cU*dv:'');                                  // AL Costo dañado
-          // AM/AN/AO/AP/AQ sin dato
-          sct(drt,43,quien);                                        // AR Auditado por (FIX bug 3b)
-          sct(drt,44,fechaTrabCont);                                // AS Fecha de revisión (FIX bug 3a)
-          sct(drt,45,clasifCont);                                   // AT Clasificación de Contenedor (nueva)
-          drt++;
-        });
-      });
-      wst['!ref']=XLSX.utils.encode_range(rngt);
-      XLSX.utils.book_append_sheet(wb,wst,'PT-Analítica Traslados');
-    }
-    if(hallazgos.length){
-      var hd2=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
-      hallazgos.forEach(function(h){hd2.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]);});
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd2),'PT-Hallazgos');
-    }
-    if(!wb.SheetNames.length){alert('No hay datos para exportar.');return;}
-    XLSX.writeFile(wb,'PT-Conteo_Completo_'+ds2+'.xlsx');
-    addHist('Exportó Excel completo');
-    return;
-  }
-
-  // INDIVIDUAL FILES mode
-  // Export each embarque as separate file
-  if(filtEmb.length){
-    filtEmb.forEach(function(cont){
-      var wb = XLSX.utils.book_new();
-      var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:46}};
-      function sc(r,c,v){
-        if(v===null||v===undefined||v==='') return;
-        var ref=XLSX.utils.encode_cell({r:r,c:c});
-        ws[ref]={v:v,t:typeof v==='number'?'n':'s'};
-        if(r>rng.e.r)rng.e.r=r; if(c>rng.e.c)rng.e.c=c;
-      }
-      var items = teorico[cont].items||[];
-      var fis   = fisico[cont]||[];
-      var raw0  = items.length ? items[0].raw||{} : {};
-      var puerta   = (typeof puertas!=='undefined'&&puertas[cont])||'';
-      var contData = (typeof conteoMetadata!=='undefined'&&conteoMetadata[cont])||{};
-      var fechaIngreso  = contData.fechaIngreso||'';
-      var fechaFurgon   = contData.fechaFurgon||'';
-      var placas        = contData.placas||'';
-
-      // Header rows
-      sc(1,1,'Compañía');    sc(1,3,'Conteo de inventario — PT-Analítica Embarques');
-      sc(2,1,'Proceso');     sc(2,3,'Recepción de producto');
-      sc(3,1,'Descripción'); sc(3,3,'Conteo de inventario');
-      sc(4,1,'Fecha');       sc(4,3,dateStr.replace(/_/g,'-'));
-      sc(5,1,'Contenedor');  sc(5,3,cont);
-      sc(5,5,'Puerta');      sc(5,7,puerta);
-      sc(5,9,'Fecha ingreso');  sc(5,11,fechaIngreso);
-      sc(5,13,'Fecha furgón'); sc(5,15,fechaFurgon);
-      sc(5,17,'Placas');     sc(5,19,placas);
-
-      // Column headers row 7
-      // FIX (sáb 23-may-2026 - Bloque B comparativo Ever García):
-      //   - Renombres: Diferencia ABS, Uds.→Unidades S/Auditoría, Costo total teórico→Costo total,
-      //     Costo dif. ABS→Costo físico [ABS], Comentarios Auditoría/Auditado→formato largo,
-      //     Fecha ingreso/apertura furgón→formatos largos, Número/Placas puerta→formatos largos,
-      //     Fecha revisión→Fecha de revisión por el auditor
-      //   - 3 columnas nuevas: Q (Descripción origen=Truper China/México por nomProv),
-      //     R (Status sistema con mapping en cadena), AU (Clasificación de Contenedor)
-      //   - Eliminar columna "Accesorios" (col K=10) — ya no se usa
-      //   - Fechas DD/MM/AAAA en C (Fecha), S (Fecha ingreso Hamilton), T (Fecha apertura furgón)
-      var H=['','Número de embarque','Fecha','Código de Proveedor','Nombre Proveedor','Líneas','Status',
-        '# Orden de Compra','SKU','Descripción','Cantidad','Ingresado','Colocado','Faltantes',
-        'Sobrantes','Dañado','Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón',
-        'Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría',
-        'Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría',
-        'Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia',
-        'Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
-        'Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos',
-        'Auditado por','Fecha de revisión por el auditor','Clasificación de Contenedor'];
-      H.forEach(function(h,c){ sc(6,c,h); });
-
-      // Pre-calcular valores que se repiten por línea (clasificación, fecha de trabajo)
-      var clasifCont = getClasifContenedor(cont);
-      var fechaTrabCont = getFechaTrabajo(cont);
-
-      var dr=7;
-      items.forEach(function(item,i){
-        var fiObj=fis[i];
-        var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
-        var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-        var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
-        var diff=tot!==null?tot-item.qty:null;
-        var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-        var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{});
-        var cUnit=getCosto(item.sku);
-        var faltU=diff!==null&&diff<0?Math.abs(diff):0;
-        var sobrU=diff!==null&&diff>0?diff:0;
-        // FIX bug 3b (vie 22-may-2026 PM): leer fiObj.quien por línea, no userName del que descarga
-        var quien=fiObj&&fiObj.quien?fiObj.quien:'';
-        sc(dr,1,cont);                                          // B: Número de embarque
-        sc(dr,2,fmtFechaDMA(raw.fecha));                        // C: Fecha (DD/MM/AAAA)
-        sc(dr,3,raw.codProv||'');                               // D: Código de Proveedor
-        sc(dr,4,raw.nomProv||'');                               // E: Nombre Proveedor
-        sc(dr,5,raw.lineas||'');                                // F: Líneas
-        sc(dr,6,raw.status||'');                                // G: Status (WMS original)
-        sc(dr,7,raw.oc||'');                                    // H: # Orden de Compra
-        sc(dr,8,item.sku);                                      // I: SKU
-        sc(dr,9,item.desc);                                     // J: Descripción
-        sc(dr,10,item.qty);                                     // K: Cantidad
-        sc(dr,11,raw.ingresado||'');                            // L: Ingresado
-        sc(dr,12,raw.colocado||'');                             // M: Colocado
-        sc(dr,13,raw.faltantes||'');                            // N: Faltantes
-        sc(dr,14,raw.sobrantes||'');                            // O: Sobrantes
-        sc(dr,15,raw.daniado||'');                              // P: Dañado
-        sc(dr,16,getOrigenDesc(raw.nomProv||raw.codProv||'')); // Q: Descripción de origen (Truper China/México)
-        sc(dr,17,mapStatusSistema(raw.status||''));             // R: Status sistema (mapping en cadena)
-        sc(dr,18,fmtFechaDMA(fechaIngreso));                    // S: Fecha de ingreso a Hamilton (DD/MM/AAAA)
-        sc(dr,19,fmtFechaDMA(fechaFurgon));                     // T: Fecha apertura de furgón (DD/MM/AAAA)
-        sc(dr,20,getCobertura(fiObj));                          // U: Cobertura
-        sc(dr,21,puerta);                                       // V: Número de puerta
-        sc(dr,22,placas);                                       // W: Placas de Furgón
-        sc(dr,23,tot!==null?tot:'');                            // X: Físico S/Auditoría
-        sc(dr,24,diff!==null?diff:'');                          // Y: Diferencia auditoría
-        sc(dr,25,diff!==null?Math.abs(diff):'');                // Z: Diferencia auditoría [ABS]
-        sc(dr,26,faltU||'');                                    // AA: Unidades faltantes S/Auditoría
-        sc(dr,27,sobrU||'');                                    // AB: Unidades sobrantes S/Auditoría
-        sc(dr,28,dv||'');                                       // AC: Unidades dañada S/Auditoría
-        // AD: Unidades incompletos — no hay dato disponible, dejar vacío
-        sc(dr,30,eva);                                          // AE: Evaluación
-        sc(dr,31,cUnit||'');                                    // AF: Costo unitario
-        sc(dr,32,cUnit?cUnit*item.qty:'');                      // AG: Costo total
-        sc(dr,33,tot!==null&&cUnit?cUnit*tot:'');               // AH: Costo físico
-        sc(dr,34,diff!==null&&cUnit?cUnit*diff:'');             // AI: Costo diferencia
-        sc(dr,35,diff!==null&&cUnit?Math.abs(cUnit*diff):'');   // AJ: Costo físico [ABS]
-        sc(dr,36,cUnit?cUnit*faltU:'');                         // AK: Costo faltante
-        sc(dr,37,cUnit?cUnit*sobrU:'');                         // AL: Costo sobrante
-        sc(dr,38,cUnit?cUnit*dv:'');                            // AM: Costo dañado
-        // AN: Costo incompleto — no hay dato
-        // AO/AP: Comentarios — no hay dato en el state aún
-        // AQ/AR: Ref. Hallazgos/Anexos — no hay dato en el state
-        sc(dr,44,quien);                                        // AS: Auditado por (FIX bug 3b)
-        sc(dr,45,fechaTrabCont);                                // AT: Fecha de revisión por el auditor (FIX bug 3a)
-        sc(dr,46,clasifCont);                                   // AU: Clasificación de Contenedor (nueva)
-        dr++;
-      });
-      ws['!ref']=XLSX.utils.encode_range(rng);
-      XLSX.utils.book_append_sheet(wb,ws,'PT-Analítica Embarques');
-
-      // Hallazgos for this container
-      var hCont = hallazgos.filter(function(h){ return h.cont===cont; });
-      if(hCont.length){
-        var hd=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
-        hCont.forEach(function(h){ hd.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]); });
-        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd),'PT-Hallazgos');
-      }
-
-      var fname = 'PT-Embarque_'+dateStr+'_'+cont+'_'+userName+'.xlsx';
-      XLSX.writeFile(wb, fname);
-      addHist('Exportó embarque: '+cont);
-    });
-  }
-
-  // Export traslados (one file per container too)
-  if(filtTrasl.length){
-    filtTrasl.forEach(function(cont){
-      var wb = XLSX.utils.book_new();
-      var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:45}};
-      function sc(r,c,v){
-        if(v===null||v===undefined||v==='') return;
-        var ref=XLSX.utils.encode_cell({r:r,c:c});
-        ws[ref]={v:v,t:typeof v==='number'?'n':'s'};
-        if(r>rng.e.r)rng.e.r=r; if(c>rng.e.c)rng.e.c=c;
-      }
-      var items=teorico[cont].items||[];
-      var fis=fisico[cont]||[];
-      var puerta=(typeof puertas!=='undefined'&&puertas[cont])||'';
-      var contData=(typeof conteoMetadata!=='undefined'&&conteoMetadata[cont])||{};
-      var fechaIngreso=contData.fechaIngreso||'';
-      var fechaFurgon=contData.fechaFurgon||'';
-      var placas=contData.placas||'';
-
-      sc(1,1,'Compañía');    sc(1,3,'Conteo de inventario — PT-Analítica Traslados');
-      sc(2,1,'Proceso');     sc(2,3,'Traslado interno');
-      sc(3,1,'Descripción'); sc(3,3,'Conteo de inventario');
-      sc(4,1,'Fecha');       sc(4,3,dateStr.replace(/_/g,'-'));
-      sc(5,1,'Contenedor');  sc(5,3,cont);
-      sc(5,5,'Puerta');      sc(5,7,puerta);
-
-      // FIX (sáb 23-may-2026 - Bloque C comparativo Ever García):
-      //   - Renombre: Fecha revisión → Fecha de la revisión por el auditor
-      //   - 2 columnas nuevas: Q (Status sistema = "Cerrado" fijo), AT (Clasificación de Contenedor)
-      //   - Eliminar "Accesorios" (col 10) — ya no se usa
-      //   - Fechas DD/MM/AAAA en R (Fecha de ingreso a Hamilton), S (Fecha apertura de furgón)
-      //   - Reordenamiento: Descripción origen (P=15) ahora sigue lógica de primera letra del Origen
-      var H=['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Lineas','Status',
-        'SKU','Descripción','Cantidad','Unidad','Unidades','Origen','Destino',
-        'Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón',
-        'Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría',
-        'Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría',
-        'Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia',
-        'Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
-        'Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos',
-        'Auditado por','Fecha de la revisión por el auditor','Clasificación de Contenedor'];
-      H.forEach(function(h,c){ sc(6,c,h); });
-
-      // Pre-calcular valores que se repiten por línea
-      var clasifCont = getClasifContenedor(cont);
-      var fechaTrabCont = getFechaTrabajo(cont);
-
-      var dr=7;
-      items.forEach(function(item,i){
-        var fiObj=fis[i];
-        var fv=fiObj?(fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null):null;
-        var dv=fiObj&&fiObj.daniado!==undefined?Number(fiObj.daniado)||0:0;
-        var tot=fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
-        var diff=tot!==null?tot-item.qty:null;
-        var eva=diff===null?'':diff===0?'Exacto':diff>0?'Sobrante':'Faltante';
-        var raw=Object.assign({},(teorico[cont]&&teorico[cont].meta)||{},item.raw||{});
-        var cUnit=getCosto(item.sku);
-        var faltU=diff!==null&&diff<0?Math.abs(diff):0;
-        var sobrU=diff!==null&&diff>0?diff:0;
-        // FIX bug 3b: leer fiObj.quien por línea, no userName del que descarga
-        var quien=fiObj&&fiObj.quien?fiObj.quien:'';
-        sc(dr,1,cont);                                          // B: Número
-        sc(dr,2,raw.ingreso||'');                               // C: # Ingreso
-        sc(dr,3,raw.docSap||'');                                // D: Doc. SAP
-        sc(dr,4,fmtFechaDMA(raw.fecha));                        // E: Fecha (DD/MM/AAAA)
-        sc(dr,5,raw.tipo||'');                                  // F: Tipo
-        sc(dr,6,raw.lineas||'');                                // G: Lineas
-        sc(dr,7,raw.status||'');                                // H: Status (WMS original)
-        sc(dr,8,item.sku);                                      // I: SKU
-        sc(dr,9,item.desc);                                     // J: Descripción
-        sc(dr,10,item.qty);                                     // K: Cantidad
-        sc(dr,11,raw.unidad||'');                               // L: Unidad
-        sc(dr,12,raw.unidades||'');                             // M: Unidades
-        sc(dr,13,raw.origen||'');                               // N: Origen
-        sc(dr,14,raw.destino||'');                              // O: Destino
-        sc(dr,15,getOrigenDesc('',raw.origen||''));             // P: Descripción de origen (mapping 7/4/5/T/CDG)
-        sc(dr,16,'Cerrado');                                    // Q: Status sistema (fijo "Cerrado" para Traslados)
-        sc(dr,17,fmtFechaDMA(fechaIngreso));                    // R: Fecha de ingreso a Hamilton (DD/MM/AAAA)
-        sc(dr,18,fmtFechaDMA(fechaFurgon));                     // S: Fecha apertura de furgón (DD/MM/AAAA)
-        sc(dr,19,getCobertura(fiObj));                          // T: Cobertura
-        sc(dr,20,puerta);                                       // U: Número de puerta
-        sc(dr,21,placas);                                       // V: Placas de Furgón
-        sc(dr,22,tot!==null?tot:'');                            // W: Físico S/Auditoría
-        sc(dr,23,diff!==null?diff:'');                          // X: Diferencia auditoría
-        sc(dr,24,diff!==null?Math.abs(diff):'');                // Y: Diferencia auditoría [ABS]
-        sc(dr,25,faltU||'');                                    // Z: Unidades faltantes
-        sc(dr,26,sobrU||'');                                    // AA: Unidades sobrantes
-        sc(dr,27,dv||'');                                       // AB: Unidades dañada
-        // AC: Unidades incompletos — sin dato
-        sc(dr,29,eva);                                          // AD: Evaluación
-        sc(dr,30,cUnit||'');                                    // AE: Costo unitario
-        sc(dr,31,cUnit?cUnit*item.qty:'');                      // AF: Costo total
-        sc(dr,32,tot!==null&&cUnit?cUnit*tot:'');               // AG: Costo físico
-        sc(dr,33,diff!==null&&cUnit?cUnit*diff:'');             // AH: Costo diferencia
-        sc(dr,34,diff!==null&&cUnit?Math.abs(cUnit*diff):'');   // AI: Costo físico [ABS]
-        sc(dr,35,cUnit?cUnit*faltU:'');                         // AJ: Costo faltante
-        sc(dr,36,cUnit?cUnit*sobrU:'');                         // AK: Costo sobrante
-        sc(dr,37,cUnit?cUnit*dv:'');                            // AL: Costo dañado
-        // AM: Costo incompleto — sin dato
-        // AN/AO: Comentarios — sin dato
-        // AP/AQ: Ref. Hallazgos/Anexos — sin dato
-        sc(dr,43,quien);                                        // AR: Auditado por (FIX bug 3b)
-        sc(dr,44,fechaTrabCont);                                // AS: Fecha de la revisión (FIX bug 3a)
-        sc(dr,45,clasifCont);                                   // AT: Clasificación de Contenedor (nueva)
-        dr++;
-      });
-      ws['!ref']=XLSX.utils.encode_range(rng);
-      XLSX.utils.book_append_sheet(wb,ws,'PT-Analítica Traslados');
-
-      var hCont=hallazgos.filter(function(h){ return h.cont===cont; });
-      if(hCont.length){
-        var hd=[['Contenedor','¿Qué pasó?','Condición','Criterio','Causa','Efecto','Recomendación','Auditor','Fecha']];
-        hCont.forEach(function(h){ hd.push([h.cont,h.quePaso,h.condicion||'',h.criterio||'',h.causa||'',h.efecto||'',h.recomendacion||'',h.autor,h.ts]); });
-        XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hd),'PT-Hallazgos');
-      }
-
-      var fname='PT-Traslado_'+dateStr+'_'+cont+'_'+userName+'.xlsx';
-      XLSX.writeFile(wb,fname);
-      addHist('Exportó traslado: '+cont);
-    });
-  }
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   EVENTOS TABS + SELECTS
-══════════════════════════════════════════════════════════════════ */
-function switchTab(name){
-  var tabs=['conteo','reporte','hallazgos','asign'];
-  tabs.forEach(function(t){
-    var el=document.getElementById('tab-'+t);
-    var btn=document.getElementById('tab-btn-'+t);
-    if(el)el.style.display=(t===name)?'':'none';
-    if(btn){btn.classList.toggle('on',t===name);}
-  });
-}
-
-document.getElementById('tab-btn-conteo').addEventListener('click',function(){switchTab('conteo');});
-document.getElementById('tab-btn-reporte').addEventListener('click',function(){switchTab('reporte');buildReporte();});
-document.getElementById('tab-btn-hallazgos').addEventListener('click',function(){switchTab('hallazgos');renderHallazgosList();});
-document.getElementById('tab-btn-asign').addEventListener('click',function(){
-  if(!isSup()) return; // contadores no pueden ver asignaciones
-  switchTab('asign');
-  renderAsignaciones();
-});
-
-// Use a wrapper so later renderConteo/saveConteo reassignments (patches below) take effect
-document.getElementById('sel-cont').addEventListener('change',function(){ renderConteo(); });
-document.getElementById('btn-save').addEventListener('click',function(){ saveConteo(); });
-document.getElementById('btn-export').addEventListener('click',exportExcel);
-
-
-
-/* ══════════════════════════════════════════════════════════════════
-   INIT
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('fecha').textContent=new Date().toLocaleDateString('es',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-</script>
-
-<script>
-// ════════════════════════════════════════════════════════════════════
-// SERVER SYNC — Polling every 3s
-// ════════════════════════════════════════════════════════════════════
-var lastVersion  = -1;
-var pollInterval = null;
-var isSyncing    = false;
-window.serverLocks = {};
-
-function startPolling() {
-  if(pollInterval) clearInterval(pollInterval);
-  pollNow();
-  // Polling every 5 s — balances "live feel" with Render bandwidth cost.
-  // Previously was 3 s which consumed ~67% more bandwidth.
-  pollInterval = setInterval(pollNow, 5000);
-}
-
-function stopPolling() {
-  if(pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-}
-
-function pollNow() {
-  if(isSyncing) return;
-  // Heartbeat — leer respuesta para actualizar barra de usuarios incluso en 304
-  if(currentUser) {
-    fetch('/api/heartbeat', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name:currentUser.name})})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        // /api/heartbeat devuelve { active: [...] }
-        // Actualizar la barra aunque /api/state responda 304 (sin cambios en state)
-        if(d && d.active && typeof updateOnlineBarFromServer === 'function') {
-          updateOnlineBarFromServer(d.active);
-        }
-      })
-      .catch(function(){});
-  }
-  isSyncing = true;
-  // Enviar versión conocida — el server responde 304 sin body si no hay cambios
-  var vParam = (typeof lastVersion !== 'undefined' && lastVersion >= 0)
-    ? '?version=' + encodeURIComponent(lastVersion) : '';
-  fetch('/api/state' + vParam)
-    .then(function(r){
-      if(r.status === 304) {
-        // Sin cambios — no deserializar, no re-renderizar
-        isSyncing = false;
-        return null;
-      }
-      return r.json();
-    })
-    .then(function(s) {
-      if(s === null) return; // 304 — sin cambios en state.version
-
-      // Actualizar lastVersion PRIMERO — antes de activeUsers, locks, merges o cualquier return.
-      // Garantiza que el segundo poll ya lleve ?version=<número> aunque falle cualquier cosa después.
-      var incomingVersion = (s && s.version !== undefined) ? Number(s.version) : -1;
-      var sameVersion = incomingVersion >= 0 && incomingVersion === lastVersion;
-      if(incomingVersion >= 0) lastVersion = incomingVersion;
-      isSyncing = false;
-      if(sameVersion) return; // ya teníamos esta versión — no re-renderizar
-
-      // NOTA locks: s.locks solo se actualiza con 200 (state.version cambió).
-      // Si el lock expiró por tiempo (ACTIVE_TIMEOUT) pero state.version no cambió,
-      // el lock local persiste hasta el próximo 200. Riesgo bajo: ACTIVE_TIMEOUT=15s,
-      // cada guardado sube state.version y fuerza un 200 en el próximo poll.
-      isSyncing = false;
-      // Barra de usuarios: ya se actualiza desde heartbeat; esto es fallback por si heartbeat falla
-      if(s.activeUsers && typeof updateOnlineBarFromServer === 'function') {
-        updateOnlineBarFromServer(s.activeUsers);
-      }
-      // Sync locks - bridge server (cont:idx) to local (cont_idx)
-      if(s.locks) {
-        window.serverLocks = s.locks;
-        var myName = currentUser ? currentUser.name : '';
-        Object.keys(s.locks).forEach(function(key) {
-          var lock = s.locks[key];
-          var localKey = key.replace(':', '_');
-          if(lock.user !== myName) {
-            locks[localKey] = {quien: lock.user, at: Date.now() - 1000};
-          }
-        });
-        Object.keys(locks).forEach(function(lk) {
-          if(locks[lk].quien !== myName && !s.locks[lk.replace('_',':')]) {
-            delete locks[lk];
-          }
-        });
-      }
-
-      // Merge server state into local
-      if(s.teorico && Object.keys(s.teorico).length > 0) teorico = s.teorico;
-      // FIX (rev Claude2, mar 19-may): el polling reemplaza `teorico` completo.
-      // Si el usuario editó fechaCarga y el POST aún está en vuelo, esa edición
-      // optimista se pisa silenciosamente. Re-aplicamos las fechas pendientes
-      // (con POST en vuelo) para no perderlas. Mismo razonamiento que las
-      // Señales 1-3 del merge selectivo de fisico, aplicado a teorico.fechaCarga.
-      if(window._pendingFechaCarga) {
-        Object.keys(window._pendingFechaCarga).forEach(function(c){
-          if(teorico[c]) teorico[c].fechaCarga = window._pendingFechaCarga[c];
-        });
-      }
-      // FIX (rev Claude 2 B.2, vie 22-may-2026): MISMO patrón para clasificación.
-      // El supervisor editó clasificación, POST en vuelo, polling dispara →
-      // si no re-aplicamos, el dropdown rebota visualmente al valor viejo.
-      // null en el pending significa "quitar override" (el supervisor eligió
-      // el automático, no debemos persistir clasificacion en teorico[c]).
-      if(window._pendingClasificacion) {
-        Object.keys(window._pendingClasificacion).forEach(function(c){
-          if(teorico[c]) {
-            var v = window._pendingClasificacion[c];
-            if(v === null) {
-              delete teorico[c].clasificacion;
-            } else {
-              teorico[c].clasificacion = v;
-            }
-          }
-        });
-      }
-      // FIX (lun 18-may-2026 noche): MERGE SELECTIVO de fisico — protege
-      // cambios locales pendientes (debounce activo), filas que el usuario
-      // actual está editando, y la ventana de carrera post-saveField
-      // pre-respuesta-poll.
-      //
-      // Antes: fisico = s.fisico; reemplazaba TODO, perdiendo lo que el
-      // usuario estaba editando en vivo. Caso confirmado: Alexander Grijalva,
-      // HP26-0596, lunes 18/5/2026 12:30 PM.
-      //
-      // Tres señales en OR. Cualquiera dispara protección de local.
-      //   Señal 1 (timer): saveTimers[i] activo para idx en current.
-      //   Señal 2 (lock): myLocks tiene el lock de current:i.
-      //   Señal 3 (foco): activeElement es input fi/da/calc de este idx.
-      //
-      // NOTA (mar 19-may-2026): La Señal 4 (lastAt local > server) fue
-      // eliminada porque server.js pone su propio lastAt al recibir el
-      // save, cruzando relojes de cliente y servidor. Con tablets con
-      // hora desfasada, esto disparaba la protección indefinidamente.
-      if(s.fisico) {
-        if(!fisico || typeof fisico !== 'object') {
-          fisico = s.fisico;
-        } else {
-          var activeEl = document.activeElement;
-          var activeIdInput = (activeEl && activeEl.id && /^(fi|da)(\d+)$/.exec(activeEl.id));
-          var activeIdx = activeIdInput ? parseInt(activeIdInput[2], 10) : -1;
-          var mergeStats = { kept: 0, applied: 0 };
-
-          Object.keys(s.fisico).forEach(function(cont){
-            var srvArr = s.fisico[cont];
-            var locArr = fisico[cont];
-
-            if(!Array.isArray(locArr)) { fisico[cont] = srvArr; return; }
-            if(!Array.isArray(srvArr)) { fisico[cont] = srvArr; return; }
-
-            while(locArr.length < srvArr.length) locArr.push(null);
-
-            for(var i = 0; i < srvArr.length; i++) {
-              var locVal = locArr[i];
-              var srvVal = srvArr[i];
-
-              var isCurrentCont = (cont === current);
-
-              // Señal 1: timer de debounce activo (cambio pendiente sin enviar).
-              var hasPendingTimer = isCurrentCont && saveTimers && saveTimers[i];
-
-              // Señal 2: lock propio en esta fila.
-              var hasMyLock = isCurrentCont && myLocks && myLocks[cont + ':' + i];
-
-              // Señal 3: foco actual en input fi/da/calc de esta fila.
-              var hasFocus = isCurrentCont && (activeIdx === i);
-
-              if(hasPendingTimer || hasMyLock || hasFocus) {
-                mergeStats.kept++;
-                // Descomentar si necesitás depurar conservación de local;
-                // volver a comentar después para no contaminar la consola.
-                // console.debug('Merge: keep local', cont, i, {timer:hasPendingTimer, lock:hasMyLock, focus:hasFocus});
-                continue;
-              }
-
-              // FIX (mar 19-may-2026): Señal 4 (lastAt local > servidor)
-              // ELIMINADA. El servidor pone su propio lastAt cuando recibe
-              // el save (server.js línea 437), por lo que comparar lastAt
-              // local vs server cruza relojes diferentes. Con tablets
-              // desfasadas, esto disparaba la protección indefinidamente
-              // y los cambios remotos nunca llegaban al cliente. Las
-              // Señales 1-3 cubren el caso real de edición activa.
-
-              // Default: tomar servidor.
-              locArr[i] = srvVal;
-              mergeStats.applied++;
-            }
-
-            if(locArr.length > srvArr.length) {
-              locArr.length = srvArr.length;
-            }
-          });
-
-          // Borrar contenedores del local que el servidor ya no tiene.
-          Object.keys(fisico).forEach(function(cont){
-            if(!s.fisico.hasOwnProperty(cont)) {
-              delete fisico[cont];
-            }
-          });
-
-          if(mergeStats.kept > 0) {
-            console.debug('Poll merge stats:', mergeStats);
-          }
-        }
-      }
-      if(s.asignaciones)    asignaciones    = s.asignaciones;
-      if(s.historial)       historial       = s.historial;
-      if(s.hallazgos)       hallazgos       = s.hallazgos;
-      // Only merge metadata/puertas if server actually has data — don't wipe local state
-      if(s.conteoMetadata && Object.keys(s.conteoMetadata).length > 0) {
-        // Merge server data INTO local — preserve any local edits not yet saved
-        Object.keys(s.conteoMetadata).forEach(function(k){
-          if(!conteoMetadata[k]) conteoMetadata[k] = s.conteoMetadata[k];
-          else Object.assign(conteoMetadata[k], s.conteoMetadata[k]);
-        });
-      }
-      if(s.puertas && Object.keys(s.puertas).length > 0) {
-        Object.assign(puertas, s.puertas);
-      }
-      // FIX (dom 24-may-2026, v5.2.22): hidratar alertasWMS desde el server.
-      // alertasWMS es propiedad SOLO del server (lo escribe mergeSheet al upload).
-      // El cliente solo lee y muestra. Polling reemplaza directo, no merge.
-      alertasWMS = s.alertasWMS || {};
-
-      rebuildContsList();
-      updateSubmenúCounts();
-
-      // Auto-load costos from server if not loaded
-      if(!Object.keys(costos).length) {
-        fetch('/api/costos').then(function(r){return r.json();})
-          .then(function(d){
-            if(d && Object.keys(d).length > 0) {
-              costos = d;
-              var el = document.getElementById('cost-status');
-              if(el){ el.textContent='✓ Costos cargados'; el.style.color='#1e7e34'; }
-            }
-          }).catch(function(){});
-      }
-
-      // Re-render current view if not typing
-      var active = document.activeElement;
-      var typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA');
-
-      if(Object.keys(teorico).length > 0) {
-        // Show conteo sections if previously waiting
-        var wait = document.getElementById('pg-wait');
-        if(wait && wait.classList.contains('active')) {
-          navTo('pg-menu','📦 Conteo de Inventario');
-  // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
-  if(currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'contador')) {
-    fetch('/api/bod/status').then(function(r){ return r.json(); })
-      .then(function(d){
-        if(d && d.enabled){
-          window.BOD_ENABLED_CLIENT = true;
-          if(typeof window.bodMostrarMenuPrincipal === 'function') window.bodMostrarMenuPrincipal();
-          if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
-        }
-      }).catch(function(){});
-  }
-        }
-        if(!typing) {
-          // Re-render current conteo if visible
-          var pgConteo = document.getElementById('pg-conteo');
-          if(pgConteo && pgConteo.classList.contains('active')) renderConteo();
-          // Re-render asign if visible
-          // Update asignaciones - always refresh if tab visible (tab-asign with style.display)
-          if(typeof renderAsignaciones==='function') {
-            var tabAsignEl = document.getElementById('tab-asign');
-            var tabBtnAsign = document.getElementById('tab-btn-asign');
-            // Only show asign tab for supervisors
-            if(tabBtnAsign) tabBtnAsign.style.display = (currentUser&&currentUser.role==='supervisor')?'':'none';
-            if(tabAsignEl && tabAsignEl.style.display !== 'none') renderAsignaciones();
-          }
-          // Re-render reporte if visible
-          var pgRep = document.getElementById('pg-reporte');
-          if(pgRep && pgRep.classList.contains('active') && typeof buildReporte==='function') buildReporte();
-        } else {
-          // Even while typing, update lock badges
-          updateLockBadges();
-        }
-      } else if(currentUser && currentUser.role === 'contador') {
-        var pgWait = document.getElementById('pg-wait');
-        var pgMenu = document.getElementById('pg-menu');
-        if(pgMenu && pgMenu.classList.contains('active') && pgWait) {
-          navTo('pg-wait', 'Esperando teórico...');
-        }
-      }
-    })
-    .catch(function(e) {
-      isSyncing = false;
-      console.warn('Poll error:', e);
-    });
-}
-
-// Update online bar from server activeUsers list
-function updateOnlineBarFromServer(users) {
-  var bar = document.getElementById('online-bar');
-  if(!bar) return;
-  var isSupervisor = currentUser && (typeof isSup==='function' ? isSup() : false);
-  if(!isSupervisor) return;
-  if(users && users.length > 0) {
-    bar.style.display = '';
-    bar.innerHTML = '👥 En línea: ' + users.map(function(nm){
-      return '<span style="margin-right:8px">🟢 '+escH(nm)+'</span>';
-    }).join('');
-  } else {
-    bar.innerHTML = '👥 En línea: <em style="color:#aaa">Ninguno</em>';
-  }
-}
-
-// Lock badges (update without full re-render)
-function updateLockBadges() {
-  if(!teorico[current]) return;
-  var items = teorico[current].items || [];
-  var myName = currentUser ? currentUser.name : '';
-  for(var i = 0; i < items.length; i++) {
-    var key  = current + ':' + i;
-    var lock = window.serverLocks[key];
-    var fi   = document.getElementById('fi'+i);
-    var da   = document.getElementById('da'+i);
-    if(!fi) continue;
-    var parent = fi.parentNode; if(!parent) continue;
-    // Remove old badge
-    var old = parent.querySelector('.srv-lock'); if(old) old.parentNode.removeChild(old);
-    if(lock && lock.user !== myName) {
-      fi.disabled = true; fi.style.borderColor = '#e0c96e'; fi.style.background = '#fffef0';
-      if(da) da.disabled = true;
-      var badge = document.createElement('div');
-      badge.className = 'srv-lock';
-      badge.style.cssText = 'font-size:.68rem;color:#e67e22;margin-top:2px';
-      badge.textContent = '🔒 '+lock.user+' contando...';
-      parent.appendChild(badge);
-    } else if(!lock || lock.user === myName) {
-      fi.disabled = false; fi.style.borderColor = ''; fi.style.background = '';
-      if(da) da.disabled = false;
-    }
-  }
-}
-
-// Field locking
-var myLocks    = {};
-var saveTimers = {};
-
-// FIX (lun 18-may-2026 noche): clearAllSaveTimers limpia todos los timers de
-// debounce pendientes. Se llama al cambiar de contenedor para evitar que un
-// timer disparado por edición en contenedor A se ejecute con el DOM ya
-// mostrando contenedor B.
-function clearAllSaveTimers() {
-  Object.keys(saveTimers).forEach(function(k){
-    if(saveTimers[k]) {
-      clearTimeout(saveTimers[k]);
-      saveTimers[k] = null;
-    }
-  });
-}
-
-function acquireLock(idx) {
-  if(!current || !currentUser) return;
-  var key = current+':'+idx;
-  if(myLocks[key]) return;
-  fetch('/api/lock', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, idx:idx, user:currentUser.name})})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok) { myLocks[key]=true; setTimeout(function(){releaseLock(idx);},90000); }
-    }).catch(function(){});
-}
-
-function releaseLock(idx) {
-  if(!current || !currentUser) return;
-  var key = current+':'+idx;
-  if(!myLocks[key]) return;
-  delete myLocks[key];
-  fetch('/api/unlock', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cont:current, idx:idx, user:currentUser.name})}).catch(function(){});
-}
-
-function releaseAllLocks() {
-  Object.keys(myLocks).forEach(function(key){
-    var p=key.split(':'); if(p.length>=2) releaseLock(parseInt(p[1]));
-  });
-}
-
-function scheduleFieldSave(idx) {
-  if(saveTimers[idx]) clearTimeout(saveTimers[idx]);
-  saveTimers[idx] = setTimeout(function(){ saveField(idx); }, 3000);
-}
-
-// Force-save immediately, cancelling any pending debounce. Used on blur.
-function flushFieldSave(idx) {
-  if(saveTimers[idx]) { clearTimeout(saveTimers[idx]); saveTimers[idx] = null; }
-  saveField(idx);
-}
-
-function saveField(idx) {
-  if(!current || !currentUser) return;
-  if(!teorico[current]) return;
-
-  // Read raw DOM values. Distinguish empty ('') from zero ('0').
-  var fiEl   = document.getElementById('fi'+idx);
-  var daEl   = document.getElementById('da'+idx);
-  var fiRaw   = fiEl   ? fiEl.value   : '';
-  var daRaw   = daEl   ? daEl.value   : '';
-
-  // Parse: empty string → null (not counted), number → numeric value
-  var fv = fiRaw === '' ? null : parseFloat(fiRaw);
-  if(fv !== null && isNaN(fv)) fv = null;
-  var dv = daRaw === '' ? null : parseFloat(daRaw);
-  if(dv !== null && isNaN(dv)) dv = null;
-
-  // Read the cobertura the user picked from the dropdown (if any)
-  var cobSel = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
-  var cobFromDom = cobSel ? cobSel.value : null;
-
-  // Ensure fisico[current] is an array of correct length
-  if(!fisico[current] || !Array.isArray(fisico[current])) {
-    fisico[current] = new Array(teorico[current].items.length).fill(null);
-  }
-  var prev = fisico[current][idx] || {};
-
-  // FIX (mar 19-may-2026): calcExpr ya no se edita desde UI (campo Cálculo
-  // eliminado). Preservamos el valor histórico previo si existe — pero NO
-  // lo enviamos al server, así el guard de server.js usa su propia regla
-  // de preservación (no se sobrescribe lo histórico con '').
-  var preservedCalcExpr = (prev && prev.calcExpr) || '';
-
-  // ─── RULE #3: Cobertura logic ──────────────────────────────────────────
-  // - If the user explicitly picked 'No auditado' → respect that choice.
-  // - If the user explicitly picked 'Auditado'  → respect (and physical can be anything).
-  // - Otherwise: cobertura defaults to 'Auditado' as soon as a numeric value
-  //   exists in fisico (rule #3: numeric → Auditado automatic).
-  // - If all numeric fields are empty AND no explicit pick → 'En revisión'.
-  var newCob;
-  if(cobFromDom === 'No auditado') {
-    newCob = 'No auditado';
-  } else if(cobFromDom === 'Auditado') {
-    newCob = 'Auditado';
-  } else if(prev.cobertura === 'No auditado') {
-    // Preserve previous "No auditado" choice unless user changed dropdown
-    newCob = 'No auditado';
-  } else if(fv !== null) {
-    // Rule #3: numeric value in fisico → Auditado automatically
-    newCob = 'Auditado';
-  } else {
-    newCob = 'En revisión';
-  }
-
-  // ─── Determine if save is meaningful ────────────────────────────────────
-  // Save when: (a) user entered/changed fisico, (b) user entered daniado,
-  // or (c) cobertura changed. calcExpr ya no se evalúa desde UI.
-  var prevFv      = prev.fisico    !== undefined ? prev.fisico    : null;
-  var prevDv      = prev.daniado   !== undefined ? prev.daniado   : null;
-  var prevCob     = prev.cobertura || 'En revisión';
-  var changed =
-    (fv      !== prevFv)   ||
-    (dv      !== prevDv)   ||
-    (newCob  !== prevCob);
-  if(!changed) return;
-
-  // ─── Persist locally (preserva calcExpr histórico) ──────────────────────
-  fisico[current][idx] = {
-    fisico:    fv,                              // numeric or null (empty)
-    daniado:   dv,                              // numeric or null (empty)
-    cobertura: newCob,
-    calcExpr:  preservedCalcExpr,               // legacy histórico, ya no se edita
-    quien:     currentUser.name,
-    ts:        nowStr(),
-    lastUser:  currentUser.name,
-    lastAt:    Date.now()
-  };
-
-  // ─── Reflect cobertura back into the dropdown (visual sync) ─────────────
-  if(cobSel && cobSel.value !== newCob) {
-    cobSel.value = newCob;
-    cobSel.style.background =
-      newCob === 'Auditado'    ? '#eafaf1' :
-      newCob === 'No auditado' ? '#fdecea' : '#fef9e7';
-  }
-
-  if(typeof updateSummaryCard === 'function') updateSummaryCard();
-
-  // ─── Send to server (sin calcExpr — server preserva el suyo) ────────────
-  fetch('/api/conteo/field', {
-    method:  'POST',
-    headers: {'Content-Type':'application/json'},
-    body:    JSON.stringify({
-      cont:      current,
-      idx:       idx,
-      fisico:    fv,
-      daniado:   dv,
-      cobertura: newCob,
-      usuario:   currentUser.name
-    })
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
-    if(d.ok) lastVersion = d.version;
-    // Lock stays until user blurs / 90s timeout / container change.
-    // Releasing on each save was making the row look unlocked to others.
-  })
-  .catch(function(e){
-    // Server unreachable — direct save will be retried via saveDirectToSupabase
-    console.warn('saveField server error:', e);
-  });
-
-  // ─── Defensive: also save directly to Supabase ──────────────────────────
-  // This is our insurance policy against Render sleeping. It debounces,
-  // so multiple saveField calls in quick succession only fire once.
-  if(typeof saveDirectToSupabase === 'function') saveDirectToSupabase();
-}
-
-// Patch afterLogin to start polling
-var _origAfterLogin = afterLogin;
-afterLogin = function() {
-  lastVersion = -1;
-  // Bodega CDG no necesita /api/state — sus datos vienen de endpoints /api/bod/*
-  // RGIS sí necesita /api/state para ver contenedores en Conteos Hamilton
-  if(window.ACCESS_SCOPE === 'bodega') {
-    stopPolling();
-  } else {
-    startPolling();
-  }
-  _origAfterLogin();
-};
-
-// Patch renderConteo to add lock listeners
-var _origRenderConteo = renderConteo;
-renderConteo = function() {
-  _origRenderConteo();
-  if(!teorico[current]) return;
-  var items = teorico[current].items || [];
-  var myName = currentUser ? currentUser.name : '';
-
-  for(var i = 0; i < items.length; i++) {
-    (function(idx){
-      var fi   = document.getElementById('fi'+idx);
-      var da   = document.getElementById('da'+idx);
-      var cob  = document.querySelector('select.cob-sel[data-i="'+idx+'"]');
-
-      // ───── 1. LOCK STATE: disable inputs if someone else holds the row ───
-      var lock = window.serverLocks ? window.serverLocks[current+':'+idx] : null;
-      var isLockedByOther = lock && lock.user !== myName;
-      if(isLockedByOther) {
-        if(fi)   { fi.disabled  = true; fi.style.borderColor='#e0c96e'; fi.style.background='#fffef0'; }
-        if(da)     da.disabled  = true;
-        if(cob)    cob.disabled = true;
-        var parent = fi ? fi.parentNode : null;
-        if(parent && !parent.querySelector('.srv-lock')) {
-          var badge = document.createElement('div');
-          badge.className = 'srv-lock';
-          badge.style.cssText = 'font-size:.68rem;color:#e67e22;margin-top:2px';
-          badge.textContent = '🔒 ' + lock.user + ' contando...';
-          parent.appendChild(badge);
-        }
-      } else {
-        if(fi)   { fi.disabled  = false; }
-        if(da)     da.disabled  = false;
-        if(cob)    cob.disabled = false;
-      }
-
-      // ───── 2. LAST EDITOR INFO ──────────────────────────────────────────
-      var sv = fisico[current] && fisico[current][idx] ? fisico[current][idx] : null;
-      if(sv && sv.lastUser && fi) {
-        var parent2 = fi.parentNode;
-        if(parent2 && !parent2.querySelector('.edit-info-srv')) {
-          var ei = document.createElement('div');
-          ei.className = 'edit-info-srv';
-          ei.style.cssText = 'font-size:.68rem;color:#888;margin-top:2px';
-          var ago = sv.lastAt ? Math.round((Date.now() - sv.lastAt) / 1000) : null;
-          var agoStr = ago !== null ? (ago < 60 ? ago + 's' : Math.round(ago/60) + 'min') : '';
-          ei.textContent = '✏️ ' + sv.lastUser + (agoStr ? ' · ' + agoStr : '');
-          parent2.appendChild(ei);
-        }
-      }
-
-      // ───── 3. EVENT LISTENERS — registered ONCE per input ───────────────
-      // Single source of truth: every input change flows through saveField().
-
-      if(fi && !fi._srv) {
-        fi._srv = 1;
-        fi.addEventListener('focus', function(){ acquireLock(idx); });
-        fi.addEventListener('input', function(){ updateTotDiff(idx); scheduleFieldSave(idx); });
-        fi.addEventListener('blur',  function(){ flushFieldSave(idx); });
-      }
-
-      if(da && !da._srv) {
-        da._srv = 1;
-        da.addEventListener('focus', function(){ acquireLock(idx); });
-        da.addEventListener('input', function(){ updateTotDiff(idx); scheduleFieldSave(idx); });
-        da.addEventListener('blur',  function(){ flushFieldSave(idx); });
-      }
-
-      // FIX (mar 19-may-2026): bloque de listener para calc{idx} eliminado.
-      // El campo Cálculo fue reemplazado por una calculadora flotante
-      // desacoplada (ver al final del body). calcExpr histórico se preserva
-      // pero ya no se edita desde la UI por fila.
-
-      if(cob && !cob._srv) {
-        cob._srv = 1;
-        cob.addEventListener('focus', function(){ acquireLock(idx); });
-        // Cobertura is saved on 'change' (when user picks a new option)
-        cob.addEventListener('change', function(){
-          flushFieldSave(idx);
-          // Update background to reflect new selection immediately
-          this.style.background =
-            this.value === 'Auditado'    ? '#eafaf1' :
-            this.value === 'No auditado' ? '#fdecea' : '#fef9e7';
-        });
-      }
-    })(i);
-  }
-
-  // FIX (mar 19-may-2026): re-aplicar filtro de búsqueda SKU si está activo.
-  // renderConteo rearma el tbody con innerHTML y eso borra el display:none
-  // de las filas filtradas. Re-aplicar al final preserva el filtro a través
-  // de polls/saves. Si applySkuSearchFilter aún no está definido (orden de
-  // carga del script de búsqueda), no pasa nada — el filtro se re-aplicará
-  // en el próximo render.
-  if(typeof window.applySkuSearchFilter === 'function') {
-    try { window.applySkuSearchFilter(); }
-    catch(e) { console.warn('applySkuSearchFilter failed:', e); }
-  }
-};
-
-// Patch saveConteo to release locks
-var _origSaveConteo = saveConteo;
-saveConteo = function() {
-  releaseAllLocks();
-  _origSaveConteo();
-};
-
-// Patch sel-cont change to release locks
-var selCont = document.getElementById('sel-cont');
-// FIX (lun 18-may-2026 noche): flush obligatorio antes de clear+release,
-// para preservar cambios escritos justo antes del cambio de contenedor,
-// aun si el blur natural no se disparó (caso típico en tablets con touch,
-// dropdown rápido o navegación gestual).
-// El DOM aún muestra el contenedor anterior en este punto (renderConteo se
-// ejecuta DESPUÉS del listener change), así que flushFieldSave lee los
-// valores correctos. flushFieldSave ya limpia su propio timer antes de
-// llamar a saveField (ver línea 2840), así que no hay doble-save.
-if(selCont) selCont.addEventListener('change', function(){
-  // PASO 1: flush de timers pendientes ANTES de limpiarlos.
-  if(typeof flushFieldSave === 'function' && saveTimers) {
-    Object.keys(saveTimers).forEach(function(k){
-      if(saveTimers[k]) {
-        var idx = parseInt(k, 10);
-        if(!isNaN(idx)) {
-          try { flushFieldSave(idx); }
-          catch(e) { console.warn('flushFieldSave failed for idx', idx, e); }
-        }
-      }
-    });
-  }
-  // PASO 2: limpiar timers (defensa por si flushFieldSave dejó alguno).
-  clearAllSaveTimers();
-  // PASO 3: liberar locks como antes.
-  releaseAllLocks();
-});
-
-window.addEventListener('beforeunload', function(){ releaseAllLocks(); });
-
-</script>
-
-
-<script>
-// ── SKU Search ────────────────────────────────────────────────────────────
-// FIX (mar 19-may-2026): refactor del filtro en función global
-// `applySkuSearchFilter()` para que pueda re-aplicarse después de cada
-// renderConteo. Antes, renderConteo rearmaba el tbody con innerHTML y
-// borraba el `display:none` de las filas filtradas. Si el usuario tenía
-// un SKU buscado y apretaba "Guardar conteo ✓", el flush hacía save al
-// server, llegaba un poll con state.version nueva, renderConteo se
-// disparaba, y el filtro se "perdía" visualmente (el input mantenía el
-// texto pero la tabla mostraba todas las filas).
-//
-// Ahora applySkuSearchFilter() se expone global y se llama:
-//   (a) en el evento 'input' del campo de búsqueda (como antes)
-//   (b) al final del patched renderConteo, para preservar el filtro
-//       después de re-renderizar
-window.applySkuSearchFilter = function() {
-  var inp = document.getElementById('sku-search');
-  if(!inp) return;
-  var q = (inp.value || '').trim().toLowerCase();
-  var rows = document.querySelectorAll('#tbody-conteo tr');
-  var shown = 0;
-  rows.forEach(function(row) {
-    if(!row.cells || row.cells.length < 2) return;
-    var sku  = (row.cells[0] ? row.cells[0].textContent : '').toLowerCase();
-    var name = (row.cells[1] ? row.cells[1].textContent : '').toLowerCase();
-    var match = !q || sku.indexOf(q) >= 0 || name.indexOf(q) >= 0;
-    row.style.display = match ? '' : 'none';
-    if(match) shown++;
-  });
-  var cnt = document.getElementById('sku-search-count');
-  if(cnt) cnt.textContent = q ? (shown + ' resultado' + (shown!==1?'s':'')) : '';
-};
-
-document.getElementById('sku-search').addEventListener('input', window.applySkuSearchFilter);
-
-// Clear search when switching containers
-document.getElementById('sel-cont').addEventListener('change', function() {
-  var s = document.getElementById('sku-search');
-  if(s) s.value = '';
-  var c = document.getElementById('sku-search-count');
-  if(c) c.textContent = '';
-});
-</script>
-
-
-
-<script>
-// Global vars for metadata (must be global so all scripts can access)
-var puertas         = {};   // { contId: 'L001.001' }
-var conteoMetadata  = {};   // { contId: {fechaIngreso, fechaFurgon, placas} }
-var alertasWMS      = {};   // FIX (dom 24-may-2026, v5.2.22): { contId: {detectadoEn, diffs, itemsWMS, ...} }
-
-// ── Summary Card ──────────────────────────────────────────────────────────
-function updateSummaryCard() {
-  var card = document.getElementById('summary-card');
-  if(!card) return;
-  if(!current || !teorico[current]) { card.style.display='none'; return; }
-  card.style.display = '';
-  var items   = teorico[current].items || [];
-  var fis     = fisico[current];
-  var tipo    = teorico[current].type || '';
-  var puerta  = puertas[current] || '—';
-  var partic  = (asignaciones[current]||[]).join(', ') || '—';
-  var contadas = 0, diffs = 0;
-  // A row counts as "contada" when ANY of these is true:
-  //   (a) cobertura is 'Auditado'
-  //   (b) cobertura is 'No auditado'  (explicitly skipped — still counts as resolved)
-  //   (c) cobertura missing/En revisión BUT a numeric fisico is already saved
-  //       (legacy data created before the cobertura field existed).
-  // Pendientes = total - contadas. Diffs only count rows that are actually audited
-  // AND whose physical value differs from teórico.
-  items.forEach(function(item, i) {
-    var fiObj = (Array.isArray(fis) && fis[i]) ? fis[i] : null;
-    var cob = fiObj && fiObj.cobertura ? fiObj.cobertura : null;
-    var hasFisico = fiObj && fiObj.fisico !== null && fiObj.fisico !== undefined && fiObj.fisico !== '';
-    // Live edit: if the input has a numeric value and user is typing it, treat as Auditado
-    var liveTyping = false;
-    if(!cob || cob === 'En revisión') {
-      var fiEl = document.getElementById('fi'+i);
-      if(fiEl && fiEl.value !== '' && document.activeElement === fiEl) liveTyping = true;
-    }
-    var isCounted = (cob === 'Auditado') || (cob === 'No auditado') || (!cob && hasFisico) || liveTyping;
-    if(isCounted) {
-      contadas++;
-      // Diffs only for genuinely audited rows
-      var auditedForDiff = (cob === 'Auditado') || (!cob && hasFisico) || liveTyping;
-      if(auditedForDiff) {
-        var fv = fiObj ? Number(fiObj.fisico) : NaN;
-        if(!isNaN(fv) && fv !== item.qty) diffs++;
-      }
-    }
-  });
-  var scCont    = document.getElementById('sc-cont');
-  var scTipo    = document.getElementById('sc-tipo');
-  var scPuerta  = document.getElementById('sc-puerta');
-  var scPartic  = document.getElementById('sc-partic');
-  var scLineas  = document.getElementById('sc-lineas');
-  var scContadas= document.getElementById('sc-contadas');
-  var scPend    = document.getElementById('sc-pendientes');
-  var scDiffs   = document.getElementById('sc-diffs');
-  if(scCont)    scCont.textContent    = current;
-  if(scTipo)    scTipo.textContent    = tipo;
-  if(scPuerta)  scPuerta.textContent  = puerta;
-  if(scPartic)  scPartic.textContent  = partic;
-  if(scLineas)  scLineas.textContent  = items.length;
-  if(scContadas)scContadas.textContent= contadas + '/' + items.length;
-  if(scPend)    scPend.textContent    = items.length - contadas;
-  if(scDiffs)   scDiffs.textContent   = diffs;
-}
-
-// ── Puerta Selector ───────────────────────────────────────────────────────
-function updatePuertaSelector() {
-  var sel = document.getElementById('sel-puerta'); if(!sel) return;
-  // Embarques → I, Traslados → L
-  var tipo = current && teorico[current] ? (teorico[current].type||'') : '';
-  var opts = sel.querySelectorAll('option');
-  opts.forEach(function(o){
-    var v = o.value;
-    if(!v) return; // keep blank option
-    if(tipo === 'Embarques') {
-      o.style.display = v.startsWith('I') ? '' : 'none';
-    } else if(tipo === 'Traslados') {
-      o.style.display = v.startsWith('L') ? '' : 'none';
-    } else {
-      o.style.display = '';
-    }
-  });
-  sel.value = puertas[current] || '';
-}
-
-// updateMetaInputs - declared early so renderConteo patch can call it
-function updateMetaInputs() {
-  var wrap = document.getElementById('conteo-meta-wrap');
-  if(wrap) wrap.style.display = current ? 'flex' : 'none';
-  if(!current) return;
-  var m = conteoMetadata[current] || {};
-  var fi = document.getElementById('inp-fecha-ingreso');
-  var ff = document.getElementById('inp-fecha-furgon');
-  var pl = document.getElementById('inp-placas');
-  var pv = document.getElementById('sel-puerta');
-  if(fi) fi.value = m.fechaIngreso || '';
-  if(ff) ff.value = m.fechaFurgon  || '';
-  if(pl) pl.value = m.placas       || '';
-  if(pv) pv.value = puertas[current] || '';
-}
-
-function saveMetadata() {
-  if(!current) return;
-  if(!conteoMetadata[current]) conteoMetadata[current] = {};
-  var fi = document.getElementById('inp-fecha-ingreso');
-  var ff = document.getElementById('inp-fecha-furgon');
-  var pl = document.getElementById('inp-placas');
-  var pv = document.getElementById('sel-puerta');
-  if(fi) conteoMetadata[current].fechaIngreso = fi.value;
-  if(ff) conteoMetadata[current].fechaFurgon  = ff.value;
-  if(pl) conteoMetadata[current].placas        = pl.value;
-  if(pv) puertas[current] = pv.value;
-  updateSummaryCard();
-  // FIX (sáb 23-may-2026 PM BLINDADO): marcar current como dirty para que
-  // saveDirectToSupabase aplique local solo en este contenedor (no pise
-  // puertas/conteoMetadata de OTROS contenedores tocados por otra tablet).
-  if(!window._dirtyMetadata) window._dirtyMetadata = {};
-  window._dirtyMetadata[current] = true;
-  // ALWAYS save direct to Supabase (insurance against Render sleeping)
-  saveDirectToSupabase();
-  // Also fire the server endpoint (broadcasts to other clients via polling)
-  fetch('/api/metadata',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cont:current, metadata:conteoMetadata[current],
-      puerta:pv?pv.value:'', usuario:currentUser?currentUser.name:'—'})})
-    .then(function(r){return r.json();})
-    .then(function(d){if(d.ok)lastVersion=d.version;})
-    .catch(function(){ /* already saved direct */ });
-}
-
-['inp-fecha-ingreso','inp-fecha-furgon','inp-placas'].forEach(function(id){
-  var el = document.getElementById(id);
-  if(el) {
-    el.addEventListener('change', function(){ if(typeof saveMetadata==='function') saveMetadata(); });
-    el.addEventListener('blur',   function(){ if(typeof saveMetadata==='function') saveMetadata(); });
-  }
-});
-
-// Fix Bug 2: Puerta selector also triggers saveMetadata
-(function(){
-  var selPuerta = document.getElementById('sel-puerta');
-  if(selPuerta) {
-    selPuerta.addEventListener('change', function(){
-      if(current) puertas[current] = this.value;
-      if(typeof saveMetadata==='function') saveMetadata();
-    });
-  }
-})();
-
-// Call updateMetaInputs when container changes
-document.getElementById('sel-cont').addEventListener('change', function(){
-  updateMetaInputs();
-});
-
-// Patch renderConteo to also update meta inputs
-var _origRC3 = renderConteo;
-renderConteo = function() {
-  _origRC3();
-  if(typeof updateMetaInputs==='function')    updateMetaInputs();
-  if(typeof updateSummaryCard==='function')   updateSummaryCard();
-  if(typeof updatePuertaSelector==='function')updatePuertaSelector();
-};
-
-// ── Export scope picker ───────────────────────────────────────────────────
-document.getElementById('export-scope').addEventListener('change', function(){
-  var wrap = document.getElementById('export-pick-wrap');
-  var list = document.getElementById('export-pick-list');
-  if(this.value === 'pick') {
-    wrap.style.display = '';
-    list.innerHTML = conts.map(function(c){
-      var type = teorico[c] ? teorico[c].type : '';
-      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.85rem;cursor:pointer">'
-        +'<input type="checkbox" class="export-pick-cb" value="'+c+'" checked style="width:18px;height:18px"> '
-        +c+' <span style="font-size:.75rem;color:#888">('+type+')</span></label>';
-    }).join('');
-  } else {
-    wrap.style.display = 'none';
-  }
-});
-
-// ── Toggle Detalle de Diferencias ────────────────────────────────────────
-document.getElementById('btn-toggle-detalle').addEventListener('click', function() {
-  var wrap = document.getElementById('detalle-wrap');
-  var ico  = document.getElementById('detalle-ico');
-  var open = wrap.style.display !== 'none';
-  wrap.style.display = open ? 'none' : '';
-  ico.textContent    = open ? '▼ mostrar' : '▲ ocultar';
-});
-
-// ── Export picker select/deselect all ────────────────────────────────────
-document.getElementById('btn-pick-all').addEventListener('click', function(){
-  document.querySelectorAll('.export-pick-cb').forEach(function(cb){ cb.checked=true; });
-});
-document.getElementById('btn-pick-none').addEventListener('click', function(){
-  document.querySelectorAll('.export-pick-cb').forEach(function(cb){ cb.checked=false; });
-});
-</script>
-
-<script>
-// ══════════════════════════════════════════════════════════════════════════
-// CDG IMPROVEMENTS - foto, historial, guardar progreso, desbloquear
-// ══════════════════════════════════════════════════════════════════════════
-// 5-slot photo grid with labels. cdgFotos is { marchamo, manifiesto, placaFurgon, otro1, otro2 }
-var CDG_FOTO_SLOTS = [
-  { key:'marchamo',    label:'Marchamo'    },
-  { key:'manifiesto',  label:'Manifiesto'  },
-  { key:'placaFurgon', label:'Placa Furgón'},
-  { key:'otro1',       label:'Otro'        },
-  { key:'otro2',       label:'Otro 2'      }
-];
-var cdgFotos = {};                 // dataURL keyed by slot.key
-var cdgFotoGral = null;            // legacy alias; kept = cdgFotos.marchamo for backward compat
-
-function renderCDGFotoGrid(){
-  var grid = document.getElementById('cdg-foto-grid');
-  if(!grid) return;
-  grid.innerHTML = CDG_FOTO_SLOTS.map(function(slot){
-    var data = cdgFotos[slot.key];
-    if(data){
-      return '<div class="cdg-foto-slot has-photo" data-key="'+slot.key+'">'
-        +'<img src="'+escH(data)+'" alt="'+escH(slot.label)+'">'
-        +'<button class="slot-del" data-key="'+slot.key+'" title="Eliminar">×</button>'
-        +'<div class="slot-label-overlay">'+escH(slot.label)+'</div>'
-        +'</div>';
-    }
-    return '<div class="cdg-foto-slot" data-key="'+slot.key+'">'
-      +'<div class="slot-ico">📷</div>'
-      +'<div class="slot-label">'+escH(slot.label)+'</div>'
-      +'<input type="file" accept="image/*" style="display:none" data-key="'+slot.key+'">'
-      +'</div>';
-  }).join('');
-  // Wire slot clicks → open file picker
-  grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
-    var inp = slot.querySelector('input[type=file]');
-    if(!inp) return;
-    slot.addEventListener('click', function(e){
-      if(e.target.classList && e.target.classList.contains('slot-del')) return;
-      inp.click();
-    });
-    inp.addEventListener('change', function(){
-      var file = this.files[0]; if(!file) return;
-      var key  = this.dataset.key;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        cdgFotos[key] = ev.target.result;
-        if(key === 'marchamo') cdgFotoGral = ev.target.result; // legacy
-        renderCDGFotoGrid();
-      };
-      reader.readAsDataURL(file);
-    });
-  });
-  // Wire delete buttons
-  grid.querySelectorAll('.slot-del').forEach(function(btn){
-    btn.addEventListener('click', function(e){
-      e.stopPropagation();
-      var key = this.dataset.key;
-      delete cdgFotos[key];
-      if(key === 'marchamo') cdgFotoGral = null;
-      renderCDGFotoGrid();
-    });
-  });
-}
-
-// Tipo selector - show/hide "otro" field
-(function(){
-  var tipoSel = document.getElementById('cdg-tipo');
-  if(tipoSel) tipoSel.addEventListener('change', function(){
-    var wrap = document.getElementById('cdg-tipo-otro-wrap');
-    if(wrap) wrap.style.display = this.value==='otro' ? '' : 'none';
-  });
-})();
-
-// Initial render of empty grid
-renderCDGFotoGrid();
-
-// Auto-fill desc + costo when SKU typed
-(function(){
-  var skuInp = document.getElementById('cdg-sku');
-  if(!skuInp) return;
-  skuInp.addEventListener('blur', function(){
-    var sku = this.value.trim(); if(!sku) return;
-    var costo = getCosto(sku);
-    var costoInp = document.getElementById('cdg-costo');
-    var autoLbl  = document.getElementById('cdg-desc-auto');
-    // Look for description in teorico items first
-    var foundDesc = '';
-    Object.keys(teorico).forEach(function(cont){
-      if(foundDesc) return;
-      var items = teorico[cont] ? (teorico[cont].items||[]) : [];
-      var found = items.find(function(it){ return String(it.sku).trim()===sku; });
-      if(found && found.desc) foundDesc = found.desc;
-    });
-    var descInp = document.getElementById('cdg-desc');
-    if(foundDesc && descInp && !descInp.value) descInp.value = foundDesc;
-    if(costo && costo > 0) {
-      if(costoInp) costoInp.value = 'Q'+Number(costo).toFixed(2);
-      if(autoLbl)  autoLbl.textContent = '✓ Costo: Q'+Number(costo).toFixed(2);
-    } else {
-      if(costoInp) costoInp.value = '';
-      if(autoLbl)  autoLbl.textContent = '';
-    }
-  });
-})();
-
-// Save draft
-(function(){
-  var btn = document.getElementById('btn-cdg-save-draft');
-  if(!btn) return;
-  btn.addEventListener('click', async function(){
-    // FIX (rev Claude 2, mié 20-may-2026 noche): evitar doble save inocuo
-    // si el usuario hace doble clic rápido mientras la subida está en curso.
-    if(this.disabled) return;
-    var u25 = (document.getElementById('cdg-u25')||{}).value||'';
-    u25 = u25.trim();
-    if(!u25){ showMsg('cdg-msg','warn','Ingresa el correlativo U25.'); return; }
-    if(!cdgSkus.length){ showMsg('cdg-msg','warn','Agrega al menos un SKU.'); return; }
-    var tipoSel = document.getElementById('cdg-tipo');
-    var tipo = tipoSel ? tipoSel.value : 'CDG';
-    if(tipo==='otro'){
-      var otrInp = document.getElementById('cdg-tipo-otro');
-      tipo = otrInp ? (otrInp.value.trim()||'Otro') : 'Otro';
-    }
-
-    var btnSave = this;
-
-    // FIX (mié 20-may-2026 noche, sesión 2): subir TODAS las fotos del CDG a
-    // Storage antes de armar el payload. Antes incluíamos base64 directo →
-    // PayloadTooLargeError 5MB → no guardaba nada → al refrescar el progreso
-    // se perdía. Patrón idéntico a btn-cdg-finish (línea ~2412).
-    var fotosOriginales = Object.assign({}, cdgFotos);
-    var fotosFinales = {};
-    var fotosABubir = [];
-    Object.keys(fotosOriginales).forEach(function(slotKey){
-      var data = fotosOriginales[slotKey];
-      if(data && typeof data === 'string' && data.indexOf('data:') === 0) {
-        fotosABubir.push(slotKey);
-      } else if(data) {
-        // Ya es URL u otra cosa, no re-subir
-        fotosFinales[slotKey] = data;
-      }
-    });
-
-    if(fotosABubir.length > 0) {
-      btnSave.disabled = true;
-      var originalText = btnSave.textContent;
-      showMsg('cdg-msg', 'ok', '⏳ Subiendo ' + fotosABubir.length + ' foto(s)... no cierres la app.');
-
-      var safeU25 = String(u25).replace(/[^A-Za-z0-9_\-]/g, '_');
-      try {
-        for(var i=0; i<fotosABubir.length; i++){
-          var slotKey = fotosABubir[i];
-          btnSave.textContent = '⏳ Foto ' + (i+1) + '/' + fotosABubir.length + '...';
-          var kind = (slotKey === 'marchamo') ? 'cdg-gral' : 'cdg-sku';
-          var refId = safeU25 + '_' + slotKey;
-          var onSlowCdg = (function(idx, total){
-            return function(){
-              btnSave.textContent = '⏳ Foto ' + (idx+1) + '/' + total + '... puede tardar por la señal';
-            };
-          })(i, fotosABubir.length);
+    if(data) opts.headers['Content-Length'] = Buffer.byteLength(data);
+    const req = https.request(opts, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        // FIX CRÍTICO (mié 20-may-2026, rev ChatGPT): rechazar la Promise
+        // si Supabase responde con error HTTP (4xx/5xx). Antes resolvíamos
+        // SIEMPRE con null aunque el server hubiera rechazado el guardado,
+        // lo que dejaba a saveDailyState y dbSet creyendo que todo OK.
+        // Esto era la causa raíz REAL del bug que vimos en producción.
+        if(res.statusCode >= 400) {
+          var errMsg = 'Supabase HTTP ' + res.statusCode;
           try {
-            var url = await window.uploadFotoAndGetUrl(fotosOriginales[slotKey], kind, refId, onSlowCdg);
-            fotosFinales[slotKey] = url;
-            // Actualizar también el state local para que la próxima vez no re-subamos
-            cdgFotos[slotKey] = url;
-            // FIX (rev Claude 2, mié 20-may-2026 noche): sincronizar cdgFotoGral
-            // con la URL nueva cuando el slot es marchamo. Antes quedaba con el
-            // base64 viejo en memoria (~250KB sin liberar) hasta el reset.
-            if(slotKey === 'marchamo') cdgFotoGral = url;
-            console.log('CDG draft foto subida (' + slotKey + '):', url);
+            var errBody = raw ? JSON.parse(raw) : null;
+            if(errBody && errBody.message) errMsg += ': ' + errBody.message;
+            else if(errBody && errBody.error) errMsg += ': ' + errBody.error;
+            else if(raw) errMsg += ': ' + raw.slice(0, 200);
           } catch(e) {
-            btnSave.disabled = false;
-            btnSave.textContent = originalText;
-            var yaGuardadas = i;
-            var totalFotos = fotosABubir.length;
-            var msgYa = yaGuardadas > 0
-              ? '\n\nFotos ya guardadas: ' + yaGuardadas + ' de ' + totalFotos + '.'
-              : '';
-            console.warn('Upload foto CDG draft falló:', e && e.message);
-            alert('No se pudo guardar la foto "' + slotKey + '". Intentá otra vez. Si vuelve a fallar, quitá esa foto y guardá sin ella.' + msgYa);
-            showMsg('cdg-msg', 'err', '⚠️ Error subiendo fotos. Reintentá.');
-            return;
+            if(raw) errMsg += ': ' + raw.slice(0, 200);
           }
+          return reject(new Error(errMsg));
         }
-      } finally {
-        btnSave.disabled = false;
-        btnSave.textContent = originalText;
-      }
-    }
-
-    var fotoGralFinal = fotosFinales.marchamo || (
-      cdgFotoGral && typeof cdgFotoGral === 'string' && cdgFotoGral.indexOf('http') === 0
-        ? cdgFotoGral
-        : null
-    );
-
-    var conteoData = {
-      items: cdgSkus.slice(),
-      status: 'open',
-      autor: currentUser?currentUser.name:'—',
-      fecha: new Date().toLocaleDateString('es'),
-      tipo: tipo,
-      fotoGral: fotoGralFinal,
-      fotos: fotosFinales,
-      lastEditor: currentUser?currentUser.name:'—',
-      ts: new Date().toLocaleString('es')
-    };
-    // Save to BOTH Render and direct Supabase
-    saveCDGDirectToSupabase(u25, conteoData);
-    fetch('/api/cdg/save',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({contId:u25,items:cdgSkus.slice(),tipo:tipo,
-        fotoGral:fotoGralFinal,
-        fotos:fotosFinales,
-        usuario:currentUser?currentUser.name:'—'})})
-      .then(function(r){return r.json();})
-      .then(function(d){ if(d.ok) lastVersion=-1; })
-      .catch(function(){ /* already saved direct */ });
-    showMsg('cdg-msg','ok','💾 Progreso guardado — aparece en Historial '+tipo+'.');
-  });
-})();
-
-// History panels — combine data from Render and Supabase to avoid losing conteos
-// FIX (17-may-2026): antes hacía "race" tomando solo uno de los dos. Si Render
-// devolvía un cdg parcial o vacío, los conteos de Supabase se ignoraban,
-// haciendo que conteos del día desaparecieran del historial visualmente.
-// Ahora se combinan ambas fuentes; el más reciente gana cuando hay colisión.
-function showCDGHist(tipo) {
-  var renderPromise = fetch('/api/cdg').then(function(r){
-    if(!r.ok) throw new Error('Render not ok');
-    return r.json();
-  }).catch(function(){ return {}; });
-
-  var supaPromise = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
-    if(rows && rows.length > 0) {
-      try { var parsed = JSON.parse(rows[0].value); return parsed.cdg || {}; }
-      catch(e) { return {}; }
-    }
-    return {};
-  }).catch(function(){ return {}; });
-
-  // Wait for BOTH sources, then merge. Never discards data from either side.
-  Promise.all([renderPromise, supaPromise]).then(function(results){
-    var renderData = results[0] || {};
-    var supaData   = results[1] || {};
-    var data = {};
-    // Start with Supabase (más confiable, persistente)
-    Object.keys(supaData).forEach(function(k){ data[k] = supaData[k]; });
-    // Sobreescribir con Render solo si la versión de Render parece más reciente
-    Object.keys(renderData).forEach(function(k){
-      var r = renderData[k];
-      var s = supaData[k];
-      if(!s) { data[k] = r; return; }
-      // Heurística de "más reciente": ts (timestamp string) o lastEditor presencia
-      // Si ambos existen, preferir el que tenga ts más reciente o más items.
-      var rItems = (r.items||[]).length;
-      var sItems = (s.items||[]).length;
-      // Conservador: si Render tiene MENOS items que Supabase, mantener Supabase
-      // (caso típico: Render arrancó fresco y aún no recargó todos los CDG)
-      if(rItems < sItems) { data[k] = s; return; }
-      data[k] = r;
-    });
-
-    var panel   = document.getElementById('cdg-hist-panel');
-    var title   = document.getElementById('cdg-hist-title');
-    var content = document.getElementById('cdg-hist-content');
-    if(!panel||!title||!content) return;
-    var keys = Object.keys(data).filter(function(k){
-        var t = data[k].tipo||'CDG';
-        if(tipo==='otro') return t!=='CDG'&&t!=='KTM';
-        return t===tipo;
+        try { resolve(raw ? JSON.parse(raw) : null); }
+        catch(e) { resolve(null); }
       });
-      title.textContent = 'Historial ' + tipo + ' ('+keys.length+')';
-      if(!keys.length){
-        content.innerHTML='<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin conteos de tipo '+escH(tipo)+'.</p>';
-        panel.style.display='';
-        return;
-      }
-
-      // Compute totals for each conteo
-      var rows = keys.map(function(id){
-        var c = data[id];
-        var items = c.items||[];
-        var lineas = items.length;
-        var totalSkus = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
-        var totalCosto = items.reduce(function(a,it){
-          var cu = Number(it.costo) || getCosto(it.sku) || 0;
-          return a + cu * (Number(it.qty)||0);
-        }, 0);
-        return { id:id, c:c, lineas:lineas, totalSkus:totalSkus, totalCosto:totalCosto };
-      });
-
-      var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
-        +'<span style="font-size:.85rem;color:#666"><strong>'+keys.length+'</strong> conteo'+(keys.length!==1?'s':'')+' '+escH(tipo)+'</span>'
-        +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
-        +'<button class="btn btn-sm btn-green" id="btn-cdg-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Resumen</button>'
-        +'<button class="btn btn-sm" id="btn-cdg-hist-xlsx-analitica" data-tipo="'+escH(tipo)+'" style="background:#0066cc;color:#fff;font-weight:600" title="Exportar análitica con 42 columnas (formato Ever García)">📊 Exportar Analítica</button>'
-        +'</div>'
-        +'</div>';
-
-      h += '<div class="tbl-wrap" style="margin-bottom:0"><table>'
-        +'<thead><tr>'
-        +'<th>Correlativo U25</th>'
-        +'<th class="tc">Líneas</th>'
-        +'<th class="tc">Unidades</th>'
-        +'<th class="tc">Costo total</th>'
-        +'<th>Estado</th>'
-        +'<th>Autor</th>'
-        +'<th class="tc">Acciones</th>'
-        +'</tr></thead><tbody>';
-      rows.forEach(function(r){
-        var c = r.c;
-        var isLocked = c.bloqueado === true;
-        var badge = isLocked
-          ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
-          : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
-        var actions = '<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">';
-        // FIX (vie 22-may-2026): botón "Ver" para cualquier usuario del equipo.
-        // Read-only: NO toca bloqueado, NO toca autor/quien, solo muestra.
-        // FIX (rev ChatGPT A): incluir texto "Ver" además del ojo — más claro.
-        actions += '<button class="btn btn-xs cdg-view-btn" data-id="'+escH(r.id)+'" title="Ver conteo (solo lectura)" style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
-        actions += '<button class="btn btn-xs cdg-report-btn" data-id="'+escH(r.id)+'" title="Reporte individual">📥</button>';
-        if(!isLocked) actions += '<button class="btn btn-xs cdg-continuar-btn" data-id="'+escH(r.id)+'" title="Continuar">✏️</button>';
-        if(isSup() && isLocked) actions += '<button class="btn btn-xs cdg-unlock-btn" data-id="'+escH(r.id)+'" title="Desbloquear">🔓</button>';
-        actions += '</div>';
-        h += '<tr>'
-          +'<td><strong>'+escH(r.id)+'</strong></td>'
-          +'<td class="tc">'+r.lineas+'</td>'
-          +'<td class="tc">'+r.totalSkus+'</td>'
-          +'<td class="tc" style="font-family:monospace">Q'+r.totalCosto.toFixed(2)+'</td>'
-          +'<td>'+badge+'</td>'
-          +'<td style="font-size:.78rem;color:#888">'+escH(c.autor||'—')+'</td>'
-          +'<td class="tc">'+actions+'</td>'
-          +'</tr>';
-      });
-      h += '</tbody></table></div>';
-      content.innerHTML = h;
-
-      // Wire Excel export (resumen — formato actual)
-      var btnXlsx = document.getElementById('btn-cdg-hist-xlsx');
-      if(btnXlsx) btnXlsx.addEventListener('click', function(){
-        exportCDGHistExcel(rows, tipo);
-      });
-
-      // FIX (sáb 23-may-2026, Capa 1 CDG): wire del botón nuevo "Exportar Analítica".
-      // Genera un xlsx con formato 42 columnas (Bloque D del comparativo Ever García).
-      // A diferencia del export "Resumen", este incluye también borradores (open) y
-      // tiene todas las columnas analíticas como los exports Hamilton.
-      var btnXlsxAna = document.getElementById('btn-cdg-hist-xlsx-analitica');
-      if(btnXlsxAna) btnXlsxAna.addEventListener('click', function(){
-        exportCDGAnalitica(rows, tipo);
-      });
-
-      // Wire individual report
-      content.querySelectorAll('.cdg-report-btn').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var id = this.dataset.id;
-          exportCDGReporteIndividual(id, data[id]);
-        });
-      });
-
-      // Wire continuar
-      content.querySelectorAll('.cdg-continuar-btn').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var id = this.dataset.id;
-          var c  = data[id];
-          document.getElementById('cdg-u25').value = id;
-          var tipoSel = document.getElementById('cdg-tipo');
-          if(tipoSel){
-            if(c.tipo==='CDG' || c.tipo==='KTM') tipoSel.value = c.tipo;
-            else { tipoSel.value='otro';
-              var oi=document.getElementById('cdg-tipo-otro');
-              if(oi){ oi.value=c.tipo; var ow=document.getElementById('cdg-tipo-otro-wrap'); if(ow) ow.style.display=''; }
-            }
-          }
-          cdgSkus = (c.items||[]).slice();
-          renderCDGSkuList();
-          cdgFotos = c.fotos ? Object.assign({}, c.fotos) : {};
-          if(c.fotoGral && !cdgFotos.marchamo) cdgFotos.marchamo = c.fotoGral;
-          cdgFotoGral = cdgFotos.marchamo || null;
-          renderCDGFotoGrid();
-          document.getElementById('cdg-hist-panel').style.display='none';
-          showMsg('cdg-msg','ok','✏️ Cargado '+escH(id)+' para continuar.');
-        });
-      });
-
-      // Wire unlock (supervisor)
-      content.querySelectorAll('.cdg-unlock-btn').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var id = this.dataset.id;
-          if(!confirm('¿Desbloquear conteo '+id+'?')) return;
-          fetch('/api/cdg/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({contId:id,usuario:currentUser?currentUser.name:'—'})})
-            .then(function(r){return r.json();})
-            .then(function(d){ if(d.ok){ lastVersion=-1; pollNow(); showCDGHist(tipo); } });
-        });
-      });
-
-      // FIX (vie 22-may-2026): wire botón Ver — modal read-only.
-      content.querySelectorAll('.cdg-view-btn').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var id = this.dataset.id;
-          var c = data[id];
-          if(c) viewCDGReadOnly(id, c);
-        });
-      });
-
-      panel.style.display='';
-    })
-    .catch(function(e){ console.warn('CDG hist error:',e); });
-}
-
-// FIX (vie 22-may-2026): vista read-only de un conteo CDG. Renderiza un
-// modal con TODA la info del conteo (SKUs, fotos generales, fotos por SKU,
-// hallazgos asociados) sin tocar el state ni desbloquear. Funcional para
-// cualquier usuario del equipo. Cierra con botón × o clic fuera.
-function viewCDGReadOnly(id, c){
-  if(!id || !c) return;
-  var modal = document.getElementById('cdg-view-modal');
-  var idEl  = document.getElementById('cdg-view-id');
-  var ctEl  = document.getElementById('cdg-view-content');
-  if(!modal || !ctEl) return;
-
-  idEl.textContent = '· ' + id;
-
-  // FIX (rev ChatGPT I, vie 22-may-2026): calcular contadores arriba para
-  // mostrar resumen rápido en cabecera.
-  var items = c.items || [];
-  var fotos = Object.assign({}, c.fotos || {});
-  if(c.fotoGral && !fotos.marchamo) fotos.marchamo = c.fotoGral;
-  var fotoKeys = ['marchamo','manifiesto','placaFurgon','otro1','otro2'];
-  var fotosGralCount = fotoKeys.filter(function(k){ return !!fotos[k]; }).length;
-  var fotosSkuCount = items.filter(function(it){ return !!it.foto; }).length;
-  var fotosTotalCount = fotosGralCount + fotosSkuCount;
-  var hallazgosAsocCount = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
-    return h.tipo === 'CDG' && !h.cdgVersion && (h.cont === id || h.contenedor === id || h.u25 === id);
-  }).length;
-
-  var html = '';
-
-  // --- Resumen rápido (chip arriba) ---
-  html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:.85rem;font-size:.78rem">';
-  html += '<span style="background:#eef5ff;color:#0066cc;padding:4px 10px;border-radius:14px;font-weight:600">📦 SKUs: '+items.length+'</span>';
-  html += '<span style="background:#e8f7ed;color:#1e7e34;padding:4px 10px;border-radius:14px;font-weight:600">📸 Fotos: '+fotosTotalCount+'</span>';
-  html += '<span style="background:'+(hallazgosAsocCount>0?'#fff3e0':'#f5f5f3')+';color:'+(hallazgosAsocCount>0?'#b7770d':'#888')+';padding:4px 10px;border-radius:14px;font-weight:600">⚠️ Hallazgos: '+hallazgosAsocCount+'</span>';
-  html += '</div>';
-
-  // --- Encabezado: metadata del conteo ---
-  var isLocked = c.bloqueado === true;
-  var badge = isLocked
-    ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
-    : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;padding:12px;background:#fafaf8;border-radius:10px;margin-bottom:1rem;font-size:.85rem">';
-  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Correlativo U25</div><div style="font-weight:700;font-size:.95rem">'+escH(id)+'</div></div>';
-  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Tipo</div><div style="font-weight:600">'+escH(c.tipo||'—')+'</div></div>';
-  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Estado</div><div>'+badge+'</div></div>';
-  html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Autor</div><div style="font-weight:600">'+escH(c.autor||'—')+'</div></div>';
-  if(c.fecha) html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Fecha</div><div>'+escH(c.fecha)+'</div></div>';
-  if(c.ts)    html += '<div><div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.3px">Última actualización</div><div style="font-size:.78rem">'+escH(c.ts)+'</div></div>';
-  html += '</div>';
-
-  // --- Fotos generales ---
-  // (var fotos y fotoKeys ya definidos arriba para el resumen rápido)
-  var fotoLabels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
-  var hayFotosGral = fotosGralCount > 0;
-
-  html += '<div style="margin-bottom:1.25rem">';
-  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#444;text-transform:uppercase;letter-spacing:.4px">📸 Evidencia fotográfica del traslado</h4>';
-  if(hayFotosGral){
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
-    fotoKeys.forEach(function(k){
-      var src = fotos[k];
-      if(src){
-        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(src) : src;
-        html += '<div style="border:1.5px solid #1e7e34;border-radius:10px;overflow:hidden;background:#fff;position:relative">'
-          +'<img src="'+escH(fSrc)+'" style="width:100%;height:120px;object-fit:cover;display:block" alt="'+escH(fotoLabels[k])+'" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-          +'<div style="display:none;width:100%;height:120px;align-items:center;justify-content:center;color:#888;font-size:.75rem;background:#f5f5f3">⚠️ Foto no disponible</div>'
-          +'<div style="background:rgba(0,0,0,.65);color:#fff;font-size:.65rem;padding:3px 5px;text-align:center;text-transform:uppercase;letter-spacing:.3px;font-weight:600">'+escH(fotoLabels[k])+'</div>'
-          +'</div>';
-      } else {
-        html += '<div style="border:1.5px dashed #ccc;border-radius:10px;padding:8px;background:#fafaf8;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa;font-size:.72rem;text-transform:uppercase;letter-spacing:.3px">'
-          +'<div style="font-size:1.4rem;margin-bottom:4px">📷</div>'
-          +'<div>'+escH(fotoLabels[k])+'</div>'
-          +'<div style="font-size:.65rem;color:#bbb;margin-top:2px">sin foto</div>'
-          +'</div>';
-      }
     });
-    html += '</div>';
-  } else {
-    html += '<div style="padding:12px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">No hay fotos generales registradas en este conteo.</div>';
-  }
-  html += '</div>';
-
-  // --- Tabla de SKUs con fotos individuales ---
-  // (var items ya definido arriba para el resumen rápido)
-  html += '<div style="margin-bottom:1.25rem">';
-  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#444;text-transform:uppercase;letter-spacing:.4px">📦 SKUs contados ('+items.length+')</h4>';
-  if(items.length === 0){
-    html += '<div style="padding:12px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">No hay SKUs registrados en este conteo.</div>';
-  } else {
-    html += '<div class="tbl-wrap" style="margin-bottom:0"><table>';
-    html += '<thead><tr><th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th class="tc">Costo</th><th>Evidencia</th></tr></thead><tbody>';
-    items.forEach(function(it){
-      var costoUnit = Number(it.costo) || (typeof getCosto === 'function' ? (getCosto(it.sku)||0) : 0);
-      var costoLinea = (Number(it.qty)||0) * costoUnit;
-      html += '<tr>';
-      html += '<td><strong>'+escH(it.sku||'—')+'</strong></td>';
-      html += '<td style="font-size:.82rem">'+escH(it.desc||'—')+'</td>';
-      html += '<td class="tc">'+escH(it.qty||0)+'</td>';
-      html += '<td class="tc" style="font-family:monospace;font-size:.78rem">'+(costoUnit ? 'Q'+costoLinea.toFixed(2) : '—')+'</td>';
-      // Foto por SKU
-      if(it.foto){
-        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(it.foto) : it.foto;
-        html += '<td><div style="display:flex;align-items:center;gap:6px">'
-          +'<img src="'+escH(fSrc)+'" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:zoom-in" data-fullsrc="'+escH(fSrc)+'" class="cdg-view-foto-thumb" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-block\'">'
-          +'<span style="display:none;color:#888;font-size:.72rem">⚠️ No disp.</span>'
-          +'</div></td>';
-      } else {
-        html += '<td style="color:#bbb;font-size:.72rem">—</td>';
-      }
-      html += '</tr>';
-    });
-    html += '</tbody></table></div>';
-  }
-  html += '</div>';
-
-  // --- Hallazgos asociados a este U25 ---
-  // FIX (rev Claude 2 A, vie 22-may-2026): los hallazgos CDG se guardan
-  // con campo h.cont (no h.contenedor ni h.u25). Verificado contra la
-  // creación en línea 5003 y el panel CDG existente. Sin este fix la
-  // sección siempre estaba vacía aunque hubiera hallazgos reales.
-  // (count ya calculado arriba como hallazgosAsocCount)
-  var hallazgosAsoc = (Array.isArray(hallazgos) ? hallazgos : []).filter(function(h){
-    return h.tipo === 'CDG' && !h.cdgVersion && (h.cont === id || h.contenedor === id || h.u25 === id);
-  });
-  // FIX (rev ChatGPT F, vie 22-may-2026): siempre mostrar sección de
-  // hallazgos. Si no hay, decirlo explícitamente — evita la duda
-  // "¿no hay o no existe la sección?".
-  html += '<div style="margin-bottom:1rem">';
-  html += '<h4 style="font-size:.85rem;font-weight:700;margin:0 0 .6rem;color:#b7770d;text-transform:uppercase;letter-spacing:.4px">⚠️ Hallazgos asociados ('+hallazgosAsoc.length+')</h4>';
-  if(hallazgosAsoc.length === 0){
-    html += '<div style="padding:10px;background:#fafaf8;border-radius:8px;color:#888;font-size:.85rem;text-align:center">Sin hallazgos asociados a este conteo.</div>';
-  } else {
-    hallazgosAsoc.forEach(function(h){
-      html += '<div style="border:1px solid #fcd9a4;background:#fff8ed;border-radius:8px;padding:10px 12px;margin-bottom:8px">';
-      // FIX (rev Claude 2 A, vie 22-may-2026): los hallazgos CDG guardan
-      // el autor en h.autor (no h.usuario ni h.quien). Sin este fix
-      // siempre mostraba "—" en el campo autor.
-      html += '<div style="font-size:.78rem;color:#888;margin-bottom:4px">'+escH(h.fecha||'')+' · '+escH(h.autor||h.usuario||h.quien||'—')+'</div>';
-      // h.desc es el campo real (verificado en creación de hallazgo CDG)
-      html += '<div style="font-size:.88rem;color:#333;white-space:pre-wrap">'+escH(h.desc||h.descripcion||'(sin descripción)')+'</div>';
-      // FIX adicional: mostrar campo quePaso si existe (es el campo real
-      // de "qué pasó" en hallazgos CDG verificado en código de creación)
-      if(h.quePaso){
-        html += '<div style="font-size:.82rem;color:#555;margin-top:6px;font-style:italic">'+escH(h.quePaso)+'</div>';
-      }
-      if(h.foto){
-        var fSrc = typeof window.fotoSrc === 'function' ? window.fotoSrc(h.foto) : h.foto;
-        html += '<div style="margin-top:8px"><img src="'+escH(fSrc)+'" style="max-width:200px;max-height:150px;border-radius:6px;border:1px solid #ddd;cursor:zoom-in" data-fullsrc="'+escH(fSrc)+'" class="cdg-view-foto-thumb"></div>';
-      }
-      html += '</div>';
-    });
-  }
-  html += '</div>';
-
-  // --- Footer info ---
-  // FIX (rev ChatGPT D, vie 22-may-2026): texto más corto y directo.
-  html += '<div style="margin-top:1.25rem;padding:10px;background:#e8f4ff;border-radius:8px;font-size:.78rem;color:#0066cc;text-align:center">';
-  html += 'ℹ️ Solo lectura. Para editar, usá ✏️ o pedí desbloqueo.';
-  html += '</div>';
-
-  ctEl.innerHTML = html;
-
-  // Wire: zoom en thumbs (abrir foto en nueva pestaña)
-  ctEl.querySelectorAll('.cdg-view-foto-thumb').forEach(function(img){
-    img.addEventListener('click', function(){
-      var url = this.dataset.fullsrc;
-      if(url) {
-        try { window.open(url, '_blank'); } catch(_e){}
-      }
-    });
-  });
-
-  // Mostrar modal y scroll arriba
-  modal.style.display = '';
-  try { modal.scrollTop = 0; } catch(_e){}
-}
-
-// FIX (vie 22-may-2026): wire cierre del modal Ver CDG.
-// Listener directo (sin DOMContentLoaded wrapper) — el elemento existe en
-// el DOM cuando este script corre.
-(function(){
-  var btnClose = document.getElementById('cdg-view-close');
-  var modal    = document.getElementById('cdg-view-modal');
-  if(btnClose){
-    btnClose.addEventListener('click', function(){
-      if(modal) modal.style.display = 'none';
-    });
-  }
-  // Cerrar al hacer click fuera del cuadro blanco (en el overlay oscuro)
-  if(modal){
-    modal.addEventListener('click', function(e){
-      if(e.target === modal) modal.style.display = 'none';
-    });
-  }
-})();
-
-// FIX (sáb 23-may-2026, Capa 1 CDG): export analítica formato Bloque D Ever García.
-// Genera un xlsx con 42 columnas (B a AT) por cada CDG/KTM del historial.
-// Incluye TODOS (closed + open). Para borradores muchos campos quedan vacíos
-// porque solo aplican post-finalización (físico, diferencia, costos calculados).
-//
-// Reusa los helpers de Hamilton: getOrigenDesc, getClasifContenedor, getFechaTrabajo,
-// fmtFechaDMA, getCobertura, getCosto.
-function exportCDGAnalitica(rows, tipo){
-  var wb = XLSX.utils.book_new();
-  var ws = {}, rng = {s:{r:0,c:0},e:{r:6,c:45}};
-  function sc(r,c,v){
-    if(v===null||v===undefined||v==='') return;
-    var ref = XLSX.utils.encode_cell({r:r,c:c});
-    ws[ref] = { v:v, t:typeof v==='number'?'n':'s' };
-    if(r>rng.e.r) rng.e.r=r;
-    if(c>rng.e.c) rng.e.c=c;
-  }
-
-  // Header rows (igual que Hamilton Traslados pero el título dice "Traslados CDG")
-  var ds = new Date().toLocaleDateString('es').replace(/\//g,'-');
-  sc(1,1,'Compañía'); sc(1,3,'PT-Analítica Traslados CDG');
-  sc(4,1,'Fecha');    sc(4,3,ds);
-
-  // Headers (cols B a AT — mismo orden que Hamilton Traslados)
-  var H = ['','Número','# Ingreso','Doc. SAP','Fecha','Tipo','Lineas','Status',
-    'SKU','Descripción','Cantidad','Unidad','Unidades','Origen','Destino',
-    'Descripción de origen','Status sistema','Fecha de ingreso a Hamilton','Fecha apertura de furgón',
-    'Cobertura','Número de puerta','Placas de Furgón','Físico S/Auditoría','Diferencia auditoría',
-    'Diferencia auditoría [ABS]','Unidades faltantes S/Auditoría','Unidades sobrantes S/Auditoría','Unidades dañada S/Auditoría','Unidades incompletos s/Auditoría',
-    'Evaluación','Costo unitario','Costo total','Costo físico','Costo diferencia',
-    'Costo físico [ABS]','Costo faltante','Costo sobrante','Costo dañado','Costo incompleto',
-    'Comentarios, notas u observaciones por Auditoría','Comentarios, notas u observaciones por el Auditado','Ref. Hallazgos','Ref. Anexos',
-    'Auditado por','Fecha de la revisión por el auditor','Clasificación de Contenedor'];
-  H.forEach(function(h,c){ sc(6,c,h); });
-
-  var dr = 7;
-  rows.forEach(function(r){
-    var contId = r.id;
-    var c = r.c;  // state.cdg[contId]
-    // FIX (sáb 23-may-2026, rev ChatGPT): endurecer guarda. La versión anterior
-    // protegía null pero NO cubría c.items={} ni c.items="texto" (truthy pero
-    // sin .forEach). Array.isArray + length cierra esos casos.
-    if(!c || !Array.isArray(c.items) || !c.items.length) return;
-
-    // Status según si está closed o open
-    var statusSistema = (c.bloqueado === true || c.status === 'closed') ? 'Cerrado' : 'Borrador';
-    var tipoCDG = c.tipo || tipo || 'CDG';
-
-    // Si está closed, tiene contraparte en state.teorico — buscamos datos extras ahí
-    var tNum = c.traslado || contId;
-    var inTeorico = (typeof teorico !== 'undefined' && teorico[tNum]) ? true : false;
-    var fis = inTeorico && typeof fisico !== 'undefined' && fisico[tNum] ? fisico[tNum] : null;
-    var meta = (typeof conteoMetadata !== 'undefined' && conteoMetadata[tNum]) ? conteoMetadata[tNum] : {};
-    var puerta = (typeof puertas !== 'undefined' && puertas[tNum]) || '';
-
-    // FIX (sáb 23-may-2026, rev ChatGPT): cambiar "Pendiente" por "Sin cierre"
-    // para el caso open. "Pendiente" en auditoría se interpreta como "falta
-    // analizar"; "Sin cierre" comunica mejor que el conteo todavía no se
-    // finalizó (el supervisor no ha cerrado el CDG). Más semántico.
-    var clasifCont = inTeorico ? getClasifContenedor(tNum) : (statusSistema === 'Cerrado' ? '' : 'Sin cierre');
-    var fechaTrabCont = inTeorico ? getFechaTrabajo(tNum) : fmtFechaDMA(c.fecha);
-
-    c.items.forEach(function(item, i){
-      var fiObj = fis ? fis[i] : null;
-      var fv = fiObj ? (fiObj.fisico!==undefined?Number(fiObj.fisico)||0:null) : null;
-      var dv = fiObj && fiObj.daniado!==undefined ? Number(fiObj.daniado)||0 : 0;
-      var tot = fv;  // FIX (dom 24-may-2026): Dañado NO suma al físico, es informativo
-      var diff = tot!==null ? tot-item.qty : null;
-      var eva = diff===null ? '' : (diff===0?'Exacto':diff>0?'Sobrante':'Faltante');
-      var cUnit = getCosto(item.sku);
-      var faltU = diff!==null && diff<0 ? Math.abs(diff) : 0;
-      var sobrU = diff!==null && diff>0 ? diff : 0;
-      // FIX bug 3b: quien por línea si existe; sino c.autor (autor del CDG)
-      var quien = (fiObj && fiObj.quien) ? fiObj.quien : (c.autor || '');
-
-      sc(dr,1,contId);                                              // B Número
-      // C # Ingreso, D Doc. SAP — no disponibles en CDG manual, vacío
-      sc(dr,4,fechaTrabCont);                                       // E Fecha
-      sc(dr,5,tipoCDG);                                             // F Tipo (CDG/KTM)
-      sc(dr,6,c.items.length);                                      // G Lineas
-      sc(dr,7,statusSistema);                                       // H Status (Cerrado/Borrador)
-      sc(dr,8,item.sku);                                            // I SKU
-      sc(dr,9,item.desc||item.sku);                                 // J Descripción
-      sc(dr,10,item.qty);                                           // K Cantidad
-      // L Unidad, M Unidades — no aplican en CDG, vacío
-      // N Origen, O Destino — no aplican en CDG manual, vacío
-      sc(dr,15,getOrigenDesc('', tipoCDG));                         // P Descripción de origen (CDG/KTM)
-      sc(dr,16,statusSistema);                                      // Q Status sistema (Cerrado o Borrador)
-      sc(dr,17,fmtFechaDMA(meta.fechaIngreso));                     // R Fecha de ingreso a Hamilton
-      sc(dr,18,fmtFechaDMA(meta.fechaFurgon));                      // S Fecha apertura de furgón
-      sc(dr,19,getCobertura(fiObj));                                // T Cobertura
-      sc(dr,20,puerta);                                             // U Número de puerta
-      sc(dr,21,meta.placas||'');                                    // V Placas de Furgón
-      sc(dr,22,tot!==null?tot:'');                                  // W Físico S/Auditoría
-      sc(dr,23,diff!==null?diff:'');                                // X Diferencia auditoría
-      sc(dr,24,diff!==null?Math.abs(diff):'');                      // Y Diferencia auditoría [ABS]
-      sc(dr,25,faltU||'');                                          // Z Unidades faltantes
-      sc(dr,26,sobrU||'');                                          // AA Unidades sobrantes
-      sc(dr,27,dv||'');                                             // AB Unidades dañada
-      // AC Unidades incompletos — sin dato
-      sc(dr,29,eva);                                                // AD Evaluación
-      sc(dr,30,cUnit||'');                                          // AE Costo unitario
-      sc(dr,31,cUnit?cUnit*item.qty:'');                            // AF Costo total
-      sc(dr,32,tot!==null&&cUnit?cUnit*tot:'');                     // AG Costo físico
-      sc(dr,33,diff!==null&&cUnit?cUnit*diff:'');                   // AH Costo diferencia
-      sc(dr,34,diff!==null&&cUnit?Math.abs(cUnit*diff):'');         // AI Costo físico [ABS]
-      sc(dr,35,cUnit?cUnit*faltU:'');                               // AJ Costo faltante
-      sc(dr,36,cUnit?cUnit*sobrU:'');                               // AK Costo sobrante
-      sc(dr,37,cUnit?cUnit*dv:'');                                  // AL Costo dañado
-      // AM Costo incompleto — sin dato
-      // AN/AO Comentarios, AP/AQ Ref. — sin dato
-      sc(dr,43,quien);                                              // AR Auditado por
-      sc(dr,44,fechaTrabCont);                                      // AS Fecha de revisión
-      sc(dr,45,clasifCont);                                         // AT Clasificación de Contenedor
-      dr++;
-    });
-  });
-
-  ws['!ref'] = XLSX.utils.encode_range(rng);
-  XLSX.utils.book_append_sheet(wb, ws, 'PT-Analítica Traslados CDG');
-
-  var fname = 'PT-Traslados_CDG_'+escH(tipo).replace(/\W+/g,'_')+'_'+ds+'.xlsx';
-  XLSX.writeFile(wb, fname);
-}
-
-// Export Excel del historial completo de un tipo
-function exportCDGHistExcel(rows, tipo){
-  var wb = XLSX.utils.book_new();
-  // Summary sheet
-  var summary = [['Correlativo U25','Líneas','Unidades','Costo total Q','Estado','Tipo','Autor','Fecha']];
-  rows.forEach(function(r){
-    summary.push([
-      r.id, r.lineas, r.totalSkus, +r.totalCosto.toFixed(2),
-      r.c.bloqueado ? 'Finalizado' : 'Borrador',
-      r.c.tipo || tipo,
-      r.c.autor || '—',
-      r.c.fecha || ''
-    ]);
-  });
-  // Totals row
-  var totLineas = rows.reduce(function(a,r){return a+r.lineas;}, 0);
-  var totUnits  = rows.reduce(function(a,r){return a+r.totalSkus;}, 0);
-  var totCosto  = rows.reduce(function(a,r){return a+r.totalCosto;}, 0);
-  summary.push([]);
-  summary.push(['TOTAL', totLineas, totUnits, +totCosto.toFixed(2), '', '', '', '']);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Resumen '+tipo);
-
-  // Detail sheet — every SKU of every conteo
-  var detail = [['Correlativo U25','SKU','Descripción','Cantidad','Costo unit. Q','Costo línea Q','Tipo','Autor','Fecha']];
-  rows.forEach(function(r){
-    (r.c.items||[]).forEach(function(it){
-      var cu = Number(it.costo) || getCosto(it.sku) || 0;
-      detail.push([
-        r.id, it.sku, it.desc, Number(it.qty)||0,
-        +cu.toFixed(2), +(cu * (Number(it.qty)||0)).toFixed(2),
-        r.c.tipo || tipo, r.c.autor || '—', r.c.fecha || ''
-      ]);
-    });
-  });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), 'Detalle SKUs');
-
-  var today = new Date();
-  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  XLSX.writeFile(wb, 'Historial_'+tipo+'_'+ds+'.xlsx');
-  addHist('Exportó historial CDG ('+tipo+'): '+rows.length+' conteos');
-}
-
-// Export reporte individual de un solo conteo CDG (Word con fotos embebidas)
-function exportCDGReporteIndividual(id, c){
-  if(!c){ alert('Conteo no encontrado.'); return; }
-  var labels = { marchamo:'Marchamo', manifiesto:'Manifiesto', placaFurgon:'Placa Furgón', otro1:'Otro', otro2:'Otro 2' };
-  var totalCosto = 0;
-  (c.items||[]).forEach(function(it){
-    var cu = Number(it.costo) || getCosto(it.sku) || 0;
-    totalCosto += cu * (Number(it.qty)||0);
-  });
-
-  // Build header info
-  var headerHtml = '<h1 style="color:#1a1a1a;margin-bottom:6pt">Reporte de Conteo CDG</h1>'
-    +'<table border="0" cellpadding="4" style="border-collapse:collapse;font-family:Calibri,sans-serif;font-size:11pt;margin-bottom:16pt">'
-    +'<tr><td style="font-weight:bold;width:160px">Correlativo U25:</td><td>'+escH(id)+'</td></tr>'
-    +'<tr><td style="font-weight:bold">Tipo de bodega:</td><td>'+escH(c.tipo||'CDG')+'</td></tr>'
-    +'<tr><td style="font-weight:bold">Autor:</td><td>'+escH(c.autor||'—')+'</td></tr>'
-    +'<tr><td style="font-weight:bold">Fecha:</td><td>'+escH(c.fecha||'')+'</td></tr>'
-    +'<tr><td style="font-weight:bold">Estado:</td><td>'+(c.bloqueado?'🔒 Finalizado':'📝 Borrador')+'</td></tr>'
-    +'</table>';
-
-  // Photos section
-  var fotosHtml = '';
-  var fotos = c.fotos || {};
-  if(c.fotoGral && !fotos.marchamo) fotos.marchamo = c.fotoGral;
-  var anyFoto = Object.keys(labels).some(function(k){ return !!fotos[k]; });
-  if(anyFoto) {
-    fotosHtml = '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px">Evidencia fotográfica</h2>'
-      +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:10pt">';
-    Object.keys(labels).forEach(function(k){
-      if(fotos[k]) {
-        fotosHtml += '<tr><td style="width:160px;background:#f0f0ee;font-weight:bold;text-align:center;vertical-align:middle">'+escH(labels[k])+'</td>'
-          +'<td style="text-align:center;padding:8pt"><img src="'+fotos[k]+'" style="max-width:420px;max-height:320px;border:1px solid #ccc"></td></tr>';
-      }
-    });
-    fotosHtml += '</table>';
-  }
-
-  // Items table
-  var itemsHtml = '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:18pt">SKUs registrados</h2>'
-    +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:10pt">'
-    +'<thead><tr style="background:#1a1a1a;color:#fff">'
-    +'<th>SKU</th><th>Descripción</th><th style="text-align:right">Cantidad</th>'
-    +'<th style="text-align:right">Costo unit. Q</th><th style="text-align:right">Costo total Q</th>'
-    +'<th style="text-align:center">Evidencia</th>'
-    +'</tr></thead><tbody>';
-  (c.items||[]).forEach(function(it){
-    var cu = Number(it.costo) || getCosto(it.sku) || 0;
-    var line = cu * (Number(it.qty)||0);
-    itemsHtml += '<tr>'
-      +'<td>'+escH(it.sku||'')+'</td>'
-      +'<td>'+escH(it.desc||'')+'</td>'
-      +'<td style="text-align:right">'+(Number(it.qty)||0)+'</td>'
-      +'<td style="text-align:right">'+cu.toFixed(2)+'</td>'
-      +'<td style="text-align:right">'+line.toFixed(2)+'</td>'
-      +'<td style="text-align:center">'+(it.foto?'<img src="'+it.foto+'" style="max-width:120px;max-height:90px">':'—')+'</td>'
-      +'</tr>';
-  });
-  itemsHtml += '<tr style="background:#f0f0ee;font-weight:bold">'
-    +'<td colspan="4" style="text-align:right">TOTAL</td>'
-    +'<td style="text-align:right">Q'+totalCosto.toFixed(2)+'</td>'
-    +'<td></td></tr>';
-  itemsHtml += '</tbody></table>';
-
-  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
-    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
-    +'<head><meta charset="utf-8"><title>Reporte CDG '+escH(id)+'</title></head>'
-    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
-    +headerHtml + fotosHtml + itemsHtml
-    +'</body></html>';
-
-  var today = new Date();
-  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  downloadWordWithImages(docHtml, 'Reporte_CDG_'+id+'_'+ds+'.doc', 'Reporte CDG '+id);
-  addHist('Exportó reporte CDG: '+id);
-}
-
-(function(){
-  var btnCDG   = document.getElementById('btn-hist-cdg');
-  var btnKTM   = document.getElementById('btn-hist-ktm');
-  var btnOtros = document.getElementById('btn-hist-otros');
-  var btnClose = document.getElementById('btn-cdg-hist-close');
-  if(btnCDG)   btnCDG.addEventListener('click',   function(){ showCDGHist('CDG'); });
-  if(btnKTM)   btnKTM.addEventListener('click',   function(){ showCDGHist('KTM'); });
-  if(btnOtros) btnOtros.addEventListener('click', function(){ showCDGHist('otro'); });
-  if(btnClose) btnClose.addEventListener('click', function(){
-    var panel = document.getElementById('cdg-hist-panel');
-    if(panel) panel.style.display='none';
-  });
-})();
-</script>
-
-
-
-
-<!-- CDG HALLAZGO MODAL -->
-<div id="modal-cdg-hallazgo" class="modal-bg">
-  <div class="modal-box">
-    <h3>⚠ Crear hallazgo CDG</h3>
-    <p style="font-size:.82rem;color:#888;margin-bottom:.75rem">Conteo: <strong id="cdg-hall-cont-name"></strong></p>
-    <div class="field-row">
-      <label>1. Fecha</label>
-      <input type="date" class="field-inp" id="cdg-hall-fecha">
-    </div>
-    <div class="field-row">
-      <label>2. Turno de trabajo</label>
-      <select class="field-inp" id="cdg-hall-turno">
-        <option value="">— Selecciona —</option>
-        <option value="Mañana">2.1 Mañana</option>
-        <option value="Tarde">2.2 Tarde</option>
-        <option value="Noche">2.3 Noche</option>
-      </select>
-    </div>
-    <div class="field-row">
-      <label>3. Área o proceso</label>
-      <select class="field-inp" id="cdg-hall-area">
-        <option value="">— Selecciona —</option>
-        <option value="Recepción de Mercadería">3.1 Recepción de Mercadería</option>
-        <option value="Bodega-Almacenaje">3.2 Bodega-Almacenaje</option>
-        <option value="Desconsolidación-Conteo">3.3 Desconsolidación-Conteo</option>
-        <option value="Transporte Interno">3.4 Transporte Interno</option>
-        <option value="Otras">3.5 Otras</option>
-      </select>
-    </div>
-    <div class="field-row">
-      <label>4. Tipo de hallazgo</label>
-      <select class="field-inp" id="cdg-hall-tipo">
-        <option value="">— Selecciona —</option>
-        <option value="Daño de mercadería">4.1 Daño de mercadería</option>
-        <option value="Diferencia de cantidad">4.2 Diferencia de cantidad</option>
-        <option value="Producto incorrecto">4.3 Producto incorrecto</option>
-        <option value="Documentación incompleta-incorrecta">4.4 Documentación incompleta-incorrecta</option>
-        <option value="Incumplimiento de procedimientos">4.5 Incumplimiento de procedimientos</option>
-        <option value="Retraso operativo">4.6 Retraso operativo</option>
-        <option value="Manipulación inadecuada">4.7 Manipulación inadecuada</option>
-        <option value="Falta de identificación-etiquetado">4.8 Falta de identificación-etiquetado</option>
-        <option value="Otro">4.9 Otro</option>
-      </select>
-    </div>
-    <div class="field-row">
-      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        5. Descripción breve del hallazgo
-        <button type="button" id="btn-cdg-hall-mic" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px" title="Dictar por voz">🎤 Dictar</button>
-        <span id="cdg-hall-mic-status" style="font-size:.7rem;color:#888"></span>
-        <select id="cdg-hall-mic-lang" style="font-size:.7rem;padding:1px 4px;border-radius:4px;border:1px solid #ccc">
-          <option value="es-ES">Español</option>
-          <option value="en-US">English</option>
-        </select>
-      </label>
-      <textarea class="field-inp" id="cdg-hall-desc" rows="3" placeholder="Describe el hallazgo..."></textarea>
-    </div>
-    <div class="field-row">
-      <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        6. Foto del hallazgo (opcional)
-        <button type="button" id="btn-cdg-hall-foto" class="btn btn-xs" style="font-size:.7rem;padding:2px 8px;min-height:24px">📷 Tomar / Elegir</button>
-        <span id="cdg-hall-foto-status" style="font-size:.7rem;color:#888"></span>
-      </label>
-      <input type="file" id="cdg-hall-foto-input" accept="image/*" style="display:none">
-      <div id="cdg-hall-foto-preview" style="display:none;margin-top:6px">
-        <img id="cdg-hall-foto-img" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid #e0e0e0;display:block">
-        <button type="button" id="btn-cdg-hall-foto-del" style="margin-top:4px;font-size:.72rem;color:#c0392b;background:none;border:none;cursor:pointer;padding:0">× Eliminar foto</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem">
-      <button class="btn" id="btn-cdg-hall-cancel" style="flex:1">Cancelar</button>
-      <button class="btn btn-dark" id="btn-cdg-hall-save" style="flex:2">Guardar hallazgo</button>
-    </div>
-  </div>
-</div>
-
-<script>
-// CDG Hallazgo Modal
-(function(){
-  var btn = document.getElementById('btn-cdg-hallazgo');
-  var modal = document.getElementById('modal-cdg-hallazgo');
-  var btnCancel = document.getElementById('btn-cdg-hall-cancel');
-  var btnSave   = document.getElementById('btn-cdg-hall-save');
-  if(!btn||!modal) return;
-
-  // Local state for the modal
-  var hallFoto = null;
-
-  btn.addEventListener('click', function(){
-    var u25 = (document.getElementById('cdg-u25')||{}).value||'CDG';
-    var el = document.getElementById('cdg-hall-cont-name');
-    if(el) el.textContent = u25.trim()||'CDG';
-    // Clear all fields (we are creating new, not editing)
-    document.getElementById('cdg-hall-turno').value='';
-    document.getElementById('cdg-hall-area').value='';
-    document.getElementById('cdg-hall-tipo').value='';
-    document.getElementById('cdg-hall-desc').value='';
-    // Set today as default date
-    var fechaInp = document.getElementById('cdg-hall-fecha');
-    var now = new Date();
-    fechaInp.value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-    // Reset photo state
-    hallFoto = null;
-    window._cdgHallFotoData = null;
-    window._editingCDGHallId = null;
-    var prev = document.getElementById('cdg-hall-foto-preview');
-    var status = document.getElementById('cdg-hall-foto-status');
-    var inp = document.getElementById('cdg-hall-foto-input');
-    if(prev) prev.style.display='none';
-    if(status) status.textContent='';
-    if(inp) inp.value='';
-    window._cdgV2LicenciaId = null; // Fix: asegurar que no queda flag de CDG v2
-    modal.classList.add('open');
-  });
-
-  if(btnCancel) btnCancel.addEventListener('click', function(){
-    window._cdgV2LicenciaId = null; // Fix: limpiar si se cancela desde CDG v2
-    modal.classList.remove('open');
-  });
-
-  // Click fuera del cuadro (overlay): también limpiar el flag de CDG v2
-  modal.addEventListener('click', function(e){
-    if(e.target === modal){
-      window._cdgV2LicenciaId = null;
-      modal.classList.remove('open');
-    }
-  });
-
-  // --- Photo ---
-  var btnFoto    = document.getElementById('btn-cdg-hall-foto');
-  var fotoInput  = document.getElementById('cdg-hall-foto-input');
-  var fotoPrev   = document.getElementById('cdg-hall-foto-preview');
-  var fotoImg    = document.getElementById('cdg-hall-foto-img');
-  var fotoStatus = document.getElementById('cdg-hall-foto-status');
-  var btnFotoDel = document.getElementById('btn-cdg-hall-foto-del');
-  if(btnFoto && fotoInput) {
-    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change', function(){
-      var file = this.files[0]; if(!file) return;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        hallFoto = ev.target.result;
-        if(fotoImg) fotoImg.src = ev.target.result;
-        if(fotoPrev) fotoPrev.style.display='';
-        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-  if(btnFotoDel) {
-    btnFotoDel.addEventListener('click', function(){
-      hallFoto = null;
-      if(fotoImg) fotoImg.src='';
-      if(fotoPrev) fotoPrev.style.display='none';
-      if(fotoStatus) fotoStatus.textContent='';
-      if(fotoInput) fotoInput.value='';
-    });
-  }
-
-  // --- Microphone (speech-to-text) — use shared helper ---
-  setupMic('btn-cdg-hall-mic', 'cdg-hall-mic-lang', 'cdg-hall-mic-status', 'cdg-hall-desc');
-
-  // --- Save ---
-  if(btnSave) btnSave.addEventListener('click', async function(){
-    var fecha  = (document.getElementById('cdg-hall-fecha')||{}).value||'';
-    var turno  = (document.getElementById('cdg-hall-turno')||{}).value||'';
-    var area   = (document.getElementById('cdg-hall-area')||{}).value||'';
-    var tipoH  = (document.getElementById('cdg-hall-tipo')||{}).value||'';
-    var desc   = (document.getElementById('cdg-hall-desc')||{}).value||'';
-    // Fix: si se abrió desde CDG v2, usar el ID de la licencia v2 como cont
-    // en lugar del campo cdg-u25 (que pertenece a CDG v1 y puede estar vacío).
-    var u25    = window._cdgV2LicenciaId || (document.getElementById('cdg-u25')||{}).value||'CDG';
-    if(!desc){ alert('Describe el hallazgo.'); return; }
-    if(!turno){ alert('Selecciona el turno.'); return; }
-    if(!area){ alert('Selecciona el área o proceso.'); return; }
-    if(!tipoH){ alert('Selecciona el tipo de hallazgo.'); return; }
-    var saveBtn = this;
-    var editingId = window._editingCDGHallId;
-
-    // FIX (mié 20-may-2026 noche): subir foto a Storage ANTES de guardar.
-    // Antes incrustábamos base64 directo → state crecía rápido + 500 al
-    // hacer PATCH de un payload de varios MB. Ahora la foto va a Supabase
-    // Storage y guardamos solo la URL (~150 bytes en vez de ~250 KB).
-    // Patrón idéntico al de btn-hall-save (Hamilton, línea ~1895).
-    var fotoFinal = hallFoto || window._cdgHallFotoData || null;
-    if(fotoFinal && typeof fotoFinal === 'string' && fotoFinal.indexOf('data:') === 0) {
-      saveBtn.disabled = true;
-      var originalText = saveBtn.textContent;
-      saveBtn.textContent = '⏳ Subiendo foto...';
-      var onSlow = function(){
-        saveBtn.textContent = '⏳ Subiendo foto... puede tardar por la señal';
-      };
-      try {
-        var refId = editingId || ('h' + Date.now());
-        var url = await window.uploadFotoAndGetUrl(fotoFinal, 'hallazgo', refId, onSlow);
-        fotoFinal = url;
-        console.log('Foto subida a Storage:', url);
-      } catch(e) {
-        saveBtn.disabled = false;
-        saveBtn.textContent = originalText;
-        // FIX (rev ChatGPT, mié 20-may-2026 noche): sin "Detalle:" técnico
-        // en primer plano. Si querés depurar, mirá la consola.
-        console.warn('Upload foto CDG falló:', e && e.message);
-        alert('No se pudo guardar la foto. Intentá otra vez. Si vuelve a fallar, quitá la foto y guardá sin ella.');
-        return;
-      }
-      saveBtn.textContent = originalText;
-      saveBtn.disabled = false;
-    }
-
-    var hall;
-    if(editingId){
-      // Update existing
-      var existing = (hallazgos||[]).find(function(x){ return x.id===editingId; });
-      // FIX (mié 20-may-2026 noche, replicado de Hamilton): si el polling
-      // reemplazó hallazgos mientras subía la foto, existing puede ser
-      // undefined. Re-crear con el mismo id para que el merge en server
-      // funcione idempotente.
-      if(!existing){
-        existing = { id: editingId, tipo: 'CDG' };
-        hallazgos.push(existing);
-      }
-      if(existing){
-        existing.fecha = fecha;
-        existing.turno = turno;
-        existing.area  = area;
-        existing.tipoHallazgo = tipoH;
-        existing.desc = desc; existing.quePaso = desc;
-        existing.foto = fotoFinal || null;
-        existing.modificadoPor = currentUser ? currentUser.name : '—';
-        existing.modificadoTs  = new Date().toLocaleString('es');
-        hall = existing;
-        // FIX (rev Claude 2, mié 20-may-2026 noche): addHist faltante en CDG.
-        // Hamilton sí lo llama; ahora CDG también queda en el historial.
-        addHist('Modificó hallazgo CDG en '+(existing.cont||u25));
-        // GUARANTEED save: write to Supabase directly
-        saveHallazgoDirectToSupabase(hall, 'edit');
-        fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({hallazgo:hall, action:'edit', id:hall.id})})
-          .then(function(r){return r.json();})
-          .then(function(d){if(d.ok)lastVersion=d.version;})
-          .catch(function(){});
-      }
-    } else {
-      // New
-      hall = {
-        id: makeId(), cont: u25.trim(), tipo: 'CDG',
-        fecha: fecha, turno: turno, area: area,
-        tipoHallazgo: tipoH,
-        desc: desc, quePaso: desc,
-        foto: fotoFinal || null,
-        autor: currentUser ? currentUser.name : '—',
-        ts: new Date().toLocaleString('es')
-      };
-      // Si se abrió desde CDG v2, marcarlo para distinguirlo en la UI
-      if(window._cdgV2LicenciaId) {
-        hall.cdgVersion = 2;
-        hall.cdgV2Licencia = window._cdgV2LicenciaId;
-        window._cdgV2LicenciaId = null; // limpiar flag
-      }
-      hallazgos.push(hall);
-      // FIX (rev Claude 2, mié 20-may-2026 noche): addHist faltante en CDG.
-      addHist('Registró hallazgo CDG en '+hall.cont);
-      // GUARANTEED save: write to Supabase directly
-      saveHallazgoDirectToSupabase(hall, 'add');
-      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({hallazgo:hall, action:'add'})})
-        .then(function(r){return r.json();})
-        .then(function(d){if(d.ok)lastVersion=d.version;})
-        .catch(function(){});
-    }
-    modal.classList.remove('open');
-    // Reset modal fields
-    document.getElementById('cdg-hall-desc').value='';
-    document.getElementById('cdg-hall-turno').value='';
-    document.getElementById('cdg-hall-area').value='';
-    document.getElementById('cdg-hall-tipo').value='';
-    hallFoto = null;
-    window._cdgHallFotoData = null;
-    window._editingCDGHallId = null;
-    if(fotoPrev) fotoPrev.style.display='none';
-    if(fotoStatus) fotoStatus.textContent='';
-    if(fotoInput) fotoInput.value='';
-    flashMsg('status-bar','ok', editingId ? '✅ Hallazgo CDG modificado.' : '✅ Hallazgo CDG guardado.');
-    // Refresh both lists if open
-    if(typeof renderHallazgosList==='function') renderHallazgosList();
-    if(typeof renderCDGHallazgosPanel==='function') renderCDGHallazgosPanel();
-    if(typeof renderCdgv2Hallazgos==='function') renderCdgv2Hallazgos();
-  });
-})();
-
-// ── CDG Hallazgos Panel ──────────────────────────────────────────────────
-// Shows only hallazgos created from CDG (where tipo === 'CDG'), with edit + Word export.
-function renderCDGHallazgosPanel(){
-  var content = document.getElementById('cdg-hallazgos-content');
-  var title   = document.getElementById('cdg-hallazgos-title');
-  if(!content) return;
-  // Filter to CDG v1 hallazgos only — excluir cdgVersion===2 (pertenecen a CDG v2)
-  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG' && !h.cdgVersion; });
-  if(title) title.textContent = '⚠ Hallazgos CDG ('+cdgHall.length+')';
-  if(!cdgHall.length){
-    content.innerHTML = '<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">No hay hallazgos CDG registrados aún. Usa el botón "⚠ Crear hallazgo" arriba.</p>';
-    return;
-  }
-  // Group by conteo (cont = U25 number)
-  var byCont = {};
-  cdgHall.forEach(function(h){
-    var k = h.cont || '—';
-    if(!byCont[k]) byCont[k] = [];
-    byCont[k].push(h);
-  });
-  var html = '';
-  var globalIdx = 0;
-  Object.keys(byCont).sort().forEach(function(cont){
-    html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+escH(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
-    byCont[cont].forEach(function(hh){
-      globalIdx++;
-      var metaLine = [];
-      if(hh.fecha)        metaLine.push('📅 '+escH(hh.fecha));
-      if(hh.turno)        metaLine.push('⏱ '+escH(hh.turno));
-      if(hh.area)         metaLine.push('📍 '+escH(hh.area));
-      if(hh.tipoHallazgo) metaLine.push('🏷 '+escH(hh.tipoHallazgo));
-      html += '<div class="card" style="margin-bottom:.75rem">'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
-        +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
-        +'<span style="font-size:.75rem;color:#aaa">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
-        +'</div>'
-        +(metaLine.length?'<p style="font-size:.72rem;color:#666;margin-bottom:.4rem">'+metaLine.join(' · ')+'</p>':'')
-        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+escH(hh.desc||hh.quePaso||'')+'</p>'
-        +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:160px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
-        +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+escH(hh.modificadoPor)+' · '+escH(hh.modificadoTs||'')+'</p>':'')
-        +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-warn cdg-edit-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button>'
-        +(isHallazgoAdmin()?'<button class="btn btn-sm cdg-del-hall-btn" data-id="'+escH(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px;background:#c0392b;color:#fff">🗑 Eliminar</button>':'')
-        +'</div>'
-        +'</div>';
-    });
-  });
-  content.innerHTML = html;
-  // Wire edit buttons → open CDG modal pre-filled
-  content.querySelectorAll('.cdg-edit-hall-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      openCDGHallazgoModal(this.dataset.id);
-    });
-  });
-  // Wire delete buttons (admin only)
-  content.querySelectorAll('.cdg-del-hall-btn').forEach(function(btn){
-    btn.addEventListener('click',function(){
-      if(!isHallazgoAdmin()){ alert('Sin permiso para eliminar.'); return; }
-      var id = this.dataset.id;
-      var h = (hallazgos||[]).find(function(x){ return x.id===id; });
-      var label = h ? (h.cont+' — '+(h.desc||h.quePaso||'(sin descripción)').substring(0,60)) : id;
-      if(!confirm('¿Eliminar este hallazgo CDG?\n\n'+label+'\n\nEsta acción NO se puede deshacer.')) return;
-      hallazgos = hallazgos.filter(function(x){ return x.id !== id; });
-      deleteHallazgoDirectToSupabase(id);
-      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'delete', id:id})})
-        .then(function(r){return r.json();})
-        .then(function(d){if(d&&d.ok)lastVersion=d.version;})
-        .catch(function(){});
-      addHist('Eliminó hallazgo CDG '+(h?h.cont:id));
-      renderCDGHallazgosPanel();
-      if(typeof renderHallazgosList==='function') renderHallazgosList();
-      flashMsg('status-bar','ok','✅ Hallazgo CDG eliminado.');
-    });
+    req.on('error', reject);
+    if(data) req.write(data);
+    req.end();
   });
 }
 
-// Open the CDG hallazgo modal pre-filled with an existing hallazgo for editing.
-function openCDGHallazgoModal(id){
-  var h = (hallazgos||[]).find(function(x){ return x.id===id; });
-  if(!h) return;
-  // Show the modal
-  var modal = document.getElementById('modal-cdg-hallazgo');
-  if(!modal) return;
-  // Populate fields
-  var el = document.getElementById('cdg-hall-cont-name');
-  if(el) el.textContent = h.cont || '—';
-  document.getElementById('cdg-hall-fecha').value = h.fecha || '';
-  document.getElementById('cdg-hall-turno').value = h.turno || '';
-  document.getElementById('cdg-hall-area').value  = h.area  || '';
-  document.getElementById('cdg-hall-tipo').value  = h.tipoHallazgo || '';
-  document.getElementById('cdg-hall-desc').value  = h.desc  || h.quePaso || '';
-  // Photo
-  var fotoPrev = document.getElementById('cdg-hall-foto-preview');
-  var fotoImg  = document.getElementById('cdg-hall-foto-img');
-  var fotoStatus = document.getElementById('cdg-hall-foto-status');
-  if(h.foto){
-    window._cdgHallFotoData = h.foto;
-    if(fotoImg) fotoImg.src = h.foto;
-    if(fotoPrev) fotoPrev.style.display = '';
-    if(fotoStatus) fotoStatus.textContent = 'Foto existente';
-  } else {
-    window._cdgHallFotoData = null;
-    if(fotoImg) fotoImg.src = '';
-    if(fotoPrev) fotoPrev.style.display = 'none';
-    if(fotoStatus) fotoStatus.textContent = '';
-  }
-  // Mark as edit mode
-  window._editingCDGHallId = id;
-  // Wire mic (idempotent)
-  setupMic('btn-cdg-hall-mic', 'cdg-hall-mic-lang', 'cdg-hall-mic-status', 'cdg-hall-desc');
-  modal.classList.add('open');
+// FIX CRÍTICO (mié 20-may-2026, rev Claude2): timeout para evitar que un
+// Supabase lento cuelgue al cliente hasta el límite de Render/Cloudflare
+// (~100s). Si dbSet tarda más de 15s, rechazamos para que el endpoint
+// responda con error custom al cliente. El dbSet sigue en vuelo en el
+// background — si eventualmente completa, mejor (UPSERT idempotente).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error(label + ' timeout después de ' + ms + 'ms')),
+      ms
+    ))
+  ]);
 }
 
-// Export Word with all CDG hallazgos
-function exportCDGHallazgosWord(){
-  var cdgHall = (hallazgos||[]).filter(function(h){ return h.tipo === 'CDG' && !h.cdgVersion; });
-  if(!cdgHall.length){ alert('No hay hallazgos CDG para exportar.'); return; }
-  var today = new Date();
-  var fecha = today.toLocaleDateString('es');
-  var autor = currentUser ? currentUser.name : '—';
-  // Group by cont
-  var byCont = {};
-  cdgHall.forEach(function(h){
-    var k = h.cont || '—';
-    if(!byCont[k]) byCont[k] = [];
-    byCont[k].push(h);
-  });
-  var sections = '';
-  var globalIdx = 0;
-  Object.keys(byCont).sort().forEach(function(cont){
-    sections += '<h2 style="color:#1a1a1a;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin-top:24pt">Conteo CDG: '+escH(cont)+'</h2>';
-    byCont[cont].forEach(function(h){
-      globalIdx++;
-      sections += '<h3 style="color:#b7770d;margin-top:18pt">Hallazgo #'+globalIdx+'</h3>'
-        +'<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-family:Calibri,sans-serif;font-size:11pt">'
-        +'<tr><td style="width:180px;background:#f0f0ee;font-weight:bold">Auditor</td><td>'+escH(h.autor||'')+'</td></tr>'
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">Registro</td><td>'+escH(h.ts||'')+'</td></tr>'
-        +(h.fecha?'<tr><td style="background:#f0f0ee;font-weight:bold">1. Fecha</td><td>'+escH(h.fecha)+'</td></tr>':'')
-        +(h.turno?'<tr><td style="background:#f0f0ee;font-weight:bold">2. Turno</td><td>'+escH(h.turno)+'</td></tr>':'')
-        +(h.area?'<tr><td style="background:#f0f0ee;font-weight:bold">3. Área o proceso</td><td>'+escH(h.area)+'</td></tr>':'')
-        +(h.tipoHallazgo?'<tr><td style="background:#f0f0ee;font-weight:bold">4. Tipo de hallazgo</td><td>'+escH(h.tipoHallazgo)+'</td></tr>':'')
-        +'<tr><td style="background:#f0f0ee;font-weight:bold">5. Descripción</td><td>'+escH(h.desc||h.quePaso||'')+'</td></tr>'
-        +(h.modificadoPor?'<tr><td style="background:#f0f0ee;font-weight:bold">Modificado por</td><td>'+escH(h.modificadoPor)+' · '+escH(h.modificadoTs||'')+'</td></tr>':'')
-        +'</table>'
-        +(h.foto?'<p style="margin-top:6pt"><img src="'+h.foto+'" style="max-width:480px;max-height:360px;border:1px solid #ccc"></p>':'');
-    });
-  });
-  var docHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
-    +'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
-    +'<head><meta charset="utf-8"><title>Hallazgos CDG</title></head>'
-    +'<body style="font-family:Calibri,sans-serif;font-size:11pt;padding:24pt">'
-    +'<h1 style="color:#1a1a1a">Reporte de Hallazgos CDG</h1>'
-    +'<p><strong>Fecha:</strong> '+escH(fecha)+'<br><strong>Exportado por:</strong> '+escH(autor)+'<br>'
-    +'<strong>Total:</strong> '+cdgHall.length+' hallazgo'+(cdgHall.length!==1?'s':'')+'</p>'
-    +sections
-    +'</body></html>';
-  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
-  downloadWordWithImages(docHtml, 'Hallazgos_CDG_'+ds+'.doc', 'Hallazgos CDG');
-  addHist('Exportó Word de hallazgos CDG ('+cdgHall.length+')');
-}
-
-// Wire CDG hallazgos panel buttons
-(function(){
-  var btnOpen  = document.getElementById('btn-cdg-hallazgos-list');
-  var btnClose = document.getElementById('btn-cdg-hallazgos-close');
-  var btnWord  = document.getElementById('btn-cdg-hallazgos-word');
-  var panel    = document.getElementById('cdg-hallazgos-panel');
-  if(btnOpen && panel) {
-    btnOpen.addEventListener('click', function(){
-      // Hide the other panels first
-      var histPanel = document.getElementById('cdg-hist-panel');
-      if(histPanel) histPanel.style.display = 'none';
-      panel.style.display = '';
-      renderCDGHallazgosPanel();
-    });
+async function dbGet(key) {
+  const rows = await supabase('GET', 'app_state', null, `?key=eq.${key}&select=value`);
+  if(rows && rows.length > 0) {
+    try { return JSON.parse(rows[0].value); } catch(e) { return null; }
   }
-  if(btnClose && panel) {
-    btnClose.addEventListener('click', function(){ panel.style.display = 'none'; });
-  }
-  if(btnWord) {
-    btnWord.addEventListener('click', exportCDGHallazgosWord);
-  }
-})();
-
-</script>
-
-<!-- ═══════════════════════════════════════════════════════════════════════
-     CALCULADORA FLOTANTE — DESACOPLADA de la app (mar 19-may-2026)
-     Reemplaza el campo Cálculo por fila. Cero interacción con fisico,
-     locks, polling, saveField. El usuario calcula afuera y escribe el
-     resultado a mano en el campo Físico.
-     ═══════════════════════════════════════════════════════════════════════ -->
-<button id="calc-fab" class="calc-fab" type="button" aria-label="Abrir calculadora">🧮</button>
-<div id="calc-panel" class="calc-panel" role="dialog" aria-label="Calculadora" aria-hidden="true">
-  <div class="calc-panel-header">
-    <span>🧮 Calculadora</span>
-    <button id="calc-panel-close" type="button" aria-label="Cerrar calculadora">×</button>
-  </div>
-  <input id="calc-panel-input" class="calc-panel-input" type="text"
-         placeholder="Ej: 8*6+3 o (2+3)*4" autocomplete="off"
-         autocorrect="off" autocapitalize="off" spellcheck="false">
-  <div class="calc-panel-result">
-    Resultado: <span id="calc-panel-result-value" class="calc-panel-result-value">—</span>
-  </div>
-  <div class="calc-panel-actions">
-    <button id="calc-panel-clear" type="button">Limpiar</button>
-    <button id="calc-panel-copy" class="primary" type="button">Copiar resultado</button>
-  </div>
-  <div class="calc-panel-hint">
-    Operadores: + − × ÷ ( ) . , <br>
-    Escribí el resultado a mano en el campo Físico.
-  </div>
-</div>
-
-<script>
-(function(){
-  var fab    = document.getElementById('calc-fab');
-  var panel  = document.getElementById('calc-panel');
-  var input  = document.getElementById('calc-panel-input');
-  var result = document.getElementById('calc-panel-result-value');
-  var close  = document.getElementById('calc-panel-close');
-  var clear  = document.getElementById('calc-panel-clear');
-  var copy   = document.getElementById('calc-panel-copy');
-  if(!fab || !panel || !input || !result || !close || !clear || !copy) return;
-
-  var escHandler = null;
-
-  function openPanel() {
-    panel.classList.add('open');
-    panel.setAttribute('aria-hidden', 'false');
-    // Focus dentro del mismo gesture handler (iOS friendly).
-    input.focus();
-    // Listener Escape solo mientras está abierto.
-    escHandler = function(e){
-      if(e.key === 'Escape') closePanel();
-    };
-    document.addEventListener('keydown', escHandler);
-  }
-  function closePanel() {
-    panel.classList.remove('open');
-    panel.setAttribute('aria-hidden', 'true');
-    if(escHandler) {
-      document.removeEventListener('keydown', escHandler);
-      escHandler = null;
-    }
-    // Devolver foco al FAB para accesibilidad.
-    fab.focus();
-  }
-
-  fab.addEventListener('click', function(){
-    if(panel.classList.contains('open')) closePanel();
-    else openPanel();
-  });
-  close.addEventListener('click', closePanel);
-
-  clear.addEventListener('click', function(){
-    input.value = '';
-    result.textContent = '—';
-    input.focus();
-  });
-
-  copy.addEventListener('click', function(){
-    var val = result.textContent;
-    if(!val || val === '—' || val === '…') return;
-    // Intentar Clipboard API moderna; fallback a textarea legacy.
-    if(navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(String(val)).then(function(){
-        var orig = copy.textContent;
-        copy.textContent = '✓ Copiado';
-        setTimeout(function(){ copy.textContent = orig; }, 1200);
-      }).catch(function(){ legacyCopy(val); });
-    } else {
-      legacyCopy(val);
-    }
-  });
-
-  function legacyCopy(val) {
-    var ta = document.createElement('textarea');
-    ta.value = String(val);
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      var orig = copy.textContent;
-      copy.textContent = '✓ Copiado';
-      setTimeout(function(){ copy.textContent = orig; }, 1200);
-    } catch(e) {}
-    document.body.removeChild(ta);
-  }
-
-  // Evaluación de expresión.
-  // Whitelist: dígitos, + - * / ( ) . , espacios. Coma se normaliza a punto
-  // antes de evaluar (soporte para teclados en español).
-  input.addEventListener('input', function(){
-    var raw = this.value;
-    var sanitized = raw.replace(/[^0-9+\-*/().,\s]/g, '');
-    if(sanitized !== raw) {
-      // Preservar posición de cursor lo mejor posible
-      var pos = this.selectionStart - (raw.length - sanitized.length);
-      this.value = sanitized;
-      try { this.setSelectionRange(pos, pos); } catch(e) {}
-    }
-    var expr = sanitized.replace(/,/g, '.');
-    if(!expr.trim()) { result.textContent = '—'; return; }
-    // Defensa en profundidad: limitar longitud máxima.
-    if(expr.length > 200) { result.textContent = '— (expresión muy larga)'; return; }
-    try {
-      var r = Function('"use strict";return(' + expr + ')')();
-      if(typeof r === 'number' && isFinite(r)) {
-        result.textContent = Math.round(r * 100) / 100;
-      } else {
-        result.textContent = '—';
-      }
-    } catch(e) {
-      result.textContent = '…'; // expresión incompleta
-    }
-  });
-})();
-</script>
-
-<!-- ═══════════════════════════════════════════════════════════════════════
-     HELPERS DE FOTO — Migración Storage (mié 20-may-2026)
-     compressImage(): redimensiona y comprime una foto antes de subirla.
-                      Target: max 1280px lado mayor, JPEG calidad 0.8.
-                      Reduce ~3-5MB original a ~200-600KB.
-     uploadFotoAndGetUrl(): toma data URL base64 → POST a /api/foto/upload
-                            → devuelve URL pública o lanza error.
-     fotoSrc(): helper para renderizar fotos en <img>. Acepta tanto base64
-                viejo (data:...) como URLs nuevas (https://...) transparente.
-     ═══════════════════════════════════════════════════════════════════════ -->
-<script>
-(function(){
-
-// Comprimir imagen client-side antes de subir.
-// Input: File (de <input type="file">) o data URL string.
-// Output: Promise<string> con data URL base64 comprimido.
-window.compressImage = function(input, opts) {
-  opts = opts || {};
-  var maxSize  = opts.maxSize  || 1280;  // px lado mayor
-  var quality  = opts.quality  || 0.8;
-  var mimeType = opts.mimeType || 'image/jpeg';
-
-  return new Promise(function(resolve, reject){
-    var img = new Image();
-    img.onload = function(){
-      try {
-        var w = img.naturalWidth;
-        var h = img.naturalHeight;
-        // FIX (rev Claude2): guarda contra imagen corrupta sin dimensiones.
-        // Sin esto, canvas queda 0x0 y toDataURL devuelve "data:," que pasaba
-        // la validación de prefijo data: y se subía como foto vacía.
-        if(!w || !h) {
-          return reject(new Error('La imagen está corrupta o vacía'));
-        }
-        // Escalar manteniendo aspect ratio
-        if(w > maxSize || h > maxSize) {
-          if(w >= h) { h = Math.round(h * maxSize / w); w = maxSize; }
-          else       { w = Math.round(w * maxSize / h); h = maxSize; }
-        }
-        var canvas = document.createElement('canvas');
-        canvas.width  = w;
-        canvas.height = h;
-        var ctx = canvas.getContext('2d');
-        // Fondo blanco para evitar transparencias raras en JPEG
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        var dataUrl = canvas.toDataURL(mimeType, quality);
-        resolve(dataUrl);
-      } catch(e) { reject(e); }
-    };
-    img.onerror = function(){ reject(new Error('No se pudo cargar la imagen para comprimir')); };
-
-    if(typeof input === 'string') {
-      img.src = input; // data URL
-    } else if(input instanceof File || input instanceof Blob) {
-      var reader = new FileReader();
-      reader.onload = function(e){ img.src = e.target.result; };
-      reader.onerror = function(){ reject(new Error('No se pudo leer el archivo')); };
-      reader.readAsDataURL(input);
-    } else {
-      reject(new Error('Input inválido para compressImage'));
-    }
-  });
-};
-
-// Subir foto al server. Devuelve URL pública.
-// Si la foto ya es URL https://, la devuelve sin tocar (no re-sube).
-//
-// FIX (rev Claude2 + ChatGPT, mié 20-may-2026): AbortController con timeout
-// client-side de 30s. Sin esto, una conexión débil dejaba al usuario con el
-// botón disabled y "⏳ Subiendo foto..." indefinidamente. También callback
-// opcional `onSlow` que se dispara a los 5s para que el handler pueda
-// actualizar el mensaje a "puede tardar por la señal".
-window.uploadFotoAndGetUrl = function(dataUrlOrFile, kind, refId, onSlow) {
-  return new Promise(function(resolve, reject){
-    // Si ya es URL (http/https), devolverla tal cual — no re-subir
-    if(typeof dataUrlOrFile === 'string' && /^https?:\/\//.test(dataUrlOrFile)) {
-      return resolve(dataUrlOrFile);
-    }
-
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function(){
-      controller.abort();
-    }, 30000);
-    var slowTimerId = setTimeout(function(){
-      if(typeof onSlow === 'function') {
-        try { onSlow(); } catch(e) { /* ignore */ }
-      }
-    }, 5000);
-
-    // Si es base64 o File, comprimir primero
-    window.compressImage(dataUrlOrFile)
-      .then(function(compressed){
-        return fetch('/api/foto/upload', {
-          method:  'POST',
-          headers: {'Content-Type':'application/json'},
-          signal:  controller.signal,
-          body:    JSON.stringify({
-            foto:    compressed,
-            kind:    kind,
-            refId:   refId,
-            usuario: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.name : '—'
-          })
-        });
-      })
-      .then(function(r){
-        clearTimeout(timeoutId);
-        clearTimeout(slowTimerId);
-        return r.json().catch(function(){
-          // Si el server devolvió HTML/texto en vez de JSON (raro), mostrar error claro
-          throw new Error('Respuesta no válida del servidor (HTTP ' + r.status + ')');
-        });
-      })
-      .then(function(d){
-        if(d.ok && d.url) {
-          resolve(d.url);
-        } else {
-          reject(new Error(d.error || 'Error desconocido al subir foto'));
-        }
-      })
-      .catch(function(e){
-        clearTimeout(timeoutId);
-        clearTimeout(slowTimerId);
-        if(e.name === 'AbortError') {
-          reject(new Error('Tardó demasiado al subir (>30s). Verificá la señal y reintentá.'));
-        } else {
-          reject(e);
-        }
-      });
-  });
-};
-
-// Helper para usar en <img src="">. Acepta base64 viejo, URL nuevo, o null.
-window.fotoSrc = function(foto) {
-  if(!foto) return '';
-  if(typeof foto !== 'string') return '';
-  // Ambos formatos son válidos en <img src>:
-  //   - data:image/...;base64,XXX (viejo)
-  //   - https://...supabase.co/.../foto.jpg (nuevo)
-  return foto;
-};
-
-})();
-</script>
-
-<!-- ══════════════════════════════════════════════════════════════════
-     CDG v2 — Módulo multi-usuario (cliente v5.2.27, sáb 30-may-2026)
-     Fase 3: UI completa para licencias colaborativas.
-     Requiere server v19 con endpoints /api/cdg/v2/*.
-     Feature flag: CDG_V2_HABILITADO (default false).
-══════════════════════════════════════════════════════════════════ -->
-<script>
-(function(){
-'use strict';
-
-/* ── Estado CDG v2 ─────────────────────────────────────────────── */
-var cdgv2LicenciaActual = null;   // meta objeto de la licencia abierta
-var cdgv2Lineas         = [];     // array de líneas cargadas
-var cdgv2LineasDesde    = null;   // ISO timestamp del último poll de líneas
-var cdgv2PollTimer      = null;   // setInterval del polling
-var cdgv2ListaTimer     = null;   // setInterval del polling de lista
-// FIX (lun 1-jun-2026, v5.2.27): exponer cleanup en window para que el
-// handler de logout (en otro script estricto) pueda limpiar sin
-// ReferenceError por cross-scope. Las var del IIFE son locales al closure.
-window.cdgv2Cleanup = function(){
-  clearInterval(cdgv2PollTimer);  clearInterval(cdgv2ListaTimer);
-  cdgv2PollTimer = null;          cdgv2ListaTimer = null;
-  cdgv2LicenciaActual = null;     cdgv2Lineas = [];
-  cdgv2LineasDesde = null;        cdgv2AddFotos = [];
-  if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
-};
-var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
-var CDGV2_LISTA_POLL_MS = 5000;   // 5s entre polls de la lista (descubrir licencias nuevas)
-
-/* ── Helpers de navegación CDG v2 ──────────────────────────────── */
-// FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
-
-/* ══════════════════════════════════════════════════════════════════════════
-   REPORTES / HISTORIAL CDG — Tablero unificado v1 + v2
-   FIX (lun 1-jun-2026, v5.2.29)
-   - Pestaña Resumen/Tablero: KPIs + tabla por licencia (v1 y v2 unificados)
-   - Pestaña Historial: tabla unificada con badge Clásico/Colaborativo
-   - Pestaña Hallazgos: hallazgos CDG separados por fuente, filtros
-   No toca: Hamilton, CDG clásico, Captura v2, Manifiesto/WMS.
-   ══════════════════════════════════════════════════════════════════════════ */
-
-// Estado interno del tablero (resetear al entrar)
-var rcdgDatos          = null;  // { v1: {}, v2: [] } — cargado una vez por sesión
-var rcdgFiltroTipo     = 'todos';
-var rcdgFiltroFuente   = 'todos';
-var rcdgHistFiltroTipo = 'todos';
-var rcdgHallFuente     = 'todos';
-var rcdgTabActiva      = 'resumen';
-
-// ── Navegación al entrar a pg-cdg-historial ──────────────────────────────
-// El handler sm-cdg-historial ya existe y llama navTo. Añadimos la carga aquí.
-(function(){
-  var origHandler = null;
-  var smHist = document.getElementById('sm-cdg-historial');
-  if(smHist) {
-    smHist.addEventListener('click', function(){
-      // Reset pestañas al entrar
-      rcdgTabActiva = 'resumen';
-      rcdgSwitchTab('resumen');
-      rcdgCargarDatos();
-    });
-  }
-})();
-
-// Cambiar pestaña interna de Reportes CDG
-function rcdgSwitchTab(tab) {
-  rcdgTabActiva = tab;
-  ['resumen','historial','hallazgos'].forEach(function(t){
-    var btn = document.getElementById('rcdg-tab-'+t);
-    var panel = document.getElementById('rcdg-panel-'+t);
-    if(btn)   btn.classList.toggle('on', t === tab);
-    if(panel) panel.style.display = (t === tab) ? '' : 'none';
-  });
-  if(tab === 'hallazgos' && rcdgDatos) rcdgRenderHallazgos();
-  if(tab === 'historial'  && rcdgDatos) rcdgRenderHistorial();
-}
-
-// FIX (lun 1-jun-2026, v5.2.29 rev): cablear pestañas con addEventListener.
-// Reemplaza los onclick inline que dependían de que rcdgSwitchTab estuviera
-// definido al parsear el HTML — ahora se registran aquí, después de la definición.
-(function(){
-  var tabs = ['resumen','historial','hallazgos'];
-  tabs.forEach(function(t){
-    var btn = document.getElementById('rcdg-tab-'+t);
-    if(btn) btn.addEventListener('click', function(){ rcdgSwitchTab(t); });
-  });
-})();
-
-// ── Carga de datos: v1 (state.cdg) + v2 (/api/cdg/v2/listar) ─────────────
-function rcdgCargarDatos() {
-  document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
-    '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando datos…</div>';
-
-  // v1: mismo fetch que showCDGHistEn (Render + Supabase)
-  var p1render = fetch('/api/cdg').then(function(r){ return r.ok ? r.json() : {}; }).catch(function(){ return {}; });
-  var p1supa   = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
-    if(rows && rows.length > 0) { try { return JSON.parse(rows[0].value).cdg || {}; } catch(e){ return {}; } }
-    return {};
-  }).catch(function(){ return {}; });
-
-  // v2: listar licencias con modo histórico (incluye cerradas antiguas) para Reportes.
-  // Captura colaborativa y Manifiesto siguen usando /api/cdg/v2/listar sin parámetro.
-  var p2 = fetch('/api/cdg/v2/listar?historico=true').then(function(r){ return r.json(); }).catch(function(){ return { ok:false, licencias:[] }; });
-
-  // WMS batch: listar todas las filas de cdg_wms en una sola query (evitar una query por licencia).
-  // Se leen las columnas ligeras (sin skus jsonb completo) para el estado del tablero.
-  // Limitación documentada: si hay >1000 licencias con WMS podría truncarse por el límite de Supabase.
-  var p3wms = fetch(SUPABASE_URL + '/rest/v1/cdg_wms?select=licencia_id,total_skus,cargado_por,ts_carga', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).catch(function(){ return []; });
-
-  Promise.all([p1render, p1supa, p2, p3wms]).then(function(res){
-    var renderData = res[0] || {};
-    var supaData   = res[1] || {};
-    // Merge v1 igual que showCDGHistEn
-    var v1 = {};
-    Object.keys(supaData).forEach(function(k){ v1[k] = supaData[k]; });
-    Object.keys(renderData).forEach(function(k){
-      var r = renderData[k], s = supaData[k];
-      if(!s){ v1[k] = r; return; }
-      v1[k] = ((r.items||[]).length >= (s.items||[]).length) ? r : s;
-    });
-
-    var v2list = (res[2].licencias || []);
-
-    // WMS lookup: mapa licenciaId → { totalSkus, cargadoPor, tsCarga }
-    var wmsRows = Array.isArray(res[3]) ? res[3] : [];
-    var wmsLookup = {};
-    wmsRows.forEach(function(w){ wmsLookup[String(w.licencia_id||'').trim().toUpperCase()] = w; });
-
-    rcdgDatos = { v1: v1, v2: v2list, wmsLookup: wmsLookup };
-    rcdgRenderResumen();
-    if(rcdgTabActiva === 'historial')  rcdgRenderHistorial();
-    if(rcdgTabActiva === 'hallazgos')  rcdgRenderHallazgos();
-  }).catch(function(e){
-    document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
-      '<div style="text-align:center;padding:1.5rem;color:#c0392b;font-size:.85rem">Error al cargar: '+escH(e.message||'sin conexión')+'</div>';
-  });
-}
-
-// ── Helper: determinar estado Hamilton de una licencia CDG ──────────────────
-// Usa teorico/fisico locales (variables globales del estado Hamilton).
-// sin WMS/Hamilton: "no_creado" | con teorico: "creado" | con fisico parcial: "en_proceso" | completo: "contado"
-function rcdgEstadoHamilton(teo, fis) {
-  if(!teo || !teo.items || !teo.items.length) return 'no_creado';
-  if(fis === null || fis === undefined) return 'creado';   // Hamilton creado, sin físico
-  var items = teo.items;
-  var fisArr = Array.isArray(fis) ? fis : [];
-  var conFisico = fisArr.filter(function(f){ return f && f.fisico !== null && f.fisico !== undefined; }).length;
-  if(conFisico === 0) return 'creado';
-  if(conFisico >= items.length) return 'contado';
-  return 'en_proceso';
-}
-
-// ── rcdgNormFecha: normalizar cualquier fecha a YYYY-MM-DD ─────────────────
-// Soporta: ISO "2026-06-01T..." · Local es/GT "1/6/2026" · "01/06/2026" · ya YYYY-MM-DD.
-// Devuelve null si no se puede parsear.
-function rcdgNormFecha(v) {
-  if(!v) return null;
-  var s = String(v).trim();
-  // Ya es YYYY-MM-DD o ISO
-  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  // Formato D/M/YYYY o DD/MM/YYYY (toLocaleDateString('es') de Guatemala)
-  var mDMY = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if(mDMY) {
-    var d = String(mDMY[1]).padStart(2,'0');
-    var m = String(mDMY[2]).padStart(2,'0');
-    return mDMY[3] + '-' + m + '-' + d;
-  }
-  // Fallback: intentar Date()
-  try {
-    var dt = new Date(s);
-    if(!isNaN(dt.getTime())) return dt.toISOString().slice(0,10);
-  } catch(e) {}
   return null;
 }
 
-// Hoy en America/Guatemala (YYYY-MM-DD)
-function rcdgHoyGT() {
-  try {
-    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
-  } catch(e) {
-    return new Date().toISOString().slice(0,10);
-  }
+async function dbSet(key, value) {
+  const data = { key, value: JSON.stringify(value) };
+  await supabase('POST', 'app_state', data, '?on_conflict=key');
 }
 
-// ── RESUMEN / TABLERO ─────────────────────────────────────────────────────
-function rcdgRenderResumen() {
-  if(!rcdgDatos) return;
-  var { v1, v2 } = rcdgDatos;
-
-  // Construir lista unificada de conteos
-  var todos = [];
-
-  // v1: state.cdg entries
-  var wmsLookup = (rcdgDatos && rcdgDatos.wmsLookup) || {};
-  Object.keys(v1).forEach(function(id){
-    var c = v1[id];
-    var items = c.items || [];
-    var unidades = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
-    var costo    = items.reduce(function(a,it){
-      var cu = Number(it.costo) || (typeof getCosto==='function' ? getCosto(it.sku)||0 : 0);
-      return a + cu * (Number(it.qty)||0);
-    }, 0);
-    // Estado Hamilton: leer de state.teorico / state.fisico locales
-    var teo = typeof teorico !== 'undefined' ? teorico[id] : null;
-    var fis = typeof fisico  !== 'undefined' ? fisico[id]  : undefined;
-    var hamiltonEstado = rcdgEstadoHamilton(teo, fis);
-    // Estado WMS
-    var wmsKey = String(id).trim().toUpperCase();
-    var wmsInfo = wmsLookup[wmsKey];
-    // Fecha: usar c.fecha o c.fechaCreacion
-    // FIX (mar 2-jun-2026, v5.2.29 rev): normalizar fecha al guardar en todos.
-    // c.fecha de v1 viene como "1/6/2026" (toLocaleDateString); rcdgNormFecha la convierte.
-    var fecha = rcdgNormFecha(c.fechaCreacion || c.fecha || null);
-    todos.push({
-      id: id, fuente: 'clasico',
-      tipo: c.tipo || 'CDG',
-      lineas: items.length, unidades: unidades, costo: costo,
-      estado: c.bloqueado ? 'cerrado' : 'borrador',
-      autor: c.autor || '—',
-      fecha: fecha,
-      wmsInfo: wmsInfo || null,
-      hamiltonEstado: hamiltonEstado
-    });
-  });
-
-  // v2: licencias de /api/cdg/v2/listar con agregados del modo histórico
-  v2.forEach(function(l){
-    var teo2 = typeof teorico !== 'undefined' ? teorico[l.id] : null;
-    var fis2 = typeof fisico  !== 'undefined' ? fisico[l.id]  : undefined;
-    var hamiltonEstado2 = rcdgEstadoHamilton(teo2, fis2);
-    var wmsKey2 = String(l.id).trim().toUpperCase();
-    var wmsInfo2 = wmsLookup[wmsKey2];
-    // Fecha: preferir fechaCreacion, luego fechaCierre como fallback
-    // Normalizar fecha v2 también (ISO ya, pero por consistencia)
-    var fecha2 = rcdgNormFecha(l.fechaCreacion || l.fechaCierre || null);
-    todos.push({
-      id: l.id, fuente: 'colaborativo',
-      tipo: l.tipo || 'CDG',
-      lineas: l.totalLineas || 0,
-      unidades: (l.totalUnidades !== null && l.totalUnidades !== undefined) ? l.totalUnidades : null,
-      costo:    (l.costoTotal    !== null && l.costoTotal    !== undefined) ? l.costoTotal    : null,
-      estado: l.estado,
-      autor: l.finalizador || l.creadoPor || '—',
-      fecha: fecha2,
-      wmsInfo: wmsInfo2 || null,
-      hamiltonEstado: hamiltonEstado2
-    });
-  });
-
-  // Aplicar filtros (tipo, fuente, fechas)
-  var rcdgFechaDesde = document.getElementById('rcdg-filtro-fecha-desde') ?
-    document.getElementById('rcdg-filtro-fecha-desde').value : '';
-  var rcdgFechaHasta = document.getElementById('rcdg-filtro-fecha-hasta') ?
-    document.getElementById('rcdg-filtro-fecha-hasta').value : '';
-
-  var filtrados = todos.filter(function(c){
-    var okTipo   = rcdgFiltroTipo   === 'todos' || c.tipo === rcdgFiltroTipo
-                   || (rcdgFiltroTipo === 'otro' && c.tipo !== 'CDG' && c.tipo !== 'KTM');
-    var okFuente = rcdgFiltroFuente === 'todos' || c.fuente === rcdgFiltroFuente;
-    var okFecha  = true;
-    if(rcdgFechaDesde || rcdgFechaHasta) {
-      var fStr = rcdgNormFecha(c.fecha); // normaliza D/M/YYYY, ISO, etc.
-      if(!fStr) {
-        okFecha = false; // sin fecha → excluir con filtro activo
-      } else {
-        if(rcdgFechaDesde && fStr < rcdgFechaDesde) okFecha = false;
-        if(rcdgFechaHasta && fStr > rcdgFechaHasta) okFecha = false;
-      }
-    }
-    return okTipo && okFuente && okFecha;
-  });
-
-  // KPIs
-  var nTotal     = filtrados.length;
-  var nCerrado   = filtrados.filter(function(c){ return c.estado==='cerrado'; }).length;
-  var nBorrador  = filtrados.filter(function(c){ return c.estado!=='cerrado'; }).length;
-  var totLineas  = filtrados.reduce(function(a,c){ return a+(c.lineas||0); }, 0);
-  var totUnid    = filtrados.filter(function(c){ return c.unidades!=null; })
-                             .reduce(function(a,c){ return a+(c.unidades||0); }, 0);
-  var totCosto   = filtrados.filter(function(c){ return c.costo!=null; })
-                             .reduce(function(a,c){ return a+(c.costo||0); }, 0);
-  var nColaborativo = filtrados.filter(function(c){ return c.fuente==='colaborativo'; }).length;
-  var nClasico      = filtrados.filter(function(c){ return c.fuente==='clasico'; }).length;
-
-  var kpiEl = document.getElementById('rcdg-kpis');
-  var kpiData = [
-    { label:'Total conteos', val: nTotal,     bg:'#f5f5f3', col:'#333' },
-    { label:'Finalizados',   val: nCerrado,   bg:'#e8f5e9', col:'#2e7d32' },
-    { label:'Borradores',    val: nBorrador,  bg:'#fff8e1', col:'#f57c00' },
-    { label:'Colaborativo',  val: nColaborativo, bg:'#e3f2fd', col:'#1565c0' },
-    { label:'Clásico',       val: nClasico,   bg:'#f3e5f5', col:'#6a1b9a' },
-    { label:'Líneas totales',val: totLineas.toLocaleString('es-GT'), bg:'#fafaf8', col:'#333' },
-    { label:'Unidades totales', val: totUnid.toLocaleString('es-GT'),   bg:'#fafaf8', col:'#555', title:'v1 clásico (items) + v2 colaborativo (cdg_lineas)' },
-    { label:'Costo total Q', val: 'Q '+Math.round(totCosto).toLocaleString('es-GT'), bg:'#fafaf8', col:'#1b5e20', title:'v1 clásico (costos SAP) + v2 colaborativo (costo_unit por línea)' },
-  ];
-  kpiEl.innerHTML = kpiData.map(function(k){
-    return '<div title="'+(k.title||'')+'" style="background:'+k.bg+';border-radius:10px;padding:.65rem .85rem;text-align:center">'
-      +'<div style="font-weight:700;font-size:1.05rem;color:'+k.col+'">'+k.val+'</div>'
-      +'<div style="font-size:.72rem;color:#888;margin-top:2px">'+k.label+'</div>'
-      +'</div>';
-  }).join('');
-
-  // Tabla
-  if(!filtrados.length){
-    document.getElementById('rcdg-tabla-resumen-wrap').innerHTML =
-      '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin conteos para el filtro seleccionado.</div>';
-    return;
-  }
-
-  var esSup = typeof isSup === 'function' && isSup();
-  var h = '<table><thead><tr>'
-    +'<th>Fuente</th><th>Licencia U25</th><th>Tipo</th>'
-    +'<th class="tc">Líneas</th><th class="tc">Unidades</th><th class="tc">Costo Q</th>'
-    +'<th>Estado</th><th>WMS</th><th>Hamilton</th>'
-    +'<th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
-    +'</tr></thead><tbody>';
-
-  filtrados.forEach(function(c){
-    var fuenteBadge = c.fuente === 'colaborativo'
-      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap">👥 Colaborativo</span>'
-      : '<span style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap">🏢 Clásico</span>';
-    var estadoBadge = c.estado === 'cerrado'
-      ? '<span style="background:#fdecea;color:#c0392b;font-size:.72rem;padding:2px 7px;border-radius:10px">🔒 Finalizado</span>'
-      : (c.estado === 'activo'
-        ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.72rem;padding:2px 7px;border-radius:10px">● Activo</span>'
-        : '<span style="background:#fff8e1;color:#f57c00;font-size:.72rem;padding:2px 7px;border-radius:10px">📝 Borrador</span>');
-    var fechaStr = c.fecha ? (function(){
-      var n=rcdgNormFecha(c.fecha); if(!n) return c.fecha; var p=n.split('-'); return p[2]+'/'+p[1]+'/'+p[0].slice(2);
-    })() : '—';
-    var unidStr = c.unidades != null ? c.unidades.toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
-    var costoStr = c.costo != null ? 'Q'+Math.round(c.costo).toLocaleString('es-GT') : '<span style="color:#ccc">—</span>';
-
-    // Acciones
-    var acciones = '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center">';
-    acciones += '<button class="btn btn-xs rcdg-ver-btn" data-id="'+escH(c.id)+'" data-fuente="'+c.fuente+'"'
-      +' style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
-    if(c.fuente === 'colaborativo' && c.estado === 'cerrado' && esSup) {
-      acciones += '<button class="btn btn-xs rcdg-unlock-v2-btn" data-id="'+escH(c.id)+'"'
-        +' title="Desbloquear licencia (supervisor)" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
-    }
-    if(c.fuente === 'clasico' && c.estado === 'cerrado' && esSup) {
-      acciones += '<button class="btn btn-xs rcdg-unlock-v1-btn" data-id="'+escH(c.id)+'"'
-        +' title="Desbloquear conteo clásico (supervisor)" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
-    }
-    acciones += '</div>';
-
-    // WMS badge
-    var wmsBadge = c.wmsInfo
-      ? '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:2px 6px;border-radius:8px;white-space:nowrap">✅ Cargado</span>'
-      : '<span style="background:#f5f5f3;color:#aaa;font-size:.7rem;padding:2px 6px;border-radius:8px;white-space:nowrap">Sin WMS</span>';
-    // Hamilton badge
-    var hamMap = {
-      'no_creado':  '<span style="background:#f5f5f3;color:#aaa;font-size:.7rem;padding:2px 6px;border-radius:8px">—</span>',
-      'creado':     '<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:2px 6px;border-radius:8px">Creado</span>',
-      'en_proceso': '<span style="background:#fff3e0;color:#e65100;font-size:.7rem;padding:2px 6px;border-radius:8px">En proceso</span>',
-      'contado':    '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:2px 6px;border-radius:8px">Contado</span>'
-    };
-    var hamBadge = hamMap[c.hamiltonEstado] || hamMap['no_creado'];
-
-    h += '<tr>'
-      +'<td>'+fuenteBadge+'</td>'
-      +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(c.id)+'</td>'
-      +'<td style="font-size:.82rem">'+escH(c.tipo)+'</td>'
-      +'<td class="tc">'+c.lineas+'</td>'
-      +'<td class="tc" style="font-size:.82rem">'+unidStr+'</td>'
-      +'<td class="tc" style="font-size:.82rem;white-space:nowrap">'+costoStr+'</td>'
-      +'<td>'+estadoBadge+'</td>'
-      +'<td>'+wmsBadge+'</td>'
-      +'<td>'+hamBadge+'</td>'
-      +'<td style="font-size:.78rem;color:#666;white-space:nowrap">'+escH(c.autor)+'</td>'
-      +'<td style="font-size:.78rem;color:#888;white-space:nowrap">'+fechaStr+'</td>'
-      +'<td>'+acciones+'</td>'
-      +'</tr>';
-  });
-  h += '</tbody></table>';
-  var wrap = document.getElementById('rcdg-tabla-resumen-wrap');
-  wrap.innerHTML = h;
-
-  // Wire acciones
-  wrap.querySelectorAll('.rcdg-ver-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var id = btn.dataset.id, fuente = btn.dataset.fuente;
-      if(fuente === 'colaborativo') {
-        // v2: abrir en Captura (modo edición si activa, lectura si cerrada según permisos)
-        if(typeof cdgv2AbrirLicencia === 'function') cdgv2AbrirLicencia(id);
-      } else {
-        // FIX (lun 1-jun-2026, v5.2.29 rev): v1 usa viewCDGReadOnly (read-only).
-        // Antes: navTo('pg-cdg') + showCDGHist → abría la pantalla operativa de CDG clásico.
-        // Ahora: abre el modal de vista solo lectura sin salir de Reportes.
-        var c = rcdgDatos && rcdgDatos.v1 ? rcdgDatos.v1[id] : null;
-        if(c && typeof viewCDGReadOnly === 'function') {
-          viewCDGReadOnly(id, c);
-        } else {
-          alert('No se pudo cargar el detalle de ' + id);
-        }
-      }
-    });
-  });
-
-  // Desbloquear v2 (supervisor)
-  wrap.querySelectorAll('.rcdg-unlock-v2-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var id = btn.dataset.id;
-      if(!currentUser) return;
-      if(!confirm('¿Desbloquear licencia v2 '+id+'?\nEl equipo podrá volver a editarla.')) return;
-      fetch('/api/cdg/v2/'+encodeURIComponent(id)+'/accion', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ usuario: currentUser.name, tipo:'desbloquear', supervisor:true })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if(d.ok){ rcdgCargarDatos(); }
-        else alert(d.error||'Error al desbloquear');
-      }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-
-  // Desbloquear v1 (supervisor) — usa endpoint existente de CDG clásico
-  wrap.querySelectorAll('.rcdg-unlock-v1-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var id = btn.dataset.id;
-      if(!currentUser) return;
-      if(!confirm('¿Desbloquear conteo clásico '+id+'?\nPodrá volver a editarse desde CDG Clásico.')) return;
-      fetch('/api/cdg/unlock', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ contId:id, usuario: currentUser.name })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if(d.ok){ lastVersion=-1; pollNow(); rcdgCargarDatos(); }
-        else alert(d.error||'Error al desbloquear');
-      }).catch(function(){ alert('Sin conexión'); });
-    });
+// ── API cache en memoria (TTL corto para endpoints de solo lectura) ──────────
+var _apiCache = {};
+function cacheGet(key) {
+  var _c = _apiCache[key];
+  if(!_c) return null;
+  if(Date.now() > _c.exp) { delete _apiCache[key]; return null; }
+  return _c.value;
+}
+function cacheSet(key, value, ttlMs) {
+  _apiCache[key] = { value:value, exp:Date.now()+ttlMs };
+}
+function cacheInvalidate(key) {
+  if(key) delete _apiCache[key];
+  else _apiCache = {};
+}
+function cacheInvalidatePrefix(prefix) {
+  Object.keys(_apiCache).forEach(function(k){
+    if(k.indexOf(prefix) === 0) delete _apiCache[k];
   });
 }
 
-// Filtros de tipo y fuente en Resumen
-(function(){
-  function wireFiltros(){
-    document.getElementById('rcdg-panel-resumen').addEventListener('click', function(e){
-      var bt = e.target.closest('.rcdg-filtro-tipo');
-      if(bt){
-        document.querySelectorAll('.rcdg-filtro-tipo').forEach(function(b){ b.classList.remove('on'); });
-        bt.classList.add('on');
-        rcdgFiltroTipo = bt.dataset.tipo;
-        if(rcdgDatos) rcdgRenderResumen();
-        return;
-      }
-      var bf = e.target.closest('.rcdg-filtro-fuente');
-      if(bf){
-        document.querySelectorAll('.rcdg-filtro-fuente').forEach(function(b){ b.classList.remove('on'); });
-        bf.classList.add('on');
-        rcdgFiltroFuente = bf.dataset.fuente;
-        if(rcdgDatos) rcdgRenderResumen();
-      }
-    });
-    var btnRefresh = document.getElementById('rcdg-btn-refresh');
-    if(btnRefresh) btnRefresh.addEventListener('click', function(){ rcdgDatos=null; rcdgCargarDatos(); });
+// ── In-memory state ───────────────────────────────────────────────────────
+let state = {
+  teorico:        {},
+  fisico:         {},
+  asignaciones:   {},
+  historial:      [],
+  costos:         {},
+  cdg:            {},
+  puertas:        {},
+  hallazgos:      [],
+  conteoMetadata: {},
+  alertasWMS:     {},  // FIX (server v15): tracking de cambios del WMS por contenedor congelado
+  date:           new Date().toDateString(),
+  version:        0
+};
 
-    // OBJ 3: filtros de fecha
-    var inputDesde = document.getElementById('rcdg-filtro-fecha-desde');
-    var inputHasta = document.getElementById('rcdg-filtro-fecha-hasta');
-    var btnHoy     = document.getElementById('rcdg-btn-hoy');
-    var btnFechaClear = document.getElementById('rcdg-btn-fecha-clear');
-    if(inputDesde) inputDesde.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
-    if(inputHasta) inputHasta.addEventListener('change', function(){ if(rcdgDatos) rcdgRenderResumen(); });
-    if(btnHoy) btnHoy.addEventListener('click', function(){
-      var hoy = rcdgHoyGT(); // zona horaria Guatemala, no UTC
-      if(inputDesde) inputDesde.value = hoy;
-      if(inputHasta) inputHasta.value = hoy;
-      if(rcdgDatos) rcdgRenderResumen();
-    });
-    if(btnFechaClear) btnFechaClear.addEventListener('click', function(){
-      if(inputDesde) inputDesde.value = '';
-      if(inputHasta) inputHasta.value = '';
-      if(rcdgDatos) rcdgRenderResumen();
-    });
+// Field locks: { "contId:rowIdx": { user, since, expires } }
+let fieldLocks = {};
+const LOCK_TIMEOUT   = 90000; // 90 seconds max
+const ACTIVE_TIMEOUT = 15000;
 
-    // OBJ C: sincronizar Hamilton CDG con datos WMS
-    var btnSincHam = document.getElementById('rcdg-btn-sincronizar-hamilton');
-    if(btnSincHam) btnSincHam.addEventListener('click', function(){
-      if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-      var msgEl = document.getElementById('rcdg-bulk-wms-msg');
-      if(!confirm('¿Actualizar todos los conteos CDG en Hamilton con el Teórico WMS cargado?\nEsta acción es segura y no borra datos.')) return;
-      btnSincHam.disabled = true;
-      msgEl.innerHTML = '<span style="color:#888">⏳ Sincronizando Hamilton CDG…</span>';
-      fetch('/api/cdg/wms/sincronizar-hamilton', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ usuario: currentUser.name })
-      }).then(function(r){ return r.json(); })
-        .then(function(d){
-          btnSincHam.disabled = false;
-          if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
-          var txt = '✅ Sincronizado: '
-            + d.actualizadas.length + ' actualizadas · '
-            + (d.yaActualizadas||[]).length + ' ya tenían WMS · '
-            + (d.sinConteo||[]).length + ' sin conteo Hamilton';
-          msgEl.innerHTML = '<span style="color:#1e7e34">'+txt+'</span>';
-          // Recargar datos para reflejar el nuevo estado Hamilton
-          lastVersion = -1; pollNow();
-          rcdgDatos = null; rcdgCargarDatos();
-        })
-        .catch(function(){
-          btnSincHam.disabled = false;
-          msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
-        });
-    });
+let activeUsers = {};
 
-    // OBJ 1 UI: bulk WMS upload
-    var bulkInput = document.getElementById('rcdg-bulk-wms-file');
-    if(bulkInput) bulkInput.addEventListener('change', function(){
-      if(!this.files || !this.files[0]) return;
-      if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-      var file  = this.files[0];
-      var msgEl = document.getElementById('rcdg-bulk-wms-msg');
-      var inp   = this;
-      msgEl.innerHTML = '<span style="color:#888">⏳ Procesando archivo WMS masivo…</span>';
-      var fd = new FormData();
-      fd.append('file', file);
-      fd.append('usuario', currentUser.name);
-      fetch('/api/cdg/wms/bulk', { method: 'POST', body: fd })
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-          inp.value = '';
-          if(!d.ok){
-            msgEl.innerHTML = '<span style="color:#c0392b">❌ ' + escH(d.error||'Error') + '</span>';
-            return;
-          }
-          var txt = '✅ WMS masivo cargado: '
-            + d.licenciasActualizadas.length + ' licencias · '
-            + d.totalSkus + ' SKUs';
-          if(d.licenciasSinConteoCDG && d.licenciasSinConteoCDG.length)
-            txt += ' · ' + d.licenciasSinConteoCDG.length + ' sin conteo CDG (OK, solo WMS)';
-          if(d.errores && d.errores.length)
-            txt += ' · ⚠️ ' + d.errores.length + ' errores';
-          if(d.advertencias) txt += ' · ⚠️ ' + escH(d.advertencias.join('; '));
-          msgEl.innerHTML = '<span style="color:#1e7e34">' + txt + '</span>';
-          // Recargar para reflejar el nuevo WMS en el tablero
-          rcdgDatos = null;
-          rcdgCargarDatos();
-        })
-        .catch(function(){
-          inp.value = '';
-          msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
-        });
-    });
-  }
-  // Defer para asegurar que el DOM existe
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireFiltros);
-  else wireFiltros();
-})();
-
-// ── PESTAÑA HISTORIAL ─────────────────────────────────────────────────────
-function rcdgRenderHistorial() {
-  if(!rcdgDatos) return;
-  var { v1, v2 } = rcdgDatos;
-  var todos = [];
-
-  Object.keys(v1).forEach(function(id){
-    var c = v1[id];
-    var items = c.items||[];
-    todos.push({
-      id:id, fuente:'clasico', tipo:c.tipo||'CDG',
-      lineas:items.length,
-      estado: c.bloqueado ? 'cerrado' : 'borrador',
-      autor: c.autor||'—', fecha: c.fechaCreacion||null
-    });
-  });
-  v2.forEach(function(l){
-    todos.push({
-      id:l.id, fuente:'colaborativo', tipo:l.tipo||'CDG',
-      lineas:l.totalLineas||0,
-      estado:l.estado,
-      autor:l.finalizador||l.creadoPor||'—', fecha:l.fechaCreacion||null
-    });
-  });
-
-  var filtrados = todos.filter(function(c){
-    if(rcdgHistFiltroTipo === 'todos') return true;
-    if(rcdgHistFiltroTipo === 'otro') return c.tipo!=='CDG'&&c.tipo!=='KTM';
-    return c.tipo === rcdgHistFiltroTipo;
-  });
-
-  var esSup = typeof isSup === 'function' && isSup();
-  var wrap  = document.getElementById('rcdg-tabla-historial-wrap');
-  if(!filtrados.length){
-    wrap.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin conteos.</div>';
-    return;
-  }
-
-  var h = '<table><thead><tr>'
-    +'<th>Fuente</th><th>Licencia U25</th><th>Tipo</th>'
-    +'<th class="tc">Líneas</th><th>Estado</th>'
-    +'<th>Autor</th><th>Fecha</th><th class="tc">Acciones</th>'
-    +'</tr></thead><tbody>';
-
-  filtrados.forEach(function(c){
-    var fuenteBadge = c.fuente==='colaborativo'
-      ? '<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:2px 6px;border-radius:10px;font-weight:600">👥 Colaborativo</span>'
-      : '<span style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem;padding:2px 6px;border-radius:10px;font-weight:600">🏢 Clásico</span>';
-    var estadoBadge = c.estado==='cerrado'
-      ? '<span style="background:#fdecea;color:#c0392b;font-size:.7rem;padding:2px 6px;border-radius:10px">🔒</span>'
-      : (c.estado==='activo'
-        ? '<span style="background:#e8f5e9;color:#2e7d32;font-size:.7rem;padding:2px 6px;border-radius:10px">●</span>'
-        : '<span style="background:#fff8e1;color:#f57c00;font-size:.7rem;padding:2px 6px;border-radius:10px">📝</span>');
-    var fechaStr = (function(){ var n=rcdgNormFecha(c.fecha); if(!n) return '—'; var p=n.split('-'); return p[2]+'/'+p[1]+'/'+p[0].slice(2); })();
-
-    var acciones = '<div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:center">';
-    acciones += '<button class="btn btn-xs rcdg-hist-ver" data-id="'+escH(c.id)+'" data-fuente="'+c.fuente+'"'
-      +' style="background:#e8f4ff;color:#0066cc;font-weight:600">👁</button>';
-    if(c.fuente==='colaborativo' && c.estado==='cerrado' && esSup)
-      acciones += '<button class="btn btn-xs rcdg-hist-unlock-v2" data-id="'+escH(c.id)+'" title="Desbloquear" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
-    if(c.fuente==='clasico' && c.estado==='cerrado' && esSup)
-      acciones += '<button class="btn btn-xs rcdg-hist-unlock-v1" data-id="'+escH(c.id)+'" title="Desbloquear clásico" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">🔓</button>';
-    acciones += '</div>';
-
-    h += '<tr><td>'+fuenteBadge+'</td>'
-      +'<td style="font-weight:700;font-size:.83rem">'+escH(c.id)+'</td>'
-      +'<td style="font-size:.8rem">'+escH(c.tipo)+'</td>'
-      +'<td class="tc">'+c.lineas+'</td>'
-      +'<td>'+estadoBadge+'</td>'
-      +'<td style="font-size:.77rem;color:#666">'+escH(c.autor)+'</td>'
-      +'<td style="font-size:.77rem;color:#888">'+fechaStr+'</td>'
-      +'<td>'+acciones+'</td></tr>';
-  });
-  h += '</tbody></table>';
-  wrap.innerHTML = h;
-
-  // Wire ver
-  wrap.querySelectorAll('.rcdg-hist-ver').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      if(btn.dataset.fuente==='colaborativo'){
-        if(typeof cdgv2AbrirLicencia==='function') cdgv2AbrirLicencia(btn.dataset.id);
-      } else {
-        // FIX (lun 1-jun-2026, v5.2.29 rev): v1 usa viewCDGReadOnly (read-only).
-        var c = rcdgDatos && rcdgDatos.v1 ? rcdgDatos.v1[btn.dataset.id] : null;
-        if(c && typeof viewCDGReadOnly === 'function') {
-          viewCDGReadOnly(btn.dataset.id, c);
-        } else {
-          alert('No se pudo cargar el detalle de ' + btn.dataset.id);
-        }
-      }
-    });
-  });
-  // Wire desbloquear v2
-  wrap.querySelectorAll('.rcdg-hist-unlock-v2').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      if(!currentUser||!confirm('¿Desbloquear '+btn.dataset.id+'?')) return;
-      fetch('/api/cdg/v2/'+encodeURIComponent(btn.dataset.id)+'/accion',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({usuario:currentUser.name,tipo:'desbloquear',supervisor:true})
-      }).then(function(r){return r.json();}).then(function(d){
-        if(d.ok) rcdgCargarDatos(); else alert(d.error||'Error');
-      }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-  // Wire desbloquear v1
-  wrap.querySelectorAll('.rcdg-hist-unlock-v1').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      if(!currentUser||!confirm('¿Desbloquear '+btn.dataset.id+'?')) return;
-      fetch('/api/cdg/unlock',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({contId:btn.dataset.id,usuario:currentUser.name})
-      }).then(function(r){return r.json();}).then(function(d){
-        if(d.ok){lastVersion=-1;pollNow();rcdgCargarDatos();}else alert(d.error||'Error');
-      }).catch(function(){ alert('Sin conexión'); });
-    });
+function cleanLocks() {
+  const now = Date.now();
+  Object.keys(fieldLocks).forEach(k => {
+    if(fieldLocks[k].expires < now) delete fieldLocks[k];
   });
 }
 
-// Filtros pestaña Historial
-(function(){
-  function wireHistFiltros(){
-    var panel = document.getElementById('rcdg-panel-historial');
-    if(!panel) return;
-    panel.addEventListener('click', function(e){
-      var bt = e.target.closest('.rcdg-hist-tipo');
-      if(!bt) return;
-      panel.querySelectorAll('.rcdg-hist-tipo').forEach(function(b){ b.classList.remove('on'); });
-      bt.classList.add('on');
-      rcdgHistFiltroTipo = bt.dataset.tipo;
-      if(rcdgDatos) rcdgRenderHistorial();
-    });
-  }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireHistFiltros);
-  else wireHistFiltros();
-})();
+function getLocks() {
+  cleanLocks();
+  return fieldLocks;
+}
 
-// ── PESTAÑA HALLAZGOS ─────────────────────────────────────────────────────
-function rcdgRenderHallazgos() {
-  var hall = typeof hallazgos !== 'undefined' ? hallazgos : [];
-  // Solo hallazgos CDG (v1 y v2)
-  var cdgHall = hall.filter(function(h){ return h.tipo === 'CDG'; });
-
-  // Poblar selector de licencias
-  var sel = document.getElementById('rcdg-hall-filtro-lic');
-  if(sel) {
-    var lics = {};
-    cdgHall.forEach(function(h){ var l=h.cdgV2Licencia||h.cont||h.u25||''; if(l) lics[l]=true; });
-    var curVal = sel.value;
-    sel.innerHTML = '<option value="">Todas las licencias</option>'
-      + Object.keys(lics).sort().map(function(l){ return '<option value="'+escH(l)+'">'+escH(l)+'</option>'; }).join('');
-    sel.value = curVal;
-  }
-
-  var filtroLic = sel ? sel.value : '';
-  var filtrados = cdgHall.filter(function(h){
-    var esV2 = h.cdgVersion === 2;
-    var okFuente = rcdgHallFuente==='todos' ||
-      (rcdgHallFuente==='colaborativo' && esV2) ||
-      (rcdgHallFuente==='clasico' && !esV2);
-    var licH = h.cdgV2Licencia||h.cont||h.u25||'';
-    var okLic = !filtroLic || licH === filtroLic;
-    return okFuente && okLic;
+function getActiveUsers() {
+  const now = Date.now();
+  Object.keys(activeUsers).forEach(n => {
+    if(now - activeUsers[n] > ACTIVE_TIMEOUT) delete activeUsers[n];
   });
-
-  var contenido = document.getElementById('rcdg-hallazgos-content');
-  if(!filtrados.length){
-    contenido.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin hallazgos para el filtro seleccionado.</div>';
-    return;
-  }
-
-  // Separar por fuente para no mezclar visualmente
-  var v2hall = filtrados.filter(function(h){ return h.cdgVersion===2; });
-  var v1hall = filtrados.filter(function(h){ return h.cdgVersion!==2; });
-
-  function renderGrupo(lista, titulo, color){
-    if(!lista.length) return '';
-    var h = '<div style="margin-bottom:1rem">'
-      +'<div style="font-size:.78rem;font-weight:700;color:'+color+';text-transform:uppercase;'
-      +'letter-spacing:.4px;margin-bottom:.4rem;padding:.3rem .6rem;background:'+color+'1a;border-radius:6px">'
-      +titulo+' ('+lista.length+')</div>';
-    lista.forEach(function(hh){
-      var licH = hh.cdgV2Licencia||hh.cont||hh.u25||'—';
-      h += '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;'
-        +'padding:.5rem .75rem;margin-bottom:.4rem;font-size:.82rem">'
-        +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-        +(hh.tipoHallazgo?'<span style="font-weight:600;color:#6d4c41">'+escH(hh.tipoHallazgo)+'</span>':'')
-        +'<span style="font-size:.75rem;background:#f5f5f3;padding:1px 6px;border-radius:8px">'+escH(licH)+'</span>'
-        +'<span style="color:#888;font-size:.75rem;margin-left:auto">'+escH(hh.autor||'—')+' · '+escH(hh.ts||'')+'</span>'
-        +'</div>'
-        +(hh.desc?'<div style="color:#555;margin-top:3px">'+escH(hh.desc)+'</div>':'')
-        +'</div>';
-    });
-    return h + '</div>';
-  }
-
-  var html = '';
-  if(rcdgHallFuente==='todos' || rcdgHallFuente==='colaborativo')
-    html += renderGrupo(v2hall, '👥 Colaborativo CDG v2', '#1565c0');
-  if(rcdgHallFuente==='todos' || rcdgHallFuente==='clasico')
-    html += renderGrupo(v1hall, '🏢 Clásico CDG', '#6a1b9a');
-
-  contenido.innerHTML = html || '<div style="text-align:center;padding:1rem;color:#aaa;font-size:.85rem">Sin resultados.</div>';
+  return Object.keys(activeUsers);
 }
 
-// Filtros pestaña Hallazgos
-(function(){
-  function wireHallFiltros(){
-    var panel = document.getElementById('rcdg-panel-hallazgos');
-    if(!panel) return;
-    panel.addEventListener('click', function(e){
-      var bf = e.target.closest('.rcdg-hall-fuente');
-      if(bf){
-        panel.querySelectorAll('.rcdg-hall-fuente').forEach(function(b){ b.classList.remove('on'); });
-        bf.classList.add('on');
-        rcdgHallFuente = bf.dataset.fuente;
-        rcdgRenderHallazgos();
-      }
-    });
-    var selLic = document.getElementById('rcdg-hall-filtro-lic');
-    if(selLic) selLic.addEventListener('change', function(){ rcdgRenderHallazgos(); });
-  }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireHallFiltros);
-  else wireHallFiltros();
-})();
-
-// ── showCDGHistEn: igual que showCDGHist pero renderiza en IDs indicados ──────────────
-// Propósito: pg-cdg-historial tiene sus propios IDs de panel/título/contenido.
-// Los botones de pg-cdg siguen usando showCDGHist() con los IDs originales (sin cambios).
-// showCDGHistEn no modifica showCDGHist ni los elementos de pg-cdg.
-function showCDGHistEn(tipo, panelId, titleId, contentId) {
-  var panel   = document.getElementById(panelId);
-  var title   = document.getElementById(titleId);
-  var content = document.getElementById(contentId);
-  if(!panel||!title||!content) return;
-
-  // Mostrar "cargando" mientras fetch corre
-  document.getElementById('cdg-historial-tipos').style.display = 'none';
-  title.textContent = 'Cargando…';
-  content.innerHTML = '<p style="color:#aaa;text-align:center;padding:1.5rem;font-size:.85rem">Cargando historial…</p>';
-  panel.style.display = '';
-
-  // Misma lógica de fetch que showCDGHist — copia exacta para no tocar el original
-  var renderPromise = fetch('/api/cdg').then(function(r){
-    if(!r.ok) throw new Error('Render not ok');
-    return r.json();
-  }).catch(function(){ return {}; });
-
-  var supaPromise = fetch(SUPABASE_URL + '/rest/v1/app_state?key=eq.daily_state&select=value', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).then(function(rows){
-    if(rows && rows.length > 0) {
-      try { var parsed = JSON.parse(rows[0].value); return parsed.cdg || {}; }
-      catch(e) { return {}; }
-    }
-    return {};
-  }).catch(function(){ return {}; });
-
-  Promise.all([renderPromise, supaPromise]).then(function(results){
-    var renderData = results[0] || {};
-    var supaData   = results[1] || {};
-    var data = {};
-    Object.keys(supaData).forEach(function(k){ data[k] = supaData[k]; });
-    Object.keys(renderData).forEach(function(k){
-      var r = renderData[k];
-      var s = supaData[k];
-      if(!s) { data[k] = r; return; }
-      var rItems = (r.items||[]).length;
-      var sItems = (s.items||[]).length;
-      if(rItems < sItems) { data[k] = s; return; }
-      data[k] = r;
-    });
-
-    var keys = Object.keys(data).filter(function(k){
-      var t = data[k].tipo||'CDG';
-      if(tipo==='otro') return t!=='CDG'&&t!=='KTM';
-      return t===tipo;
-    });
-    title.textContent = 'Historial ' + tipo + ' ('+keys.length+')';
-    if(!keys.length){
-      content.innerHTML='<p style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin conteos de tipo '+escH(tipo)+'.</p>';
-      panel.style.display='';
-      return;
-    }
-
-    var rows = keys.map(function(id){
-      var c = data[id];
-      var items = c.items||[];
-      var lineas = items.length;
-      var totalSkus = items.reduce(function(a,it){ return a + (Number(it.qty)||0); }, 0);
-      var totalCosto = items.reduce(function(a,it){
-        var cu = Number(it.costo) || getCosto(it.sku) || 0;
-        return a + cu * (Number(it.qty)||0);
-      }, 0);
-      return { id:id, c:c, lineas:lineas, totalSkus:totalSkus, totalCosto:totalCosto };
-    });
-
-    // IDs únicos para botones export dentro de este panel (evitan colisión con los de pg-cdg)
-    var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
-      +'<span style="font-size:.85rem;color:#666"><strong>'+keys.length+'</strong> conteo'+(keys.length!==1?'s':'')+' '+escH(tipo)+'</span>'
-      +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
-      +'<button class="btn btn-sm btn-green" id="btn-cdgp-hist-xlsx" data-tipo="'+escH(tipo)+'">📥 Exportar Resumen</button>'
-      +'<button class="btn btn-sm" id="btn-cdgp-hist-xlsx-analitica" data-tipo="'+escH(tipo)+'" style="background:#0066cc;color:#fff;font-weight:600">📊 Exportar Analítica</button>'
-      +'</div>'
-      +'</div>';
-
-    h += '<div class="tbl-wrap" style="margin-bottom:0"><table>'
-      +'<thead><tr>'
-      +'<th>Correlativo U25</th>'
-      +'<th class="tc">Líneas</th>'
-      +'<th class="tc">Unidades</th>'
-      +'<th class="tc">Costo total</th>'
-      +'<th>Estado</th>'
-      +'<th>Autor</th>'
-      +'<th class="tc">Acciones</th>'
-      +'</tr></thead><tbody>';
-    rows.forEach(function(r){
-      var c = r.c;
-      var isLocked = c.bloqueado === true;
-      var badge = isLocked
-        ? '<span class="badge" style="background:#fdecea;color:#c0392b">🔒 Finalizado</span>'
-        : '<span class="badge" style="background:#fef9e7;color:#b7770d">📝 Borrador</span>';
-      // pg-cdg-historial es READ-ONLY: solo Ver y exportar por línea.
-      // Continuar y Desbloquear se hacen desde CDG Clásico, no desde aquí.
-      var actions = '<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">';
-      actions += '<button class="btn btn-xs cdgp-view-btn" data-id="'+escH(r.id)+'" style="background:#e8f4ff;color:#0066cc;font-weight:600">👁 Ver</button>';
-      actions += '<button class="btn btn-xs cdgp-report-btn" data-id="'+escH(r.id)+'" title="Reporte individual">📥</button>';
-      actions += '</div>';
-      h += '<tr>'
-        +'<td><strong>'+escH(r.id)+'</strong></td>'
-        +'<td class="tc">'+r.lineas+'</td>'
-        +'<td class="tc">'+r.totalSkus+'</td>'
-        +'<td class="tc" style="font-family:monospace">Q'+r.totalCosto.toFixed(2)+'</td>'
-        +'<td>'+badge+'</td>'
-        +'<td style="font-size:.78rem;color:#888">'+escH(c.autor||'—')+'</td>'
-        +'<td class="tc">'+actions+'</td>'
-        +'</tr>';
-    });
-    h += '</tbody></table></div>';
-    content.innerHTML = h;
-
-    // Wire exports (reutiliza las mismas funciones de exportación)
-    var btnXlsx = document.getElementById('btn-cdgp-hist-xlsx');
-    if(btnXlsx) btnXlsx.addEventListener('click', function(){ exportCDGHistExcel(rows, tipo); });
-    var btnXlsxAna = document.getElementById('btn-cdgp-hist-xlsx-analitica');
-    if(btnXlsxAna) btnXlsxAna.addEventListener('click', function(){ exportCDGAnalitica(rows, tipo); });
-
-    // Wire Ver (read-only)
-    content.querySelectorAll('.cdgp-view-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if(typeof viewCDGReadOnly === 'function') viewCDGReadOnly(this.dataset.id, data[this.dataset.id]);
-      });
-    });
-
-    // Wire Reporte individual
-    content.querySelectorAll('.cdgp-report-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        exportCDGReporteIndividual(this.dataset.id, data[this.dataset.id]);
-      });
-    });
-
-    // pg-cdg-historial es READ-ONLY. No hay wire de Continuar ni Desbloquear aquí.
-    // Esas acciones siguen disponibles desde CDG Clásico (showCDGHist original).
-    panel.style.display='';
-  }).catch(function(e){ console.warn('CDG hist (page) error:',e); });
-}
-
-// ── Navegación menú CDG ────────────────────────────────────────────────────
-
-// sm-cdg-historial → pg-cdg-historial
-document.getElementById('sm-cdg-historial').addEventListener('click', function(){
-  navTo('pg-cdg-historial','📋 Historial / Consulta CDG');
-  // Resetear estado: mostrar selector, ocultar panel de resultados previos
-  document.getElementById('cdg-historial-tipos').style.display = '';
-  document.getElementById('cdg-historial-page-panel').style.display = 'none';
-});
-
-// sm-cdg-admin: oculto en producción — handler registrado para evitar error JS
-// si el elemento existe en el DOM, pero no hace nada visible.
-document.getElementById('sm-cdg-admin').addEventListener('click', function(){ /* reservado */ });
-
-// FIX (lun 1-jun-2026, v5.2.29 rev): handlers legacy de pg-cdg-historial protegidos.
-// Los elementos sm-cdg-hist-cdg/ktm/otros y btn-cdg-historial-page-close ya no existen
-// en el DOM (la página fue reestructurada con pestañas Resumen/Historial/Hallazgos).
-// Se mantiene el código como referencia pero envuelto en guardas para no romper nada.
-(function(){
-  var elCdg    = document.getElementById('sm-cdg-hist-cdg');
-  var elKtm    = document.getElementById('sm-cdg-hist-ktm');
-  var elOtros  = document.getElementById('sm-cdg-hist-otros');
-  var elClose  = document.getElementById('btn-cdg-historial-page-close');
-  var elAdmin  = document.getElementById('sm-cdg-admin-clasico');
-  if(elCdg)   elCdg.addEventListener('click', function(){ showCDGHistEn('CDG','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
-  if(elKtm)   elKtm.addEventListener('click', function(){ showCDGHistEn('KTM','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
-  if(elOtros) elOtros.addEventListener('click', function(){ showCDGHistEn('otro','cdg-historial-page-panel','cdg-historial-page-title','cdg-historial-page-content'); });
-  if(elClose) elClose.addEventListener('click', function(){
-    var pp = document.getElementById('cdg-historial-page-panel');
-    var pc = document.getElementById('cdg-historial-page-content');
-    var pt = document.getElementById('cdg-historial-tipos');
-    if(pp) pp.style.display = 'none';
-    if(pc) pc.innerHTML = '';
-    if(pt) pt.style.display = '';
-  });
-  if(elAdmin) elAdmin.addEventListener('click', function(){ /* reservado */ });
-})();
-
-// cdgMenuMostrarAdmin: no se llama en producción actual.
-// Reservada para cuando Administración sea una sección funcional completa.
-function cdgMenuMostrarAdmin(){ /* no-op — Administración no visible en producción */ }
-
-document.getElementById('sm-cdg-clasico').addEventListener('click', function(){
-  navTo('pg-cdg','🏢 Conteos CDG');
-  // Reset estado CDG v1
-  if(typeof cdgSkus !== 'undefined') cdgSkus = [];
-  document.getElementById('cdg-u25').value = '';
-  document.getElementById('cdg-sku').value = '';
-  document.getElementById('cdg-desc').value = '';
-  document.getElementById('cdg-qty').value = '';
-  if(typeof renderCDGSkuList === 'function') renderCDGSkuList();
-  if(typeof renderCDGFotoGrid === 'function') renderCDGFotoGrid();
-  document.getElementById('cdg-msg').innerHTML = '';
-});
-
-document.getElementById('sm-cdg-v2').addEventListener('click', function(){
-  cdgv2AbrirLista();
-});
-
-/* ── MANIFIESTO / VALIDACIÓN WMS ────────────────────────────────
-   FIX (lun 1-jun-2026, v5.2.29): pestaña Manifiesto funcional.
-   Carga bajo demanda: ningún fetch al iniciar la app.
-   No toca CDG v1, Hamilton, captura v2, reportes, cierre/finalizar.
-   ────────────────────────────────────────────────────────────── */
-
-// Estado interno del Manifiesto (limpio al cambiar de licencia)
-var wmsLicenciaActual = null;  // id de la licencia seleccionada
-var wmsSkus           = [];    // array del WMS: [{sku, descripcion, cantidad}]
-var wmsLineasCDG      = [];    // líneas capturadas CDG vigentes
-var wmsFilasComp      = [];    // resultado de comparación (array completo)
-var wmsFiltroActivo   = 'todos';
-
-// Navegar a pg-cdg-manifiesto: cargar lista de licencias
-document.getElementById('sm-cdg-manifiesto').addEventListener('click', function(){
-  // FIX (mar 2-jun-2026, v5.2.29 rev): resetear estado al abrir Manifiesto.
-  // wmsLicenciaActual puede tener un U25 de la sesión anterior aunque el
-  // selector muestre "Seleccioná una licencia...".
-  wmsLicenciaActual = '';
-  wmsSkus = []; wmsLineasCDG = []; wmsFilasComp = [];
-  var estadoPanel = document.getElementById('wms-estado-panel');
-  var emptyMsg    = document.getElementById('wms-empty-msg');
-  var uploadMsg   = document.getElementById('wms-upload-msg');
-  var exportBtn   = document.getElementById('btn-wms-exportar');
-  if(estadoPanel) estadoPanel.style.display = 'none';
-  if(emptyMsg)    emptyMsg.style.display = '';
-  if(uploadMsg)   uploadMsg.innerHTML = '';
-  if(exportBtn)   exportBtn.style.display = 'none';
-  wmsOcultarComparacion();
-  navTo('pg-cdg-manifiesto','📄 Manifiesto / Validación WMS');
-  wmsCargarLicencias();
-});
-
-// Cargar lista de licencias activas para el selector
-// FIX (lun 1-jun-2026, v5.2.29 rev): wmsCargarLicencias lista v1 + v2 + Solo WMS.
-// Antes solo listaba v2. Ahora incluye:
-//   - CDG v2 (colaborativo) desde /api/cdg/v2/listar?historico=true
-//   - CDG v1 (clásico) desde state.cdg local
-//   - Solo WMS: licencias en cdg_wms que no tienen v1 ni v2
-// wmsLicFuente: mapa licId → 'colaborativo' | 'clasico' | 'solo_wms'
-var wmsLicFuente = {};
-
-function wmsCargarLicencias(){
-  var sel = document.getElementById('wms-lic-select');
-  sel.innerHTML = '<option value="">Cargando…</option>';
-  wmsLicFuente = {};
-  // FIX (mar 2-jun-2026): resetear licencia actual al recargar la lista
-  wmsLicenciaActual = '';
-
-  // Tres fuentes en paralelo
-  var pV2 = fetch('/api/cdg/v2/listar?historico=true')
-    .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,licencias:[]}; });
-  var pV1 = fetch('/api/cdg')
-    .then(function(r){ return r.json(); }).catch(function(){ return {}; });
-  var pWms = fetch(SUPABASE_URL + '/rest/v1/cdg_wms?select=licencia_id,total_skus,cargado_por', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  }).then(function(r){ return r.json(); }).catch(function(){ return []; });
-
-  Promise.all([pV2, pV1, pWms]).then(function(res){
-    var v2 = (res[0].licencias || []);
-    var v1 = res[1] || {};
-    var wmsRows = Array.isArray(res[2]) ? res[2] : [];
-
-    sel.innerHTML = '<option value="">Seleccioná una licencia…</option>';
-
-    // Set de IDs ya agregados para no duplicar
-    var agregados = {};
-
-    // 1. v2 colaborativo
-    v2.forEach(function(l){
-      var estado = l.estado === 'activo' ? '● Activa' : '■ Cerrada';
-      var opt = document.createElement('option');
-      opt.value = l.id;
-      opt.textContent = '[Colaborativo] ' + l.id + ' — ' + (l.tipo||'CDG') + ' · ' + estado;
-      sel.appendChild(opt);
-      wmsLicFuente[l.id] = 'colaborativo';
-      agregados[l.id.toUpperCase()] = true;
-    });
-
-    // 2. v1 clásico
-    Object.keys(v1).forEach(function(id){
-      if(agregados[id.toUpperCase()]) return;
-      var c = v1[id];
-      var opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = '[Clásico] ' + id + ' — ' + (c.tipo||'CDG') + (c.bloqueado?' · Finalizado':' · Borrador');
-      sel.appendChild(opt);
-      wmsLicFuente[id] = 'clasico';
-      agregados[id.toUpperCase()] = true;
-    });
-
-    // 3. Solo WMS (en cdg_wms pero no en v1 ni v2)
-    wmsRows.forEach(function(w){
-      var wid = String(w.licencia_id||'').trim().toUpperCase();
-      if(!wid || agregados[wid]) return;
-      var opt = document.createElement('option');
-      opt.value = w.licencia_id;
-      opt.textContent = '[Solo WMS] ' + w.licencia_id + ' — ' + w.total_skus + ' SKUs';
-      sel.appendChild(opt);
-      wmsLicFuente[w.licencia_id] = 'solo_wms';
-      agregados[wid] = true;
-    });
-
-    if(!sel.options.length || sel.options.length === 1) {
-      sel.innerHTML = '<option value="">Sin licencias disponibles</option>';
-    }
-  }).catch(function(){
-    sel.innerHTML = '<option value="">Error al cargar — reintentá</option>';
-  });
-}
-
-document.getElementById('btn-wms-refresh-lics').addEventListener('click', wmsCargarLicencias);
-
-// Al cambiar la licencia: cargar estado WMS
-document.getElementById('wms-lic-select').addEventListener('change', function(){
-  var licId = this.value;
-  wmsLicenciaActual = licId || '';
-  wmsSkus = []; wmsLineasCDG = []; wmsFilasComp = [];
-  wmsOcultarComparacion();
-  document.getElementById('wms-upload-msg').innerHTML = '';
-  // FIX (mar 2-jun-2026): deshabilitar label "Cargar WMS" si no hay licencia
-  var labelCargar = document.querySelector('label[for="wms-file-input"], label:has(#wms-file-input)');
-  // fallback: buscar el label por su input hijo
-  var wmsFileInput = document.getElementById('wms-file-input');
-  var labelEl = wmsFileInput ? wmsFileInput.closest('label') : null;
-  if(labelEl) {
-    labelEl.style.opacity = licId ? '1' : '0.4';
-    labelEl.style.pointerEvents = licId ? '' : 'none';
-    labelEl.title = licId ? 'Cargar WMS para esta licencia' : 'Seleccioná una licencia primero';
-  }
-  if(!licId){
-    document.getElementById('wms-estado-panel').style.display = 'none';
-    document.getElementById('wms-empty-msg').style.display = '';
-    return;
-  }
-  document.getElementById('wms-estado-panel').style.display = '';
-  document.getElementById('wms-empty-msg').style.display = 'none';
-  wmsCargarEstado(licId);
-});
-
-// FIX (lun 1-jun-2026, v5.2.29 rev): wmsCargarEstado soporta las tres fuentes.
-// colaborativo → GET /api/cdg/v2/:id/wms + GET /api/cdg/v2/:id (líneas)
-// clasico → GET /api/cdg/v2/:id/wms (solo WMS; líneas vienen de state.cdg local)
-// solo_wms → GET /api/cdg/v2/:id/wms; líneas vacías (Validado CDG = 0 para todo)
-function wmsCargarEstado(licId){
-  wmsActualizarMetaDisplay(null, null);
-  document.getElementById('wms-encabezado-display').textContent = '';
-  document.getElementById('btn-wms-exportar').style.display = 'none';
-  wmsOcultarComparacion();
-
-  var fuente = wmsLicFuente[licId] || 'colaborativo';
-
-  // GET WMS: usar endpoint general /api/cdg/wms/:id (no exige cdg_meta v2).
-  // FIX (mar 2-jun-2026, v5.2.29 rev): antes usaba /api/cdg/v2/:id/wms que
-  // exigía cdg_meta y bloqueaba v1 clásico y "Solo WMS".
-  var pWms = fetch('/api/cdg/wms/' + encodeURIComponent(licId))
-    .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,skus:[]}; });
-
-  // GET líneas: solo para v2; v1 usa state.cdg local; solo_wms vacío
-  var pLineas;
-  if(fuente === 'colaborativo') {
-    pLineas = fetch('/api/cdg/v2/' + encodeURIComponent(licId))
-      .then(function(r){ return r.json(); }).catch(function(){ return {ok:false,lineas:[]}; });
-  } else if(fuente === 'clasico') {
-    // FIX (mar 2-jun-2026, v5.2.29 rev2): helper robusto para items CDG v1.
-    // Las fuentes se intentan en orden de confiabilidad:
-    //   1. cdg[licId]  — variable global si publicState la expone (puede no existir)
-    //   2. teorico[licId].items excl. _soloWMS — siempre disponible después de sincronizar
-    //      item.qty = Validado CDG consolidado (NUNCA item.teoricoWMS para validado)
-    // No tocar v2 ni state del servidor.
-    var cdgEntry = (typeof window !== 'undefined' && window._cdgState && window._cdgState[licId])
-      || (typeof state !== 'undefined' && state.cdg && state.cdg[licId])
-      || (typeof cdg !== 'undefined' && cdg[licId])
-      || null;
-    var itemsCdgV1 = cdgEntry ? (cdgEntry.items || []) : [];
-
-    // Fallback: leer teorico[licId] (variable global del cliente, disponible siempre).
-    // Se usa cuando cdg[] no existe (no la expone publicState).
-    // Excluir items _soloWMS — esos vienen solo del WMS, qty=0, no son Validado CDG.
-    if(!itemsCdgV1.length && typeof teorico !== 'undefined' && teorico[licId]) {
-      var teoEntry = teorico[licId];
-      if((teoEntry.fromCDG || teoEntry.cdgValidado) && Array.isArray(teoEntry.items)) {
-        itemsCdgV1 = teoEntry.items.filter(function(it){ return !it._soloWMS; });
-      }
-    }
-
-    var lineasV1 = itemsCdgV1.map(function(it){
-      return {
-        sku:         it.sku,
-        cantidad:    Number(it.qty || it.cantidad || 0),  // qty = Validado CDG, nunca teoricoWMS
-        descripcion: it.desc || it.descripcion || '',
-        eliminada:   false
-      };
-    });
-    pLineas = Promise.resolve({ ok: true, lineas: lineasV1 });
-  } else {
-    // solo_wms: sin líneas CDG — todo el WMS mostrará Validado CDG = 0
-    pLineas = Promise.resolve({ ok: true, lineas: [] });
-  }
-
-  Promise.all([pWms, pLineas]).then(function(results){
-    var wmsResp  = results[0];
-    var licResp  = results[1];
-
-    wmsSkus = wmsResp.ok ? (wmsResp.skus || []) : [];
-
-    // Líneas CDG vigentes según fuente
-    if(fuente === 'colaborativo') {
-      wmsLineasCDG = licResp.ok ? (licResp.lineas || []).filter(function(l){ return !l.eliminada; }) : [];
-    } else {
-      wmsLineasCDG = licResp.lineas || [];
-    }
-
-    wmsActualizarMetaDisplay(wmsResp.wmsMeta || null, wmsSkus.length ? null : 'Sin WMS cargado para esta licencia');
-    wmsActualizarEncabezadoDisplay(wmsResp.encabezado || null);
-
-    if(wmsSkus.length > 0){
-      wmsFilasComp = wmsCompararSkus(wmsSkus, wmsLineasCDG);
-      wmsRenderizarComparacion();
-      document.getElementById('btn-wms-exportar').style.display = '';
-    }
-  }).catch(function(e){
-    wmsActualizarMetaDisplay(null, 'Sin conexión — reintentá');
-  });
-}
-
-function wmsActualizarMetaDisplay(wmsMeta, error){
-  var el = document.getElementById('wms-meta-display');
-  if(error){
-    el.innerHTML = '<span style="color:#c0392b">' + escH(error) + '</span>';
-    return;
-  }
-  if(!wmsMeta){
-    el.innerHTML = '<span style="color:#aaa">Sin WMS cargado. Subí el archivo WMS para comparar.</span>';
-    return;
-  }
-  var ts = wmsMeta.tsCarga ? new Date(wmsMeta.tsCarga).toLocaleString('es-GT',
-    {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-  el.innerHTML = '✅ WMS cargado por <strong>' + escH(wmsMeta.cargadoPor) + '</strong>'
-    + ' · ' + ts
-    + ' · <strong>' + (wmsMeta.totalSkus||0) + '</strong> SKUs'
-    + ' · <strong>' + (wmsMeta.totalUnidades||0).toLocaleString('es-GT') + '</strong> unidades'
-    + ' <span style="color:#aaa;font-size:.77rem">· ' + escH(wmsMeta.nombreArchivo||'') + '</span>';
-}
-
-function wmsActualizarEncabezadoDisplay(enc){
-  var el = document.getElementById('wms-encabezado-display');
-  if(!enc){ el.textContent = ''; return; }
-  var partes = [];
-  if(enc.fecha){
-    var f = enc.fecha;
-    // fecha puede venir como ISO string o Date
-    try { f = new Date(enc.fecha).toLocaleDateString('es-GT'); } catch(e){}
-    partes.push('Fecha: ' + f);
-  }
-  if(enc.origen)    partes.push('Origen: ' + enc.origen);
-  if(enc.destino)   partes.push('Destino: ' + enc.destino);
-  if(enc.tipo)      partes.push('Tipo: ' + enc.tipo);
-  if(enc.status)    partes.push('Status WMS: ' + enc.status);
-  if(enc.lineasWMS) partes.push('Líneas WMS: ' + enc.lineasWMS);
-  el.textContent = partes.join(' · ');
-}
-
-// ── Comparación en cliente ─────────────────────────────────────────────────
-// Consolida líneas CDG vigentes por SKU (sumar cantidades del mismo SKU).
-// Compara contra teórico WMS. Unión completa: SKUs solo en WMS, solo en CDG,
-// y en ambos. Diferencia = Validado CDG - Teórico WMS.
-function wmsCompararSkus(skusWMS, lineasCDG){
-  // Consolidar CDG por SKU
-  var cdgMap = {};
-  var cdgDescMap = {};
-  lineasCDG.forEach(function(l){
-    var s = String(l.sku || '').trim().toUpperCase();
-    if(!s) return;
-    cdgMap[s] = (cdgMap[s] || 0) + Number(l.cantidad || 0);
-    if(!cdgDescMap[s] && l.descripcion) cdgDescMap[s] = l.descripcion;
-  });
-
-  // Mapa WMS
-  var wmsMap = {};
-  var wmsDescMap = {};
-  skusWMS.forEach(function(item){
-    var s = String(item.sku || '').trim().toUpperCase();
-    if(!s) return;
-    wmsMap[s]     = (wmsMap[s] || 0) + Number(item.cantidad || 0);
-    if(!wmsDescMap[s] && item.descripcion) wmsDescMap[s] = item.descripcion;
-  });
-
-  // Unión de SKUs
-  var todosSkus = {};
-  Object.keys(wmsMap).forEach(function(s){ todosSkus[s] = true; });
-  Object.keys(cdgMap).forEach(function(s){ todosSkus[s] = true; });
-
-  var filas = Object.keys(todosSkus).map(function(s){
-    var cantWMS = wmsMap[s] || 0;
-    var cantCDG = cdgMap[s] || 0;
-    var dif     = cantCDG - cantWMS;
-    var estado  = dif === 0 ? 'ok' : (dif < 0 ? 'faltante' : 'sobrante');
-    var desc    = wmsDescMap[s] || cdgDescMap[s] || '';
-    return { sku: s, descripcion: desc, cantWMS: cantWMS, cantCDG: cantCDG,
-             diferencia: dif, estado: estado };
-  });
-
-  // Ordenar: faltantes primero, luego sobrantes, luego ok; dentro de cada grupo por SKU
-  var orden = { faltante: 0, sobrante: 1, ok: 2 };
-  filas.sort(function(a, b){
-    if(orden[a.estado] !== orden[b.estado]) return orden[a.estado] - orden[b.estado];
-    return a.sku < b.sku ? -1 : 1;
-  });
-  return filas;
-}
-
-function wmsOcultarComparacion(){
-  document.getElementById('wms-comparacion-panel').style.display = 'none';
-  document.getElementById('wms-tabla-wrap').innerHTML = '';
-  document.getElementById('wms-resumen').innerHTML = '';
-}
-
-function wmsRenderizarComparacion(){
-  var filas = wmsFilasComp;
-  if(!filas || !filas.length) return;
-  var panel = document.getElementById('wms-comparacion-panel');
-  panel.style.display = '';
-
-  // Resumen numérico
-  var nOk       = filas.filter(function(f){ return f.estado==='ok'; }).length;
-  var nFalt     = filas.filter(function(f){ return f.estado==='faltante'; }).length;
-  var nSob      = filas.filter(function(f){ return f.estado==='sobrante'; }).length;
-  var resumen   = document.getElementById('wms-resumen');
-  resumen.innerHTML =
-    '<div style="background:#f5f5f3;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
-    +'<div style="font-weight:700;font-size:1rem">'+filas.length+'</div>'
-    +'<div style="color:#666">Total SKUs</div></div>'
-    +'<div style="background:#fdecea;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
-    +'<div style="font-weight:700;font-size:1rem;color:#c0392b">'+nFalt+'</div>'
-    +'<div style="color:#c0392b">Faltantes</div></div>'
-    +'<div style="background:#e8f5e9;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
-    +'<div style="font-weight:700;font-size:1rem;color:#1b5e20">'+nSob+'</div>'
-    +'<div style="color:#1b5e20">Sobrantes</div></div>'
-    +'<div style="background:#e3f2fd;border-radius:8px;padding:8px 14px;font-size:.83rem;text-align:center">'
-    +'<div style="font-weight:700;font-size:1rem;color:#0d47a1">'+nOk+'</div>'
-    +'<div style="color:#0d47a1">Coincidencias</div></div>';
-
-  wmsRenderizarTabla();
-}
-
-function wmsRenderizarTabla(){
-  var filtro = wmsFiltroActivo;
-  var filas  = wmsFilasComp.filter(function(f){
-    if(filtro === 'todos')       return true;
-    if(filtro === 'diferencias') return f.estado !== 'ok';
-    if(filtro === 'faltantes')   return f.estado === 'faltante';
-    if(filtro === 'sobrantes')   return f.estado === 'sobrante';
-    if(filtro === 'ok')          return f.estado === 'ok';
-    return true;
-  });
-
-  var wrap = document.getElementById('wms-tabla-wrap');
-  if(!filas.length){
-    wrap.innerHTML = '<p style="text-align:center;color:#aaa;padding:1.5rem;font-size:.85rem">Sin resultados para este filtro.</p>';
-    return;
-  }
-
-  var colores = { ok: '#e3f2fd', faltante: '#fdecea', sobrante: '#e8f5e9' };
-  var h = '<table><thead><tr>'
-    +'<th>SKU</th><th>Descripción</th>'
-    +'<th class="tc">Teórico WMS</th>'
-    +'<th class="tc">Validado CDG</th>'
-    +'<th class="tc">Diferencia</th>'
-    +'</tr></thead><tbody>';
-  filas.forEach(function(f){
-    var bg   = colores[f.estado] || '#fff';
-    var difColor = f.diferencia === 0 ? '#333'
-                 : f.diferencia < 0   ? '#c0392b' : '#1b5e20';
-    var difStr   = f.diferencia > 0 ? '+'+f.diferencia.toLocaleString('es-GT')
-                 : f.diferencia.toLocaleString('es-GT');
-    h += '<tr style="background:'+bg+'">'
-      +'<td style="font-weight:600;font-size:.85rem">'+escH(f.sku)+'</td>'
-      +'<td style="font-size:.82rem;color:#444">'+(f.descripcion ? escH(f.descripcion) : '<span style="color:#aaa">sin descripción</span>')+'</td>'
-      +'<td class="tc">'+f.cantWMS.toLocaleString('es-GT')+'</td>'
-      +'<td class="tc">'+f.cantCDG.toLocaleString('es-GT')+'</td>'
-      +'<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>'
-      +'</tr>';
-  });
-  h += '</tbody></table>';
-  wrap.innerHTML = h;
-}
-
-// Filtros
-document.getElementById('wms-filtros').addEventListener('click', function(e){
-  var btn = e.target.closest('.wms-filtro-btn');
-  if(!btn) return;
-  document.querySelectorAll('.wms-filtro-btn').forEach(function(b){ b.classList.remove('active'); });
-  btn.classList.add('active');
-  wmsFiltroActivo = btn.dataset.filtro;
-  if(wmsFilasComp.length) wmsRenderizarTabla();
-});
-
-// ── Upload WMS ────────────────────────────────────────────────────────────
-document.getElementById('wms-file-input').addEventListener('change', function(){
-  if(!this.files || !this.files[0]) return;
-  var inputEl = this;
-  var msgEl   = document.getElementById('wms-upload-msg');
-
-  // FIX (mar 2-jun-2026, v5.2.29 rev): leer el selector en el momento del click,
-  // no confiar en wmsLicenciaActual que puede tener un valor stale de la sesión anterior.
-  var licSeleccionada = (document.getElementById('wms-lic-select') || {}).value || '';
-  if(!licSeleccionada){
-    msgEl.innerHTML = '<span style="color:#c0392b">Seleccioná una licencia antes de cargar WMS.</span>';
-    inputEl.value = '';
-    return;
-  }
-  if(!currentUser){
-    msgEl.innerHTML = '<span style="color:#c0392b">Seleccioná tu nombre primero.</span>';
-    inputEl.value = '';
-    return;
-  }
-  // Sincronizar la variable global con lo que el selector tiene ahora
-  wmsLicenciaActual = licSeleccionada;
-
-  var file = this.files[0];
-  msgEl.innerHTML = '<span style="color:#888">⏳ Procesando archivo…</span>';
-
-  var fd = new FormData();
-  fd.append('file', file);
-  fd.append('usuario', currentUser.name);
-
-  // Endpoint general /api/cdg/wms/:id (no exige cdg_meta, sirve para v1, v2 y solo-WMS).
-  fetch('/api/cdg/wms/' + encodeURIComponent(wmsLicenciaActual), {
-    method: 'POST', body: fd
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
-    inputEl.value = ''; // resetear input para permitir re-carga del mismo archivo
-    if(!d.ok){
-      msgEl.innerHTML = '<span style="color:#c0392b">❌ ' + escH(d.error || 'Error') + '</span>';
-      return;
-    }
-    var txt = '✅ WMS cargado: ' + d.totalSkus + ' SKUs, ' + (d.totalUnidades||0).toLocaleString('es-GT') + ' unidades.';
-    if(d.advertencia) txt += ' ⚠️ ' + escH(d.advertencia);
-    msgEl.innerHTML = '<span style="color:#1e7e34">' + txt + '</span>';
-    // Recargar estado completo para reflejar el nuevo WMS
-    wmsCargarEstado(wmsLicenciaActual);
-  })
-  .catch(function(){
-    inputEl.value = '';
-    msgEl.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
-  });
-});
-
-// ── Exportar Manifiesto individual ────────────────────────────────────────
-document.getElementById('btn-wms-exportar').addEventListener('click', function(){
-  if(!wmsLicenciaActual || !wmsFilasComp.length){
-    alert('No hay datos de comparación para exportar.');
-    return;
-  }
-  wmsExportarManifiesto();
-});
-
-function wmsExportarManifiesto(){
-  var licId = wmsLicenciaActual;
-  // Recuperar encabezado del display para las filas de cabecera
-  var encDisplay = document.getElementById('wms-encabezado-display').textContent;
-  var metaDisplay = document.getElementById('wms-meta-display').textContent;
-
-  // Construir filas del Manifiesto
-  // Encabezado del documento
-  var hdrRows = [
-    ['Licencia:', licId],
-    ['Generado:', new Date().toLocaleString('es-GT')],
-    []
-  ];
-  // Parsear encabezado WMS si está disponible (origen, destino, fecha, tipo)
-  if(encDisplay) hdrRows.push(['Detalles WMS:', encDisplay]);
-  hdrRows.push([]); // fila vacía
-
-  // Fila de encabezados de columna
-  var colHdr = ['CODIGO', 'DESCRIPCION', 'CANTIDAD', 'VALIDADO EN CDG', 'DIFERENCIA'];
-  var dataRows = wmsFilasComp.map(function(f){
-    return [f.sku, f.descripcion || 'sin descripción registrada', f.cantWMS, f.cantCDG, f.diferencia];
-  });
-
-  // Totales
-  var totWMS = wmsFilasComp.reduce(function(a,f){ return a+f.cantWMS; }, 0);
-  var totCDG = wmsFilasComp.reduce(function(a,f){ return a+f.cantCDG; }, 0);
-  dataRows.push([]);
-  dataRows.push(['TOTALES', '', totWMS, totCDG, totCDG - totWMS]);
-
-  // Construir libro con SheetJS
-  try {
-    var XLSX = window.XLSX || (typeof require !== 'undefined' ? require('xlsx') : null);
-    if(!XLSX) { alert('SheetJS no disponible. Reintentá.'); return; }
-
-    var wb   = XLSX.utils.book_new();
-    var allRows = hdrRows.concat([colHdr]).concat(dataRows);
-    var ws   = XLSX.utils.aoa_to_sheet(allRows);
-
-    // Ancho de columnas
-    ws['!cols'] = [
-      { wch: 12 }, // CODIGO
-      { wch: 45 }, // DESCRIPCION
-      { wch: 14 }, // CANTIDAD
-      { wch: 16 }, // VALIDADO EN CDG
-      { wch: 12 }  // DIFERENCIA
-    ];
-
-    XLSX.utils.book_append_sheet(wb, ws, 'Manifiesto');
-
-    var fecha = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    XLSX.writeFile(wb, 'Manifiesto_' + licId + '_' + fecha + '.xlsx');
-  } catch(e) {
-    alert('Error al exportar: ' + (e.message || e));
-  }
-}
-
-/* ── API helpers CDG v2 ────────────────────────────────────────── */
-function cdgv2Fetch(method, path, body){
-  var opts = { method: method, headers: {'Content-Type':'application/json'} };
-  if(body) opts.body = JSON.stringify(body);
-  return fetch(path, opts).then(function(r){
-    return r.json().then(function(d){
-      // FIX (lun 1-jun-2026, v5.2.28): si el server rechaza con 400/403/409 por
-      // estado cambiado, refrescar la licencia activa para mostrar estado real
-      // y agregar aviso en lugar de dejar al usuario operando contra estado stale.
-      if((r.status === 400 || r.status === 403 || r.status === 409) && cdgv2LicenciaActual) {
-        var msgEl = document.getElementById('cdgv2-lic-msg');
-        if(msgEl) msgEl.innerHTML = '<span style="color:#e67e22">⚠️ El estado cambió — se actualizó la pantalla.</span>';
-        cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
-        cdgv2CargarLista();
-      }
-      return d;
-    });
-  });
-}
-
-/* ── LISTA DE LICENCIAS ─────────────────────────────────────────── */
-function cdgv2AbrirLista(){
-  navTo('pg-cdg-v2-lista','👥 CDG v2 — Licencias');
-  document.getElementById('cdgv2-form-crear').style.display = 'none';
-  document.getElementById('cdgv2-crear-msg').innerHTML = '';
-  cdgv2CargarLista();
-  clearInterval(cdgv2ListaTimer);
-  cdgv2ListaTimer = setInterval(cdgv2CargarLista, CDGV2_LISTA_POLL_MS);
-}
-
-function cdgv2CargarLista(){
-  cdgv2Fetch('GET', '/api/cdg/v2/listar').then(function(d){
-    if(!d.ok){ renderCdgv2ListaVacia('Error al cargar licencias'); return; }
-    renderCdgv2Lista(d.licencias || []);
-  }).catch(function(){ renderCdgv2ListaVacia('Sin conexión'); });
-}
-
-function renderCdgv2Lista(licencias){
-  var el = document.getElementById('cdgv2-licencias-list');
-  if(!licencias.length){
-    el.innerHTML = '<div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">No hay licencias activas. Creá una nueva.</div>';
-    return;
-  }
-  // FIX (lun 1-jun-2026, v5.2.27): deduplicar por id normalizado (toUpperCase)
-  // como segunda red. El server normaliza con trim().toUpperCase(), pero si en
-  // Supabase ya existen claves duplicadas con distinto case, el render no duplica.
-  var vistos = {};
-  var unicas = licencias.filter(function(l){
-    var key = (l.id||'').toUpperCase();
-    if(vistos[key]) return false;
-    vistos[key] = true;
-    return true;
-  });
-  el.innerHTML = unicas.map(function(l){
-    var estadoColor = l.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
-    var estadoText  = l.estado === 'activo' ? 'Activa' : 'Cerrada';
-    var estadoFg    = l.estado === 'activo' ? '#2e7d32' : '#c62828';
-    var usuarios    = (l.usuarios || []).join(', ') || '—';
-    return '<div class="submenu-item cdgv2-lic-item" data-id="'+escH(l.id)+'" style="flex-direction:column;align-items:flex-start;gap:4px">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;width:100%">'
-      +'<div style="font-weight:700;font-size:.975rem">'+escH(l.id)+'</div>'
-      +'<span style="font-size:.72rem;padding:2px 9px;border-radius:10px;background:'+estadoColor+';color:'+estadoFg+';font-weight:600">'+estadoText+'</span>'
-      +'</div>'
-      +'<div style="font-size:.8rem;color:#666">'+escH(l.tipo)+' · Creado por '+escH(l.creadoPor)+'</div>'
-      +'<div style="font-size:.78rem;color:#888">'+l.totalLineas+' líneas · Usuarios: '+escH(usuarios)+'</div>'
-      +'</div>';
-  }).join('');
-  el.querySelectorAll('.cdgv2-lic-item').forEach(function(item){
-    item.addEventListener('click', function(){
-      cdgv2AbrirLicencia(item.dataset.id);
-    });
-  });
-}
-
-function renderCdgv2ListaVacia(msg){
-  document.getElementById('cdgv2-licencias-list').innerHTML =
-    '<div style="text-align:center;padding:2rem;color:#aaa;font-size:.9rem">'+escH(msg)+'</div>';
-}
-
-/* Crear nueva licencia */
-document.getElementById('btn-cdgv2-nueva').addEventListener('click', function(){
-  var f = document.getElementById('cdgv2-form-crear');
-  f.style.display = f.style.display === 'none' ? '' : 'none';
-});
-
-document.getElementById('btn-cdgv2-crear-ok').addEventListener('click', function(){
-  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-  // Normalizar igual que el server para que la validación de duplicado sea consistente
-  var u25  = (document.getElementById('cdgv2-new-u25').value||'').trim().toUpperCase();
-  var tipo = document.getElementById('cdgv2-new-tipo').value;
-  var msg  = document.getElementById('cdgv2-crear-msg');
-  if(!u25){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el correlativo U25.</span>'; return; }
-  msg.innerHTML = 'Creando…';
-  cdgv2Fetch('POST', '/api/cdg/v2/crear', { id: u25, tipo: tipo, usuario: currentUser.name })
-    .then(function(d){
-      if(!d.ok){
-        // Si ya existe, refrescar lista y ofrecer abrir directamente
-        if(d.error && d.error.indexOf('Ya existe') >= 0) {
-          msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error)+'</span>'
-            +'<br><button class="btn btn-sm cdgv2-abrir-existente" data-id="'+escH(u25)+'" style="margin-top:4px">Abrir esa licencia →</button>';
-          // addEventListener en lugar de onclick inline — cdgv2AbrirLicencia está en el IIFE
-          var btnAbrir = msg.querySelector('.cdgv2-abrir-existente');
-          if(btnAbrir) btnAbrir.addEventListener('click', function(){
-            cdgv2AbrirLicencia(this.dataset.id);
-          });
-          cdgv2CargarLista(); // refrescar lista para que aparezca
-        } else {
-          msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
-        }
-        return;
-      }
-      document.getElementById('cdgv2-form-crear').style.display = 'none';
-      msg.innerHTML = '';
-      cdgv2AbrirLicencia(d.licencia.id);
-    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
-});
-
-/* ── LICENCIA INDIVIDUAL ─────────────────────────────────────────── */
-function cdgv2AbrirLicencia(licenciaId){
-  licenciaId = (licenciaId||'').trim().toUpperCase(); // normalizar igual que el server
-  clearInterval(cdgv2ListaTimer);
-  clearInterval(cdgv2PollTimer);
-  cdgv2LicenciaActual = null;
-  cdgv2Lineas = [];
-  cdgv2LineasDesde = null;
-  cdgv2AddFotos = []; renderCdgv2AddFotosRow(); // limpiar fotos pendientes del form
-  navTo('pg-cdg-v2-licencia','📋 Licencia '+licenciaId);
-  document.getElementById('cdgv2-lic-titulo').textContent = licenciaId;
-  document.getElementById('cdgv2-lic-meta').textContent = 'Cargando…';
-  document.getElementById('cdgv2-lineas-container').innerHTML =
-    '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Cargando líneas…</div>';
-  document.getElementById('cdgv2-lic-msg').innerHTML = '';
-  document.getElementById('cdgv2-add-msg').innerHTML = '';
-  cdgv2PollearLicencia(licenciaId, true);
-  cdgv2PollTimer = setInterval(function(){ cdgv2PollearLicencia(licenciaId, false); }, CDGV2_POLL_MS);
-
-  // Unirse a la licencia
-  if(currentUser){
-    cdgv2Fetch('POST', '/api/cdg/v2/'+licenciaId+'/accion', { usuario: currentUser.name, tipo: 'unirse' })
-      .catch(function(){});
-  }
-}
-
-function cdgv2PollearLicencia(licenciaId, esPrimerCarga){
-  var url = '/api/cdg/v2/'+licenciaId;
-  if(cdgv2LineasDesde) url += '?lineasDesde='+encodeURIComponent(cdgv2LineasDesde);
-  cdgv2Fetch('GET', url).then(function(d){
-    if(!d.ok) return;
-    cdgv2LicenciaActual = d.meta;
-    // FIX (lun 1-jun-2026, v5.2.27): avanzar el cursor al máximo ts_modif
-    // recibido, NO al reloj local del navegador.
-    // Con reloj local: si una línea se inserta mientras el request está en
-    // vuelo, o hay skew cliente/servidor, el próximo poll pide
-    // ts_modif > horaLocal y se saltea esa línea (causa del bug "línea no
-    // aparecía hasta salir y volver").
-    // Con ts_modif máximo: el cursor siempre queda en el dato más reciente
-    // que el servidor confirmó, sin importar skew de reloj.
-    var maxTs = cdgv2LineasDesde; // preservar si no hay líneas nuevas
-    if(Array.isArray(d.lineas)) {
-      d.lineas.forEach(function(l){
-        var ts = l.ts_modif || l.ts_creacion;
-        if(ts && (!maxTs || ts > maxTs)) maxTs = ts;
-      });
-    }
-    cdgv2LineasDesde = maxTs;
-    // Aplicar líneas del delta
-    if(d.lineas && d.lineas.length){
-      d.lineas.forEach(function(l){
-        var idx = cdgv2Lineas.findIndex(function(x){ return x.id === l.id; });
-        if(l.eliminada){
-          if(idx >= 0) cdgv2Lineas.splice(idx, 1);
-        } else {
-          if(idx >= 0) cdgv2Lineas[idx] = l;
-          else cdgv2Lineas.push(l);
-        }
-      });
-      cdgv2Lineas.sort(function(a,b){ return a.ts_creacion < b.ts_creacion ? -1 : 1; });
-    }
-    renderCdgv2Header(d.meta);
-    renderCdgv2Lineas();
-    renderCdgv2Fotos(d.meta);
-    renderCdgv2Hallazgos();
-    var ts = document.getElementById('cdgv2-lic-poll-ts');
-    if(ts) ts.textContent = 'Actualizado '+new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'});
-  }).catch(function(){
-    var ts = document.getElementById('cdgv2-lic-poll-ts');
-    if(ts) ts.textContent = 'Sin conexión…';
-  });
-}
-
-function renderCdgv2Header(meta){
-  if(!meta) return;
-  document.getElementById('cdgv2-lic-titulo').textContent = meta.id + ' · ' + meta.tipo;
-  var finalizador = meta.finalizador || meta.creadoPor;
-  document.getElementById('cdgv2-lic-meta').textContent =
-    'Creado por ' + meta.creadoPor + ' · Finalizador: ' + finalizador +
-    ' · ' + (meta.totalLineas||0) + ' líneas';
-  var badge = document.getElementById('cdgv2-lic-estado-badge');
-  badge.textContent = meta.estado === 'activo' ? '● Activa' : '■ Cerrada';
-  badge.style.background = meta.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
-  badge.style.color = meta.estado === 'activo' ? '#2e7d32' : '#c62828';
-  // Botón finalizar: cualquier usuario activo en la licencia puede cerrar
-  var btnFin   = document.getElementById('btn-cdgv2-finalizar');
-  var msgFin   = document.getElementById('cdgv2-lic-msg');
-  var esActivo = currentUser && meta.usuarios && meta.usuarios[currentUser.name]
-                 && meta.usuarios[currentUser.name].estado === 'activo';
-  var esFin    = currentUser && currentUser.name === finalizador;
-  var esSup    = typeof isSup === 'function' && isSup();
-  var puedeFinalizarUI = meta.estado === 'activo' && (esActivo || esFin || esSup);
-  btnFin.style.display = puedeFinalizarUI ? '' : 'none';
-  // Texto claro para usuarios no autorizados cuando la licencia está activa
-  if(meta.estado === 'activo' && !puedeFinalizarUI && currentUser) {
-    msgFin.innerHTML = '<span style="color:#888;font-size:.8rem">Solo usuarios activos de la licencia pueden finalizarla. Uníte primero agregando una línea.</span>';
-  }
-  // Botón desbloquear: visible solo para supervisores cuando la licencia está cerrada.
-  // FIX (lun 1-jun-2026, v5.2.29): el botón está declarado en el HTML fijo (no dinámico).
-  // renderCdgv2Header solo controla display y registra el handler una vez.
-  var btnDesbloquear = document.getElementById('btn-cdgv2-desbloquear');
-  if(btnDesbloquear) {
-    btnDesbloquear.style.display = (meta.estado === 'cerrado' && esSup) ? '' : 'none';
-    // Registrar handler solo si no fue registrado antes (evitar duplicación)
-    if(!btnDesbloquear._handlerOk) {
-      btnDesbloquear._handlerOk = true;
-      btnDesbloquear.addEventListener('click', function(){
-        if(!currentUser || !cdgv2LicenciaActual) return;
-        if(!confirm('¿Desbloquear la licencia '+cdgv2LicenciaActual.id+'?\nEl equipo podrá volver a editarla.')) return;
-        var msgEl = document.getElementById('cdgv2-lic-msg');
-        msgEl.innerHTML = '<span style="color:#888">Desbloqueando…</span>';
-        cdgv2Fetch('POST', '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/accion',
-          { usuario: currentUser.name, tipo: 'desbloquear', supervisor: true })
-          .then(function(d){
-            if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-            msgEl.innerHTML = '<span style="color:#1e7e34">✓ Licencia desbloqueada.</span>';
-            cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
-            cdgv2CargarLista();
-          }).catch(function(){ msgEl.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
-      });
-    }
-  }
-  // Form agregar: ocultar si cerrada
-  document.getElementById('cdgv2-add-form').style.display = meta.estado === 'activo' ? '' : 'none';
-}
-
-// FIX (lun 1-jun-2026, v5.2.29): renderCdgv2Lineas reescrita en formato tabla.
-// Columnas: SKU | Descripción | Cant. | Costo Q | Evidencia | Usuario/Hora | Acción.
-// Los handlers de borrar y fotos son idénticos a la versión anterior — no se tocó
-// la lógica de permisos, compresión, PATCH ni polling.
-// TODO (Fase futura): integrar tablero CDG tipo Hamilton y carga WMS masiva aquí.
-function renderCdgv2Lineas(){
-  var el = document.getElementById('cdgv2-lineas-container');
-  if(!cdgv2Lineas.length){
-    el.innerHTML = '<div style="text-align:center;padding:1.5rem;color:#aaa;font-size:.85rem">Sin líneas aún. Agregá la primera.</div>';
-    return;
-  }
-  var cerrada = cdgv2LicenciaActual && cdgv2LicenciaActual.estado === 'cerrado';
-  // Título con contador
-  var h = '<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;'
-    +'text-transform:uppercase;letter-spacing:.3px">Líneas ('+cdgv2Lineas.length+')</div>'
-    +'<div class="tbl-wrap"><table>'
-    +'<thead><tr>'
-    +'<th style="min-width:70px">SKU</th>'
-    +'<th>Descripción</th>'
-    +'<th class="tc" style="min-width:60px">Cant.</th>'
-    +'<th class="tc" style="min-width:72px">Costo Q</th>'
-    +'<th class="tc" style="min-width:80px">Evidencia</th>'
-    +'<th style="min-width:110px">Usuario / Hora</th>'
-    +'<th class="tc" style="min-width:44px">Acción</th>'
-    +'</tr></thead><tbody>';
-
-  cdgv2Lineas.forEach(function(l){
-    var esMia      = currentUser && l.autor === currentUser.name;
-    var esSup      = typeof isSup === 'function' && isSup();
-    var puedeAct   = !cerrada && (esMia || esSup); // borrar: propio o sup
-    var costoFmt   = l.costo_unit != null
-      ? 'Q '+Math.round(Number(l.costo_unit)).toLocaleString('es-GT') : '—';
-    var tsShort    = l.ts_creacion ? l.ts_creacion.substring(11,16) : '';
-    var rowCls     = esMia ? '' : ' style="background:#f9f9f7"';
-    var fotosLinea = Array.isArray(l.fotos) ? l.fotos : [];
-
-    // Columna Evidencia: miniaturas + botón agregar (máx 3)
-    var fotosHtml = fotosLinea.map(function(url){
-      return '<a href="'+escH(url)+'" target="_blank">'
-        +'<img src="'+escH(url)+'" loading="lazy"'
-        +' style="width:36px;height:36px;object-fit:cover;border-radius:5px;border:1px solid #ddd;cursor:pointer;display:inline-block;vertical-align:middle">'
-        +'</a>';
-    }).join(' ');
-    var btnFoto = (!cerrada && esMia && fotosLinea.length < 3)
-      ? '<button class="cdgv2-add-foto-btn"'
-        +' data-linea-id="'+escH(l.id)+'"'
-        +' data-sku="'+escH(l.sku)+'"'
-        +' data-fotos-count="'+fotosLinea.length+'"'
-        +' style="background:#f5f5f3;border:1px dashed #bbb;border-radius:5px;'
-        +'padding:2px 5px;font-size:.72rem;cursor:pointer;color:#555;vertical-align:middle">'
-        +'📷+'+(3-fotosLinea.length)+'</button>'
-      : '';
-    var evidenciaCell = fotosHtml + (fotosLinea.length > 0 && btnFoto ? ' ' : '') + btnFoto;
-
-    // Columna Acción: borrar (solo si tiene permiso)
-    var btnDel = puedeAct
-      ? '<button class="cdgv2-del-btn" data-id="'+escH(l.id)+'"'
-        +' style="background:#fdecea;color:#c0392b;font-size:.72rem;'
-        +'padding:3px 7px;border-radius:5px;border:1px solid #f5c6cb;cursor:pointer"'
-        +' title="Eliminar línea">🗑</button>'
-      : '';
-
-    h += '<tr'+rowCls+'>'
-      +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(l.sku)+'</td>'
-      +'<td style="font-size:.82rem;color:#333">'+escH(l.descripcion||'—')+'</td>'
-      +'<td class="tc" style="font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</td>'
-      +'<td class="tc" style="font-size:.8rem;color:#555;white-space:nowrap">'+costoFmt+'</td>'
-      +'<td class="tc" style="white-space:nowrap">'+evidenciaCell+'</td>'
-      +'<td style="font-size:.74rem;color:#888;white-space:nowrap">'
-        +escH(l.autor)+'<br><span style="font-size:.7rem;color:#bbb">'+tsShort+'</span></td>'
-      +'<td class="tc">'+btnDel+'</td>'
-      +'</tr>';
-  });
-
-  h += '</tbody></table></div>';
-  el.innerHTML = h;
-
-  // Handler borrar línea — idéntico al anterior
-  el.querySelectorAll('.cdgv2-del-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      if(!confirm('¿Eliminás esta línea?')) return;
-      var lid   = btn.dataset.id;
-      var lmeta = cdgv2LicenciaActual;
-      cdgv2Fetch('DELETE', '/api/cdg/v2/'+(lmeta?lmeta.id:'?')+'/linea/'+lid,
-        { usuario: currentUser.name })
-        .then(function(d){
-          if(!d.ok) alert(d.error||'Error al eliminar');
-          else cdgv2PollearLicencia(lmeta.id, false);
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-
-  // Handler agregar foto por línea — idéntico al anterior
-  el.querySelectorAll('.cdgv2-add-foto-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      if(!currentUser || !cdgv2LicenciaActual) return;
-      var lineaId    = btn.dataset.lineaId;
-      var sku        = btn.dataset.sku;
-      var fotosCount = parseInt(btn.dataset.fotosCount)||0;
-      if(fotosCount >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-      var inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
-      inp.onchange = function(){
-        if(!inp.files[0]) return;
-        btn.textContent = 'Subiendo…'; btn.disabled = true;
-        window.compressImage(inp.files[0])
-          .then(function(blob){
-            return window.uploadFotoAndGetUrl(blob, 'cdg-sku',
-              cdgv2SafeRefId(cdgv2LicenciaActual.id), sku, null);
-          })
-          .then(function(fotoUrl){
-            var linea = cdgv2Lineas.find(function(x){ return x.id === lineaId; });
-            var fotasActuales = Array.isArray(linea && linea.fotos) ? linea.fotos.slice() : [];
-            fotasActuales.push(fotoUrl);
-            return cdgv2Fetch('PATCH',
-              '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/linea/'+lineaId,
-              { usuario: currentUser.name, fotos: fotasActuales });
-          })
-          .then(function(d){
-            if(!d.ok) alert(d.error||'Error al guardar foto');
-            cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
-          })
-          .catch(function(e){
-            alert('Error al subir foto: '+(e.message||e));
-            btn.textContent = '📷+'; btn.disabled = false;
-          });
-      };
-      inp.click();
-    });
-  });
-}
-
-function renderCdgv2Fotos(meta){
-  var grid = document.getElementById('cdgv2-foto-grid');
-  if(!grid || !meta) return;
-  var labels  = ['MARCHAMO','MANIFIESTO','PLACA FURGÓN','OTRO','OTRO 2'];
-  var fotos   = meta.fotosEncabezado || [];
-  var cerrada = meta.estado === 'cerrado';
-  // Reusar patrón idéntico a CDG v1 (renderCDGFotoGrid):
-  // input[type=file][accept="image/*"] sin capture forzado → el dispositivo
-  // ofrece cámara y galería según sus propias capacidades.
-  grid.innerHTML = labels.map(function(lbl, i){
-    var url = fotos[i] || '';
-    if(url) {
-      return '<div class="cdg-foto-slot has-photo" data-idx="'+i+'">'
-        +'<img src="'+escH(url)+'" alt="'+escH(lbl)+'">'
-        +'<div class="slot-label-overlay">'+escH(lbl)+'</div>'
-        // Borrar foto no implementado en esta versión (server no soporta reemplazar array)
-        +'</div>';
-    }
-    if(cerrada) {
-      return '<div class="cdg-foto-slot" data-idx="'+i+'">'
-        +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div></div>';
-    }
-    return '<div class="cdg-foto-slot" data-idx="'+i+'">'
-      +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div>'
-      +'<input type="file" accept="image/*" style="display:none" data-idx="'+i+'">'
-      +'</div>';
-  }).join('');
-
-  if(cerrada) return;
-
-  // Wiring igual a CDG v1: click en slot → abrir file picker
-  grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
-    var inp = slot.querySelector('input[type=file]');
-    if(!inp) return;
-    slot.addEventListener('click', function(e){
-      if(e.target.classList && e.target.classList.contains('slot-del')) return;
-      inp.click();
-    });
-    inp.addEventListener('change', function(){
-      if(!this.files[0]) return;
-      var idx = parseInt(this.dataset.idx);
-      slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-      // safeRefId: mismo patrón de sanitización que CDG v1 (sin espacios ni chars especiales)
-      var safeId = cdgv2SafeRefId(meta.id);
-      window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
-        .then(function(fotoUrl){
-          return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
-            { usuario: currentUser.name, fotos: [fotoUrl] });
-        })
-        .then(function(d){
-          if(!d.ok) alert(d.error||'Error al guardar foto');
-          cdgv2PollearLicencia(meta.id, false);
-        })
-        .catch(function(e){
-          alert('Error al subir foto: '+e.message);
-          cdgv2PollearLicencia(meta.id, false);
-        });
-    });
-  });
-
-  // Nota: borrar foto de encabezado no implementado en v1 de CDG v2
-  // (requiere que el server soporte reemplazar el array completo con lock).
-}
-
-/* ── HALLAZGOS CDG v2 ───────────────────────────────────────────── */
-// FIX (lun 1-jun-2026, v5.2.29): panel de hallazgos siempre visible en CDG v2.
-// Antes se ocultaba si no había hallazgos — ahora muestra el panel con botón
-// "Crear hallazgo" visible siempre, y la lista de hallazgos existentes debajo.
-// El filtro por licencia v2 no cambió: solo muestra hallazgos con
-// tipo==='CDG' && cdgVersion===2 && cdgV2Licencia===licId.
-// No mezcla con hallazgos globales de v1.
-// No toca export/historial existente.
-function renderCdgv2Hallazgos(){
-  var panel = document.getElementById('cdgv2-hallazgos-panel');
-  var list  = document.getElementById('cdgv2-hallazgos-list');
-  if(!panel || !list || !cdgv2LicenciaActual) return;
-  var licId  = cdgv2LicenciaActual.id;
-  var cerrada = cdgv2LicenciaActual.estado === 'cerrado';
-  // Filtrar hallazgos de esta licencia v2 — no contamina CDG v1
-  var hall2 = (typeof hallazgos !== 'undefined' ? hallazgos : []).filter(function(h){
-    return h.tipo === 'CDG' && h.cdgVersion === 2 && h.cdgV2Licencia === licId;
-  });
-  // Panel siempre visible (antes solo aparecía si había hallazgos)
-  panel.style.display = '';
-  if(!hall2.length){
-    list.innerHTML = '<div style="color:#aaa;font-size:.82rem;padding:.25rem 0">Sin hallazgos en esta licencia.</div>';
-  } else {
-    list.innerHTML = hall2.map(function(h){
-      return '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;'
-        +'padding:.5rem .75rem;margin-bottom:.4rem;font-size:.83rem">'
-        +'<span style="font-weight:600">'+escH(h.tipoHallazgo||'Hallazgo')+'</span>'
-        +' — '+escH(h.desc||'')
-        +'<span style="color:#888;margin-left:.5rem">'+escH(h.autor)+' · '+escH(h.ts)+'</span>'
-        +'</div>';
-    }).join('');
-  }
-}
-
-/* ── AGREGAR LÍNEA ──────────────────────────────────────────────── */
-// Autocomplete SKU desde sku_catalog
-var cdgv2SkuTimer = null;
-var cdgv2AddFotos = []; // fotos seleccionadas para la línea que se está creando
-// FIX: sanitizar ID de licencia para uso como refId en Storage.
-// El server valida refId con /^[A-Za-z0-9_\-./]+$/ — espacios no permitidos.
-// "U25-99999 PRUEBA 2" → "U25-99999_PRUEBA_2"
-function cdgv2SafeRefId(id) {
-  return String(id||'').replace(/[^A-Za-z0-9_\-\.]/g, '_');
-}
-
-// Handler para agregar foto ANTES de crear la línea
-document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
-  if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
-  if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-  var inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*'; 
-  inp.onchange = function(){
-    if(!inp.files[0]) return;
-    var btn = e.target;
-    btn.textContent = 'Subiendo…'; btn.disabled = true;
-    window.compressImage(inp.files[0])
-      .then(function(blob){
-        // Subir con un SKU temporal; se reemplazará en el PATCH si es necesario
-        var skuTemp = document.getElementById('cdgv2-add-sku').value.trim() || 'tmp';
-        var licId   = cdgv2LicenciaActual ? cdgv2SafeRefId(cdgv2LicenciaActual.id) : 'tmp';
-        return window.uploadFotoAndGetUrl(blob, 'cdg-sku', licId, skuTemp, null);
-      })
-      .then(function(url){
-        cdgv2AddFotos.push(url);
-        renderCdgv2AddFotosRow();
-      })
-      .catch(function(e2){
-        alert('Error al subir foto: '+(e2.message||e2));
-        btn.textContent = '📷 Agregar foto'; btn.disabled = false;
-      });
+// Build the full daily_state payload from current memory state
+function buildDailyStatePayload() {
+  return {
+    teorico:        state.teorico,
+    fisico:         state.fisico,
+    asignaciones:   state.asignaciones,
+    historial:      state.historial.slice(-100),
+    cdg:            state.cdg,
+    puertas:        state.puertas        || {},
+    hallazgos:      state.hallazgos      || [],
+    conteoMetadata: state.conteoMetadata || {},
+    alertasWMS:     state.alertasWMS     || {},  // FIX (server v15)
+    date:           state.date,
+    version:        state.version
   };
-  inp.click();
-});
-
-function renderCdgv2AddFotosRow(){
-  var row = document.getElementById('cdgv2-add-fotos-row');
-  if(!row) return;
-  var html = cdgv2AddFotos.map(function(url, i){
-    return '<div style="position:relative;display:inline-block">'
-      +'<img src="'+escH(url)+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #ccc">'
-      +'<button class="cdgv2-add-foto-del" data-idx="'+i+'"'
-        +' style="position:absolute;top:-4px;right:-4px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:.65rem;cursor:pointer;line-height:1">×</button>'
-      +'</div>';
-  }).join('');
-  if(cdgv2AddFotos.length < 3){
-    html += '<button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>';
-  }
-  row.innerHTML = html;
-  // Handler de borrar foto del formulario
-  row.querySelectorAll('.cdgv2-add-foto-del').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      cdgv2AddFotos.splice(parseInt(btn.dataset.idx), 1);
-      renderCdgv2AddFotosRow();
-    });
-  });
 }
 
-// Cerrar sugerencias al perder foco del SKU (con pequeño delay para permitir click en sugerencia)
-document.getElementById('cdgv2-add-sku').addEventListener('blur', function(){
-  setTimeout(cdgv2CerrarSugerencias, 150);
-});
-
-// FIX (lun 1-jun-2026, v5.2.28): estado de validación del SKU actual.
-// Previene guardar SKU nuevo con descripción del SKU anterior.
-// null = sin validar | 'pendiente' = lookup en vuelo | 'ok' = validado | 'no_encontrado' = no existe
-var cdgv2SkuValidado = null;
-var cdgv2SkuValidadoPara = ''; // qué SKU fue el que se validó
-
-function cdgv2ResetDescForm(){
-  // Llamar cada vez que cambia el SKU: limpia campos y marca como no validado
-  var descEl  = document.getElementById('cdgv2-add-desc');
-  var costoEl = document.getElementById('cdgv2-add-costo');
-  var autoEl  = document.getElementById('cdgv2-add-desc-auto');
-  descEl.value    = '';
-  descEl.readOnly = true;
-  descEl.style.background = '#f5f5f3';
-  descEl.placeholder = 'Buscando…';
-  costoEl.value   = '';
-  autoEl.textContent = '';
-  cdgv2SkuValidado    = null;
-  cdgv2SkuValidadoPara = '';
+function saveDailyState(label) {
+  return dbSet('daily_state', buildDailyStatePayload())
+    .catch(e => console.log((label||'save')+' error:', e.message));
+}
+// FIX (lun 1-jun-2026, v19): versión estricta que SÍ rechaza si dbSet falla.
+// saveDailyState() tiene .catch interno — withTimeout() recibe una promesa
+// resuelta aunque Supabase devuelva 500, y el endpoint respondería ok:true
+// sin haber persistido. saveDailyStateStrict() propaga el error para que el
+// caller pueda responder 500 al cliente en operaciones críticas (ej. cerrar v2).
+function saveDailyStateStrict(label) {
+  return dbSet('daily_state', buildDailyStatePayload());
 }
 
-// Timer separado para sugerencias (más rápido que el lookup exacto)
-var cdgv2SugerirTimer = null;
-
-function cdgv2CerrarSugerencias(){
-  var el = document.getElementById('cdgv2-sku-sugerencias');
-  if(el){ el.style.display = 'none'; el.innerHTML = ''; }
-}
-
-function cdgv2SeleccionarSugerencia(sku, descripcion, costo){
-  // Al elegir una sugerencia: llenar SKU, descripción bloqueada y costo
-  document.getElementById('cdgv2-add-sku').value = sku;
-  cdgv2CerrarSugerencias();
-  var descEl  = document.getElementById('cdgv2-add-desc');
-  var costoEl = document.getElementById('cdgv2-add-costo');
-  var autoEl  = document.getElementById('cdgv2-add-desc-auto');
-  descEl.value         = descripcion;
-  descEl.readOnly      = true;
-  descEl.style.background = '#f5f5f3';
-  descEl.placeholder   = '';
-  costoEl.value        = costo != null ? costo : '';
-  autoEl.innerHTML     = '<span style="color:#1e7e34">✓ '+escH(descripcion)+'</span>';
-  cdgv2SkuValidado     = 'ok';
-  cdgv2SkuValidadoPara = sku;
-  // Mover foco a cantidad para agilizar el flujo
-  var qtyEl = document.getElementById('cdgv2-add-qty');
-  if(qtyEl) qtyEl.focus();
-}
-
-document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
-  clearTimeout(cdgv2SkuTimer);
-  clearTimeout(cdgv2SugerirTimer);
-  var sku    = this.value.trim();
-  var autoEl = document.getElementById('cdgv2-add-desc-auto');
-  var descEl = document.getElementById('cdgv2-add-desc');
-  var costoEl = document.getElementById('cdgv2-add-costo');
-  if(!sku){
-    // SKU borrado: limpiar todo y volver a estado inicial
-    autoEl.textContent   = '';
-    descEl.value         = '';
-    descEl.readOnly      = true;
-    descEl.style.background = '#f5f5f3';
-    descEl.placeholder   = 'Ingresá el SKU primero';
-    costoEl.value        = '';
-    cdgv2SkuValidado     = null;
-    cdgv2SkuValidadoPara = '';
-    cdgv2CerrarSugerencias();
-    return;
-  }
-  // Sugerencias: disparar rápido (250ms) para dar feedback mientras escribe
-  cdgv2SugerirTimer = setTimeout(function(){
-    var q = document.getElementById('cdgv2-add-sku').value.trim();
-    if(q.length < 2) return;
-    fetch('/api/cdg/v2/sku-catalog/sugerir?q='+encodeURIComponent(q))
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        var actual = document.getElementById('cdgv2-add-sku').value.trim();
-        if(actual !== q) return; // usuario siguió escribiendo
-        var el = document.getElementById('cdgv2-sku-sugerencias');
-        if(!el) return;
-        if(!d.ok || !d.resultados || !d.resultados.length){ el.style.display='none'; return; }
-        el.innerHTML = d.resultados.map(function(r){
-          var costoTxt = r.costo != null ? ' · Q '+r.costo.toLocaleString('es-GT') : '';
-          return '<div class="cdgv2-sug-item" data-sku="'+escH(r.sku)+'" data-desc="'+escH(r.descripcion)+'" data-costo="'+(r.costo!=null?r.costo:'')+'"'
-            +' style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-            +'<strong>'+escH(r.sku)+'</strong> '+escH(r.descripcion)+'<span style="color:#888;font-size:.75rem">'+escH(costoTxt)+'</span>'
-            +'</div>';
-        }).join('');
-        el.style.display = '';
-        el.querySelectorAll('.cdgv2-sug-item').forEach(function(item){
-          item.addEventListener('mousedown', function(e){
-            // mousedown en lugar de click para disparar antes del blur del input
-            e.preventDefault();
-            var c = item.dataset.costo;
-            cdgv2SeleccionarSugerencia(item.dataset.sku, item.dataset.desc, c !== '' ? Number(c) : null);
-          });
-        });
-      }).catch(function(){});
-  }, 250);
-
-  // Cambió el SKU — limpiar descripción vieja inmediatamente mientras carga
-  cdgv2ResetDescForm();
-  cdgv2SkuValidado = 'pendiente';
-  cdgv2SkuValidadoPara = sku;
-
-  cdgv2SkuTimer = setTimeout(function(){
-    // Guardar el SKU por el que disparamos — si el usuario sigue escribiendo
-    // y llega otra respuesta, ignorarla (cierre sobre skuConsultado)
-    var skuConsultado = sku;
-    cdgv2Fetch('GET', '/api/cdg/v2/sku-catalog/buscar?sku='+encodeURIComponent(skuConsultado))
-      .then(function(d){
-        // Ignorar respuesta si el usuario ya cambió el SKU de nuevo
-        if(document.getElementById('cdgv2-add-sku').value.trim() !== skuConsultado) return;
-        if(d.encontrado){
-          // Descripción: siempre reemplazar (corrige el bug de descripción vieja)
-          autoEl.textContent   = '✓ '+d.descripcion;
-          descEl.value         = d.descripcion;
-          descEl.readOnly      = true;  // bloqueado — viene del catálogo
-          descEl.style.background = '#f5f5f3';
-          descEl.placeholder   = '';
-          // Costo: sku_catalog tiene prioridad. Mostrar entero redondeado (sin decimales largos)
-          if(d.costo && d.costo > 0) {
-            costoEl.value = Math.round(d.costo);
-          } else if(typeof costos !== 'undefined' && costos[skuConsultado]) {
-            costoEl.value = Math.round(Number(costos[skuConsultado]));
-          } else {
-            costoEl.value = '';
-          }
-          cdgv2SkuValidado     = 'ok';
-          cdgv2SkuValidadoPara = skuConsultado;
-        } else {
-          // SKU no encontrado en catálogo
-          autoEl.innerHTML     = '<span style="color:#c0392b">SKU no encontrado en catálogo</span>';
-          descEl.value         = '';
-          descEl.readOnly      = true;
-          descEl.style.background = '#fff3f3';
-          descEl.placeholder   = 'SKU no existe en catálogo';
-          costoEl.value        = '';
-          cdgv2SkuValidado     = 'no_encontrado';
-          cdgv2SkuValidadoPara = skuConsultado;
-        }
-      }).catch(function(){
-        if(document.getElementById('cdgv2-add-sku').value.trim() !== skuConsultado) return;
-        autoEl.textContent = '';
-        descEl.placeholder = 'Error al buscar — reintentá';
-        cdgv2SkuValidado   = null; // permite reintentar
-        // Fallback legacy solo si el endpoint falla
-        if(typeof costos !== 'undefined' && costos[skuConsultado]) {
-          costoEl.value = Math.round(Number(costos[skuConsultado]));
-        }
-      });
-  }, 400);
-});
-
-document.getElementById('btn-cdgv2-add-linea').addEventListener('click', function(){
-  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-  var meta = cdgv2LicenciaActual;
-  if(!meta){ alert('Abrí una licencia primero.'); return; }
-  if(meta.estado === 'cerrado'){ alert('La licencia está cerrada.'); return; }
-  var sku  = document.getElementById('cdgv2-add-sku').value.trim();
-  var desc = document.getElementById('cdgv2-add-desc').value.trim();
-  var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
-  var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');
-  var costoUnit = costoRaw ? parseFloat(costoRaw) : null;
-  var msg  = document.getElementById('cdgv2-add-msg');
-  if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
-  // Validar que el SKU fue consultado y existe antes de guardar
-  if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
-    msg.innerHTML = '<span style="color:#e67e22">Esperando validación del SKU…</span>'; return;
-  }
-  if(cdgv2SkuValidado === 'no_encontrado') {
-    msg.innerHTML = '<span style="color:#c0392b">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
-  }
-  if(cdgv2SkuValidado === null) {
-    msg.innerHTML = '<span style="color:#e67e22">Ingresá el SKU y esperá la validación.</span>'; return;
-  }
-  if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
-  msg.innerHTML = '<span style="color:#888">Guardando…</span>';
-  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
-    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
-    costoUnit: costoUnit,
-    fotos: cdgv2AddFotos.slice()
-  }).then(function(d){
-    if(!d.ok && !d.aviso){
-      msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
-    }
-    // Reset completo del form tras agregar exitosamente
-    msg.innerHTML = '';
-    document.getElementById('cdgv2-add-sku').value   = '';
-    document.getElementById('cdgv2-add-desc').value  = '';
-    document.getElementById('cdgv2-add-desc').placeholder = 'Ingresá el SKU primero';
-    document.getElementById('cdgv2-add-qty').value   = '';
-    document.getElementById('cdgv2-add-costo').value = '';
-    document.getElementById('cdgv2-add-desc-auto').textContent = '';
-    cdgv2SkuValidado     = null;
-    cdgv2SkuValidadoPara = '';
-    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
-    if(d.aviso) msg.innerHTML = '<span style="color:#e67e22">'+escH(d.aviso)+'</span>';
-    cdgv2PollearLicencia(meta.id, false);
-  }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
-});
-
-/* ── GUARDAR PROGRESO ───────────────────────────────────────────── */
-/* ── HALLAZGO DESDE CDG v2 ──────────────────────────────────────── */
-// Reutiliza el modal-cdg-hallazgo existente (mismo de CDG v1).
-// Al abrir, pre-carga el ID de la licencia como nombre del conteo.
-document.getElementById('btn-cdgv2-hallazgo').addEventListener('click', function(){
-  if(!cdgv2LicenciaActual){ alert('Abrí una licencia primero.'); return; }
-  var modal = document.getElementById('modal-cdg-hallazgo');
-  if(!modal){ alert('Modal de hallazgo no disponible.'); return; }
-  // Pre-llenar nombre del conteo con el ID de la licencia v2
-  var el = document.getElementById('cdg-hall-cont-name');
-  if(el) el.textContent = cdgv2LicenciaActual.id;
-  // Limpiar campos
-  var campos = ['cdg-hall-turno','cdg-hall-area','cdg-hall-tipo','cdg-hall-desc'];
-  campos.forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
-  var fechaInp = document.getElementById('cdg-hall-fecha');
-  if(fechaInp){ var n=new Date(); fechaInp.value=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0'); }
-  window._cdgHallFotoData = null;
-  window._editingCDGHallId = null;
-  var prev = document.getElementById('cdg-hall-foto-preview');
-  if(prev) prev.style.display='none';
-  modal.classList.add('open'); // FIX: mismo mecanismo que CDG v1 para que el close funcione
-  window._cdgV2LicenciaId = cdgv2LicenciaActual.id; // marcar para que el save lo sepa
-});
-
-// btn-cdgv2-hallazgo-panel: eliminado del DOM (quitado como duplicado).
-// Handler protegido con guarda por si queda alguna referencia residual.
-(function(){ var el = document.getElementById('btn-cdgv2-hallazgo-panel');
-  if(el) el.addEventListener('click', function(){ document.getElementById('btn-cdgv2-hallazgo').click(); });
-})();
-
-document.getElementById('btn-cdgv2-guardar-prog').addEventListener('click', function(){
-  if(!currentUser || !cdgv2LicenciaActual) return;
-  var meta = cdgv2LicenciaActual;
-  var msg  = document.getElementById('cdgv2-lic-msg');
-  msg.innerHTML = '<span style="color:#888">Guardando…</span>';
-  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/accion',
-    { usuario: currentUser.name, tipo: 'guardar_progreso' })
-    .then(function(d){
-      msg.innerHTML = d.ok
-        ? '<span style="color:#1e7e34">✓ Progreso registrado</span>'
-        : '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
-      setTimeout(function(){ msg.innerHTML=''; }, 3000);
-    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
-});
-
-/* ── FINALIZAR Y BLOQUEAR ───────────────────────────────────────── */
-document.getElementById('btn-cdgv2-finalizar').addEventListener('click', function(){
-  if(!currentUser || !cdgv2LicenciaActual) return;
-  var meta = cdgv2LicenciaActual;
-  if(!confirm('¿Cerrar definitivamente la licencia '+meta.id+'? Esta acción bloqueará la edición para todos los usuarios.')) return;
-  var msg = document.getElementById('cdgv2-lic-msg');
-  msg.innerHTML = '<span style="color:#888">Cerrando…</span>';
-  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/accion',
-    { usuario: currentUser.name, tipo: 'cerrar',
-      esSupervisor: typeof isSup === 'function' && isSup() })
-    .then(function(d){
-      if(!d.ok){ msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      msg.innerHTML = '<span style="color:#1e7e34">✓ Licencia cerrada y bloqueada.</span>';
-      clearInterval(cdgv2PollTimer);
-      cdgv2PollearLicencia(meta.id, false);
-      // FIX (lun 1-jun-2026, v5.2.28): marcar la lista para que al volver refleje el nuevo estado
-      cdgv2CargarLista();
-    }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
-});
-
-/* ── LIMPIAR TIMERS AL SALIR de páginas CDG v2 ──────────────────── */
-// FIX (lun 1-jun-2026, v5.2.28): cuando el usuario presiona Back desde
-// pg-cdg-v2-licencia, volver a pg-cdg-v2-lista con refresh inmediato
-// y polling activo. Antes: clearInterval limpiaba todo pero NO se
-// relanzaba el polling de lista, quedando la lista stale hasta salir
-// y volver a "CDG v2" desde el menú.
-// También: si se vuelve desde pg-cdg-v2-lista (que es raro pero posible),
-// solo limpiar.
-document.getElementById('btn-topbar-back').addEventListener('click', function(){
-  var activo = document.querySelector('.page.active');
-  if(!activo) return;
-  if(activo.id === 'pg-cdg-v2-licencia'){
-    // Limpiar estado de licencia
-    clearInterval(cdgv2PollTimer);
-    cdgv2LicenciaActual = null;
-    cdgv2Lineas = [];
-    cdgv2LineasDesde = null;
-    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
-    // Refrescar lista inmediatamente y reiniciar su polling
-    // (setTimeout 0 para que navBack ejecute primero y pg-cdg-v2-lista sea la activa)
-    clearInterval(cdgv2ListaTimer);
-    setTimeout(function(){
-      cdgv2CargarLista();
-      cdgv2ListaTimer = setInterval(cdgv2CargarLista, CDGV2_LISTA_POLL_MS);
-    }, 0);
-  } else if(activo.id === 'pg-cdg-v2-lista'){
-    clearInterval(cdgv2ListaTimer);
-    clearInterval(cdgv2PollTimer);
-    cdgv2LicenciaActual = null;
-    cdgv2Lineas = [];
-    cdgv2LineasDesde = null;
-    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
-  }
-}, true); // capture = true para ejecutar ANTES del navBack
-
-})();
-</script>
-
-<script>
-/* ══════════════════════════════════════════════════════════════════════════
-   BOD MODULE CLIENT — Bodega CDG / Armado de Tarimas — Fase 1
-   FIX (mar 2-jun-2026, v5.2.29): módulo completamente aislado en IIFE.
-   No toca: Hamilton, CDG, teorico, fisico, endpoints /api/cdg/*, /api/state.
-   Flag: BOD_ENABLED_CLIENT se inicializa en false y solo se activa
-         si el server responde enabled:true en /api/bod/status.
-════════════════════════════════════════════════════════════════════════════ */
-(function(){ 'use strict';
-
-// ── Constantes ──────────────────────────────────────────────────────────
-var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto','Alejandra Galeros','Sharon Hernández'];
-window.BODEGA_LIST = BODEGA_LIST; // exponer para el login en script anterior
-
-// RGIS_ACCESS_KEY se lee desde Supabase app_config.rgisKey (ver initGate/fetchAccessKey)
-window.RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5'];
-
-var BOD_ENABLED_CLIENT = false;
-window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
-
-// ── Estado interno (no toca variables globales del resto de la app) ──────
-var bodSesionActual  = null;  // objeto sesión abierta
-var bodLineas        = [];    // array de líneas de la sesión
-var bodPollTimer     = null;
-
-// ── Inicialización: consultar status al servidor ─────────────────────────
-function bodEnsureAudPoll(){
-  if(!bodAudPollTimer){
-    bodAudPollTimer = setInterval(bodAuditoriaAutoRefresh, 5000);
-  }
-}
-
-function bodInit() {
-  fetch('/api/bod/status')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      BOD_ENABLED_CLIENT = !!(d && d.enabled);
-      window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
-      if(BOD_ENABLED_CLIENT) {
-        // Mostrar botón bodega en menú si supervisor
-        bodMostrarMenuPrincipal();
-        // Mostrar opción auditoria a supervisores en pg-bod-menu
-        var audBtn   = document.getElementById('sm-bod-auditoria');
-        var barraBtn = document.getElementById('sm-bod-barra-sku');
-        if(audBtn   && typeof isSup === 'function' && isSup()) audBtn.style.display   = '';
-        if(barraBtn && typeof isSup === 'function' && isSup()) barraBtn.style.display = '';
-      }
-    })
-    .catch(function(){
-      BOD_ENABLED_CLIENT = false;
-      window.BOD_ENABLED_CLIENT = false;
-    });
-  bodEnsureAudPoll();
-}
-
-// ── Helpers de rol BOD ───────────────────────────────────────────────────
-function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
-function isBodAuditor() { return !!(window.currentUser && (window.currentUser.role === 'supervisor' || window.currentUser.role === 'contador')); }
-function bodTarimaPrefix(nombre) {
-  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E',
-              'Alejandra Galeros':'F', 'Sharon Hernández':'G' };
-  return map[nombre] || 'A';
-}
-
-// Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
-function bodMostrarMenuPrincipal() {
-  if(!BOD_ENABLED_CLIENT) {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
-  if(!window.currentUser) {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
-  var role = window.currentUser.role;
-  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
-  // Scope bodega: entra directo a pg-bod-menu, no necesita tarjeta en pg-menu
-  if(window.ACCESS_SCOPE === 'bodega') return;
-  // Agregar tarjeta mc-bodega si no existe
-  var mcBod = document.getElementById('mc-bodega');
-  if(!mcBod) {
-    var menuCards = document.querySelector('#pg-menu .menu-grid, #pg-menu .menu-cards, #pg-menu .main-menu');
-    if(!menuCards) return;
-    var card = document.createElement('div');
-    card.className = 'menu-card';
-    card.id = 'mc-bodega';
-    card.innerHTML = '<div class="mc-icon">📦</div><div class="mc-title">Bodega CDG</div><div class="mc-sub">Armado de Tarimas</div>';
-    card.addEventListener('click', function(){
-      if(typeof navTo === 'function') navTo('pg-bod-menu','📦 Bodega CDG');
-      bodAbrirMenu();
-    });
-    menuCards.appendChild(card);
-  }
-}
-
-// ── Menú bodega ──────────────────────────────────────────────────────────
-function bodAbrirMenu() {
-  var captBtn   = document.getElementById('sm-bod-captura');
-  var audBtn    = document.getElementById('sm-bod-auditoria');
-  var barraBtn  = document.getElementById('sm-bod-barra-sku');
-  // sm-bod-captura: bodega y supervisor
-  if(captBtn)   captBtn.style.display   = (isBodBodega() || (typeof isSup==='function' && isSup())) ? '' : 'none';
-  // sm-bod-auditoria: supervisor y contador
-  if(audBtn)    audBtn.style.display    = isBodAuditor() ? '' : 'none';
-  // sm-bod-barra-sku: solo supervisor
-  if(barraBtn)  barraBtn.style.display  = (typeof isSup==='function' && isSup()) ? '' : 'none';
-}
-
-// Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
-window.bodMostrarMenuPrincipal = function(){
-  BOD_ENABLED_CLIENT = !!window.BOD_ENABLED_CLIENT || BOD_ENABLED_CLIENT;
-  window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
-  return bodMostrarMenuPrincipal();
-};
-window.bodAbrirMenu = bodAbrirMenu;
-
-window.bodCleanup = function(){
-  bodSesionActual = null;
-  bodLineas = [];
-  bodAuditoriaData = null;
-  bodFurgonAsignaciones = [];
-  bodEnsureAudPoll();
-  bodAudLastRefresh = 0;
-  var mcBod = document.getElementById('mc-bodega');
-  if(mcBod) mcBod.remove();
-  var captBtn = document.getElementById('sm-bod-captura');
-  var audBtn  = document.getElementById('sm-bod-auditoria');
-  var barraBtn = document.getElementById('sm-bod-barra-sku');
-  if(captBtn)  captBtn.style.display  = 'none';
-  if(audBtn)   audBtn.style.display   = 'none';
-  if(barraBtn) barraBtn.style.display = 'none';
-  var audCont = document.getElementById('bod-aud-contenido');
-  if(audCont) audCont.innerHTML = '';
-};
-
-// ── Helper fetch bodega ───────────────────────────────────────────────────
-function bodFetch(method, path, body) {
-  var opts = { method: method, headers: {'Content-Type':'application/json'} };
-  if(body) opts.body = JSON.stringify(body);
-  return fetch(path, opts).then(function(r){ return r.json(); });
-}
-
-// ── Captura: abrir sesión ────────────────────────────────────────────────
-var btnAbrirSesion = document.getElementById('btn-bod-abrir-sesion');
-if(btnAbrirSesion) btnAbrirSesion.addEventListener('click', function(){
-  if(!BOD_ENABLED_CLIENT) { alert('Módulo bodega no habilitado.'); return; }
-  var lic   = (document.getElementById('bod-licencia').value||'').trim().toUpperCase();
-  var fecha = (document.getElementById('bod-fecha').value||'').trim();
-  var msgEl = document.getElementById('bod-sesion-msg');
-  if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>'; return; }
-  if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>'; return; }
-  var usuario = window.currentUser ? window.currentUser.name : '';
-  if(!usuario){ msgEl.innerHTML='<span style="color:#c0392b">Seleccioná tu nombre.</span>'; return; }
-  msgEl.innerHTML='<span style="color:#888">Abriendo sesión…</span>';
-  bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, fecha_trabajo:fecha, tipo:'recoleccion', creado_por:usuario })
-    .then(function(d){
-      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      bodSesionActual = d.sesion;
-      msgEl.innerHTML='<span style="color:#1e7e34">'+(d.created?'✅ Sesión creada':'✅ Sesión existente cargada')+'</span>';
-      document.getElementById('bod-sesion-info').textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
-      document.getElementById('bod-form-captura').style.display='';
-      bodPoblarTarimas();
-      document.getElementById('bod-barra').focus();
-      bodCargarLineas(d.sesion.id);
-    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-});
-
-// Llenar selector tarimas A1-A100
-function bodPoblarTarimas() {
-  var sel = document.getElementById('bod-sel-tarima');
-  if(!sel) return;  // reconstruir siempre para usar el prefijo correcto según usuario
-  sel.innerHTML = '';
-  var nombre  = window.currentUser ? window.currentUser.name : '';
-  // Supervisor: genera A01-E100 (todos los prefijos)
-  // Bodega: genera solo su prefijo propio (ej. Huvaldo → A01-A100)
-  var prefijos = (typeof isSup==='function' && isSup())
-    ? ['A','B','C','D','E']
-    : [bodTarimaPrefix(nombre)];
-  prefijos.forEach(function(letra){
-    for(var n=1; n<=100; n++){
-      var num = n < 10 ? '0'+n : ''+n;
-      var opt = document.createElement('option');
-      opt.value = letra+num; opt.textContent = letra+num;
-      sel.appendChild(opt);
-    }
-  });
-}
-
-// Barra → autofill SKU/desc
-var barraInput = document.getElementById('bod-barra');
-var barraTimer = null;
-if(barraInput) barraInput.addEventListener('input', function(){
-  clearTimeout(barraTimer);
-  var val = this.value.trim();
-  if(!val) return;
-  barraTimer = setTimeout(function(){
-    fetch('/api/bod/barra/'+encodeURIComponent(val))
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(d.encontrado){
-          var skuEl = document.getElementById('bod-sku');
-          var descEl = document.getElementById('bod-desc');
-          if(skuEl)  skuEl.value  = d.sku;
-          if(descEl) descEl.value = d.descripcion || '';
-          document.getElementById('bod-cantidad').focus();
-        }
-      }).catch(function(){});
-  }, 300);
-});
-
-// Listener keydown Enter: dispara lookup inmediato cuando el escáner envía Enter.
-// Evita esperar el debounce de 300ms que puede dejar la barra sin resolver.
-if(barraInput) barraInput.addEventListener('keydown', function(e){
-  if(e.key !== 'Enter') return;
-  e.preventDefault();
-  clearTimeout(barraTimer);
-  var val = this.value.trim();
-  if(!val) return;
-  fetch('/api/bod/barra/'+encodeURIComponent(val))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.encontrado){
-        var skuEl  = document.getElementById('bod-sku');
-        var descEl = document.getElementById('bod-desc');
-        if(skuEl)  skuEl.value  = d.sku;
-        if(descEl) descEl.value = d.descripcion || '';
-        document.getElementById('bod-cantidad').focus();
-      }
-    }).catch(function(){});
-});
-
-// Agregar línea
-var btnAgregar = document.getElementById('btn-bod-agregar');
-if(btnAgregar) btnAgregar.addEventListener('click', function(){
-  if(!bodSesionActual){ alert('Abrí una sesión primero.'); return; }
-  if(bodSesionActual.estado==='cerrada'){ alert('La sesión está cerrada.'); return; }
-  var tarima   = (document.getElementById('bod-sel-tarima').value||'').trim();
-  var barra    = (document.getElementById('bod-barra').value||'').trim()||null;
-  var sku      = (document.getElementById('bod-sku').value||'').trim();
-  var desc     = (document.getElementById('bod-desc').value||'').trim();
-  var cantidad = Number(document.getElementById('bod-cantidad').value||1);
-  var msgEl    = document.getElementById('bod-captura-msg');
-  var usuario  = window.currentUser ? window.currentUser.name : '';
-  if(!sku){ msgEl.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
-  if(!(cantidad>0)){ msgEl.innerHTML='<span style="color:#c0392b">Cantidad debe ser mayor a 0.</span>'; return; }
-  msgEl.innerHTML='<span style="color:#888">Guardando…</span>';
-  bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(bodSesionActual.id)+'/linea',
-    { tarima, barra, sku, descripcion:desc, cantidad, operador:usuario })
-    .then(function(d){
-      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      msgEl.innerHTML='';
-      // Reset campos rápidos
-      document.getElementById('bod-barra').value='';
-      document.getElementById('bod-sku').value='';
-      document.getElementById('bod-desc').value='';
-      document.getElementById('bod-cantidad').value='1';
-      document.getElementById('bod-barra').focus();
-      bodCargarLineas(bodSesionActual.id);
-    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-});
-
-// Cargar y renderizar las últimas 15 líneas
-function bodCargarLineas(sesId) {
-  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/lineas')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      bodLineas = Array.isArray(d.lineas) ? d.lineas : [];
-      bodRenderTabla();
-    }).catch(function(){});
-}
-
-function bodRenderTabla() {
-  var tbody = document.getElementById('bod-tabla-capturas');
-  if(!tbody) return;
-  var filtroSel = document.getElementById('bod-filtro-operador');
-  var filtroVal = filtroSel ? filtroSel.value : (isBodBodega() ? 'mis' : 'todos');
-  var usuario   = window.currentUser ? window.currentUser.name : '';
-  var esAudTab  = isBodAuditor();
-  var base = filtroVal === 'mis' && usuario
-    ? bodLineas.filter(function(l){ return l.operador === usuario; })
-    : bodLineas;
-  var ultimas = base.slice(-15).reverse();
-  if(!ultimas.length){ tbody.innerHTML='<tr><td colspan="8" class="empty">Sin registros aún.</td></tr>'; return; }
-  tbody.innerHTML = ultimas.map(function(l){
-    var hora = l.ts_captura ? l.ts_captura.substring(11,16) : '';
-    var puedeEliminar = (l.operador === usuario) || esAudTab;
-    var btnElim = puedeEliminar
-      ? '<button class="btn btn-xs bod-btn-del-linea" data-id="'+escH(l.id)+'"'
-        +' style="background:#fdecea;color:#c0392b;font-size:.7rem;padding:2px 6px">✕</button>'
-      : '';
-    return '<tr>'
-      +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
-      +'<td style="font-weight:600">'+escH(l.tarima||'')+'</td>'
-      +'<td style="font-size:.78rem;color:#888">'+escH(l.barra||'—')+'</td>'
-      +'<td style="font-weight:600">'+escH(l.sku||'')+'</td>'
-      +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
-      +'<td class="tc">'+Number(l.cantidad)+'</td>'
-      +'<td style="font-size:.75rem;color:#888">'+hora+'</td>'
-      +'<td class="tc">'+btnElim+'</td>'
-      +'</tr>';
-  }).join('');
-
-  // Wire botones eliminar
-  tbody.querySelectorAll('.bod-btn-del-linea').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var linId = btn.dataset.id;
-      var lin   = bodLineas.find(function(l){ return l.id === linId; });
-      if(!confirm('Eliminar línea: SKU '+(lin?lin.sku:linId)+'? Esta acción no se puede deshacer.')) return;
-      bodFetch('DELETE', '/api/bod/linea/'+encodeURIComponent(linId),
-        { usuario:usuario, supervisor:esAudTab })
-        .then(function(d){
-          if(!d.ok){ alert(d.error||'Error al eliminar'); return; }
-          var sesId = bodSesionActual ? bodSesionActual.id : '';
-          if(sesId) bodCargarLineas(sesId);
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-}
-
-// Wire filtro operador — re-renderiza la tabla al cambiar
-(function(){
-  var filtroEl = document.getElementById('bod-filtro-operador');
-  if(filtroEl) {
-    // Default: "Mis capturas" para bodega, "Todos" para supervisor/contador
-    filtroEl.addEventListener('change', function(){ bodRenderTabla(); });
-  }
-})();
-
-// ── Auditoría ─────────────────────────────────────────────────────────────
-// ── Estado auditoría ─────────────────────────────────────────────────────
-var bodAuditoriaData      = null;
-var bodAudVista           = 'tarimas';
-var bodFurgonAsignaciones = [];
-var bodAudPollTimer       = null;
-var bodAudLastRefresh     = 0;
-var bodFurgonDraft              = '';   // persiste el valor del campo furgón entre renders
-var bodManifestLoading          = false; // evita fetches simultáneos del manifiesto
-var bodTarimasSeleccionadasDraft = {};   // tarimas con checkbox marcado entre renders
-var bodUltimaInteraccionTarimas  = 0;   // timestamp de última interacción con checkbox
-var bodLicenciasAdicionales     = [];   // licencias bolsón adicionales para reportes
-var bodFurgonCierres           = {};   // furgon → datos de cierre (cache local)
-var _bodDatosWms   = [];   // cache datos WMS vs App para filtros sin re-fetch
-var _bodDatosFlujo = [];   // cache datos Flujo Bolsón para filtros sin re-fetch
-window._bodTeorico952 = window._bodTeorico952 || {}; // teórico 952 cargado/persistido
-window._bodPapelPersistido = window._bodPapelPersistido || {}; // papel de trabajo del server
-var _bodPapelGuardando = false; // prevenir doble POST
-var _bodDatosRem   = [];   // cache datos Remanentes para filtros sin re-fetch
-
-function bodAuditoriaActiva(){
-  var pg = document.getElementById('pg-bod-auditoria');
-  return !!(pg && pg.classList.contains('active'));
-}
-function bodAuditoriaHayInputActivo(){
-  var ae = document.activeElement;
-  if(!ae) return false;
-  // Proteger campo furgón y cualquier input/select/textarea dentro de bod-aud-vista
-  if(ae.id === 'bod-furgon-input') return true;
-  if(ae.classList && ae.classList.contains('bod-cant-audit-inp')) return true;
-  var vista = document.getElementById('bod-aud-vista');
-  if(vista && vista.contains(ae) && (ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA')) return true;
-  // Pausar si hay tarimas seleccionadas o interacción reciente con checkboxes
-  if(Object.keys(bodTarimasSeleccionadasDraft).length > 0) return true;
-  if(Date.now() - bodUltimaInteraccionTarimas < 15000) return true;
-  return false;
-}
-function bodAuditoriaAutoRefresh(){
-  if(!BOD_ENABLED_CLIENT) return;
-  if(!bodAuditoriaActiva()) return;
-  if(!bodAuditoriaData || !bodAuditoriaData.sesion || !bodAuditoriaData.sesion.id) return;
-  if(bodAuditoriaHayInputActivo()) return;
-  var now = Date.now();
-  if(now - bodAudLastRefresh < 4500) return;
-  bodAudLastRefresh = now;
-  var licEl2   = document.getElementById('bod-aud-licencia');
-  var desdeEl2 = document.getElementById('bod-aud-fecha-desde');
-  var msgEl2   = document.getElementById('bod-aud-msg');
-  var lic2   = (licEl2   ? licEl2.value   : '').trim().toUpperCase();
-  var fecha2 = (desdeEl2 ? desdeEl2.value : '').trim();
-  if(lic2 && fecha2 && msgEl2) bodCargarAuditoria(lic2, fecha2, msgEl2, true);
-}
-
-// Helper: ordenar tarimas natural (A01 < A02 < A10 < B01)
-// ── Helpers clave compuesta teórico 952: "licHija:SKU" ───────────────────
-function bodTeoKey(lic, sku) {
-  return (lic||'') + ':' + String(sku||'').trim().toUpperCase();
-}
-function bodSplitTeoKey(key) {
-  var sep = String(key||'').indexOf(':');
-  if(sep < 0) return { licencia_hija:'', sku: String(key).trim().toUpperCase() };
-  return { licencia_hija: key.slice(0, sep), sku: key.slice(sep + 1).trim().toUpperCase() };
-}
-
-// ── Helpers Papel de Trabajo — misma lógica en render y en guardado ──────────
-function bodGetTarimasPorLicHija(licHija) {
-  var result = {};
-  var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-  cargas.forEach(function(cg){
-    if(!licHija || (cg.licencia_hija||'') === licHija) {
-      (Array.isArray(cg.tarimas) ? cg.tarimas : []).forEach(function(t){ result[t] = true; });
-    }
-  });
-  return result;
-}
-
-function bodGetFisicoSkuPorLicHija(licHija) {
-  var result = {};
-  var tarimas = bodGetTarimasPorLicHija(licHija);
-  var lineas  = (bodAuditoriaData && bodAuditoriaData.lineas) || [];
-  lineas.forEach(function(l){
-    if(licHija && !tarimas[l.tarima||'']) return;
-    var sku = l.sku||'?';
-    if(!result[sku]) result[sku] = { desc: l.descripcion||'', cantidad: 0 };
-    result[sku].cantidad += Number(l.cantidad)||0;
-    if(!result[sku].desc && l.descripcion) result[sku].desc = l.descripcion;
-  });
-  return result;
-}
-
-function bodGetTeoricoSkuPorLicHija(licHija) {
-  var result = {};
-  var teoAll = window._bodTeorico952 || {};
-  Object.entries(teoAll).forEach(function(kv){
-    var parts = bodSplitTeoKey(kv[0]);
-    var val   = kv[1];
-    if(licHija) {
-      // Con filtro: usar clave específica, fallback a clave sin lic.hija ('')
-      if(parts.licencia_hija && parts.licencia_hija !== licHija) return;
-      // Preferir entrada específica (con lic.hija) sobre la global ('')
-      if(!result[parts.sku] || parts.licencia_hija === licHija) {
-        result[parts.sku] = val;
-      }
+// ── Load state from Supabase on startup ───────────────────────────────────
+async function loadState() {
+  try {
+    const saved = await dbGet('daily_state');
+    if(saved && saved.teorico) {
+      state = { ...state, ...saved };
+      console.log('State restored from Supabase ✓ date:', saved.date);
     } else {
-      // Sin filtro: agregar cantidades de todas las licencias por SKU
-      if(!result[parts.sku]) {
-        result[parts.sku] = { nombre: val.nombre||'', cantidad: 0,
-                              unidades:0, existencia:0, disponible:0 };
-      }
-      result[parts.sku].cantidad += Number(val.cantidad)||0;
-      if(!result[parts.sku].nombre && val.nombre) result[parts.sku].nombre = val.nombre;
+      console.log('No saved state found — starting fresh');
     }
-  });
-  return result;
-}
+    if(saved && saved.puertas)        state.puertas        = saved.puertas;
+    if(saved && saved.hallazgos)      state.hallazgos      = saved.hallazgos;
+    if(saved && saved.conteoMetadata) state.conteoMetadata = saved.conteoMetadata;
+    if(saved && saved.alertasWMS)     state.alertasWMS     = saved.alertasWMS;  // FIX (server v15)
 
-function bodSortTarimas(arr) {
-  return arr.slice().sort(function(a, b){
-    var ma = a.match(/^([A-Z]+)(\d+)$/i);
-    var mb = b.match(/^([A-Z]+)(\d+)$/i);
-    if(!ma || !mb) return a.localeCompare(b);
-    if(ma[1] !== mb[1]) return ma[1].localeCompare(mb[1]);
-    return Number(ma[2]) - Number(mb[2]);
-  });
-}
-
-// bodCargarListadoSesiones: muestra sesiones en un rango de fechas
-function bodCargarListadoSesiones(desde, hasta, lic, estado, msgEl) {
-  if(msgEl) msgEl.innerHTML='<span style="color:#888">Buscando sesiones…</span>';
-  var params = [];
-  if(desde)  params.push('fecha_desde='+encodeURIComponent(desde));
-  if(hasta)  params.push('fecha_hasta='+encodeURIComponent(hasta));
-  if(lic)    params.push('licencia_id='+encodeURIComponent(lic));
-  if(estado) params.push('estado='+encodeURIComponent(estado));
-  var url = '/api/bod/sesiones'+(params.length?'?'+params.join('&'):'');
-  bodFetch('GET', url)
-    .then(function(d){
-      if(!d || !d.ok) {
-        if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Error cargando sesiones.</span>';
-        return;
-      }
-      var sesiones = d.sesiones||[];
-      if(msgEl) msgEl.innerHTML='';
-      var el = document.getElementById('bod-aud-contenido');
-      if(!el) return;
-      if(!sesiones.length) {
-        el.innerHTML='<div style="color:#aaa;padding:1rem;font-size:.85rem">No se encontraron sesiones con esos filtros. Podés crear una nueva desde el menú principal.</div>';
-        return;
-      }
-      if(msgEl) msgEl.innerHTML='';
-      var rows = sesiones.map(function(s){
-        var estadoBadge = s.estado==='abierta'
-          ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px;font-size:.72rem">Abierta</span>'
-          : '<span style="background:#eee;color:#555;padding:1px 6px;border-radius:8px;font-size:.72rem">Cerrada</span>';
-        return '<tr>'
-          +'<td><button class="btn btn-xs bod-btn-cargar-sesion-listado" data-id="'+escH(s.id)+'"'
-          +' data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
-          +' style="font-size:.76rem;font-weight:600;color:#1565c0;background:none;border:none;cursor:pointer;text-decoration:underline">'+escH(s.licencia_id)+'</button></td>'
-          +'<td style="font-size:.76rem">'+escH(s.fecha_trabajo||'—')+'</td>'
-          +'<td style="font-size:.76rem;text-align:center">'+estadoBadge+'</td>'
-          +'<td style="font-size:.76rem;text-align:center">'+s.total_skus+'</td>'
-          +'<td style="font-size:.76rem;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
-          +'<td style="font-size:.76rem;color:#888">'+escH(s.creado_por||'—')+'</td>'
-          +'</tr>';
-      }).join('');
-      // Construir título dinámico según parámetros disponibles
-      var tituloSesiones = 'Sesiones';
-      if(lic && desde && hasta)        tituloSesiones = 'Sesiones de '+lic+' del '+desde+' al '+hasta;
-      else if(lic && desde)            tituloSesiones = 'Sesiones de '+lic+' desde '+desde;
-      else if(lic && hasta)            tituloSesiones = 'Sesiones de '+lic+' hasta '+hasta;
-      else if(lic)                     tituloSesiones = 'Sesiones de '+lic;
-      else if(desde && hasta)          tituloSesiones = 'Sesiones del '+desde+' al '+hasta;
-      else if(desde)                   tituloSesiones = 'Sesiones desde '+desde;
-      else if(hasta)                   tituloSesiones = 'Sesiones hasta '+hasta;
-      el.innerHTML='<div style="font-size:.82rem;color:#555;margin-bottom:.5rem">'+escH(tituloSesiones)+':</div>'
-        +'<div class="tbl-wrap"><table>'
-        +'<thead><tr><th>Licencia</th><th>Fecha</th><th class="tc">Estado</th>'
-        +'<th class="tc">SKUs</th><th class="tc">Audit./Total</th><th>Creado por</th></tr></thead>'
-        +'<tbody>'+rows+'</tbody></table></div>';
-      el.querySelectorAll('.bod-btn-cargar-sesion-listado').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          var fec   = btn.dataset.fecha;
-          var licElC   = document.getElementById('bod-aud-licencia');
-          var desdeElC = document.getElementById('bod-aud-fecha-desde');
-          if(licElC)   licElC.value   = lic;
-          if(desdeElC) desdeElC.value = fec;
-          var msgEl3 = document.getElementById('bod-aud-msg');
-          var mEl = msgEl3 || {innerHTML:''};
-          if(sesId) {
-            // Abrir por ID real — evita ambigüedad cuando hay varias sesiones lic+fecha
-            mEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
-              .then(function(r){ return r.json(); })
-              .then(function(d){
-                if(!d.ok || !d.sesion){
-                  mEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error al cargar sesión')+'</span>';
-                  return;
-                }
-                mEl.innerHTML = '';
-                // Construir objeto compatible con bodCargarAuditoria (ya trae sesion+lineas)
-                bodAuditoriaData = d;
-                bodAudLastRefresh = Date.now();
-                var furgSesId = d.sesion.id;
-                fetch('/api/bod/sesion/'+encodeURIComponent(furgSesId)+'/furgones')
-                  .then(function(r){ return r.json(); })
-                  .then(function(f){
-                    bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                    if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                    bodRenderAuditoria(d);
-                  });
-              })
-              .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
-          } else {
-            // Fallback: abrir por lic+fecha
-            bodCargarAuditoria(lic, fec, mEl, false);
-          }
-        });
-      });
-    })
-    .catch(function(){
-      if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
-    });
-}
-
-// Cargar sesión + furgones y renderizar
-function bodCargarAuditoria(lic, fecha, msgEl, silencioso) {
-  if(!silencioso) msgEl.innerHTML = '<span style="color:#888">Cargando…</span>';
-  fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok){ if(!silencioso) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-      if(!silencioso) msgEl.innerHTML = '';
-      bodAuditoriaData = d;
-      bodAudLastRefresh = Date.now();
-      var sesId = d.sesion && d.sesion.id;
-
-      // P3: refresh silencioso — no destruir la vista activa
-      if(silencioso && bodAudVista) {
-        if(!sesId) return;
-        return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-          .then(function(r){ return r.json(); })
-          .then(function(f){
-            bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-            if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-            // Solo refrescar vistas no destructivas
-            if(bodAudVista === 'tarimas' && !bodAuditoriaHayInputActivo()) bodRenderTarimasAuditoria();
-            else if(bodAudVista === 'detalle' && !bodAuditoriaHayInputActivo()) bodRenderDetalleAuditoria(d);
-            // manifiesto, wms-app, flujo, remanentes: dejar intactas en refresh silencioso
-          });
-      }
-
-      if(!sesId){ bodRenderAuditoria(d); return; }
-      return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-        .then(function(r){ return r.json(); })
-        .then(function(f){
-          bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-          if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-          bodRenderAuditoria(d);
-        });
-    })
-    .catch(function(){ if(!silencioso) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-}
-
-var btnCargarAud = document.getElementById('btn-bod-cargar-auditoria');
-if(btnCargarAud) btnCargarAud.addEventListener('click', function(){
-  if(!BOD_ENABLED_CLIENT) return;
-  var licEl    = document.getElementById('bod-aud-licencia');
-  var desdeEl  = document.getElementById('bod-aud-fecha-desde');
-  var hastaEl  = document.getElementById('bod-aud-fecha-hasta');
-  var estadoEl = document.getElementById('bod-aud-estado');
-  var lic     = (licEl   ? licEl.value   : '').trim().toUpperCase();
-  var desde   = (desdeEl ? desdeEl.value : '').trim();
-  var hasta   = (hastaEl ? hastaEl.value : '').trim();
-  var estado  = (estadoEl ? estadoEl.value : '').trim();
-  var msgEl   = document.getElementById('bod-aud-msg');
-  if(!desde && !hasta && !lic) {
-    msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una fecha o licencia.</span>'; return;
+    const savedCostos = await dbGet('costos_state');
+    if(savedCostos && savedCostos.costos) {
+      state.costos = savedCostos.costos;
+      console.log('Costos restored:', Object.keys(state.costos).length, 'SKUs');
+    }
+  } catch(e) {
+    console.log('Could not load from Supabase:', e.message);
   }
-  if(lic && desde && !hasta && !estado) {
-    // Licencia + fecha exacta (sin rango ni filtro de estado): sesión directa
-    bodCargarAuditoria(lic, desde, msgEl, false);
+}
+
+// ── Save state to Supabase (debounced) ───────────────────────────────────
+// Debounce a 1500ms para agrupar escrituras frecuentes (varios users tecleando
+// simultáneamente). Antes era 200ms — provocaba serializar el state completo
+// (~7MB) por cada tecleo, lo que dispara el uso de RAM en Render free (512MB)
+// y causa "heap out of memory". 1.5s aún es lo suficientemente rápido para no
+// perder datos en cierres normales (beforeunload del frontend hace flush).
+let saveTimer = null;
+function scheduleSave() {
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 1500);
+}
+
+function addHistorial(usuario, accion, detalle) {
+  state.historial.push({
+    hora: new Date().toLocaleTimeString('es'),
+    usuario,
+    accion,
+    detalle: detalle || ''
+  });
+  if(state.historial.length > 200) state.historial.shift();
+  state.version++;
+  scheduleSave();
+}
+
+function publicState() {
+  return {
+    teorico:        state.teorico,
+    fisico:         state.fisico,
+    asignaciones:   state.asignaciones,
+    historial:      state.historial.slice(-50),
+    cdg:            state.cdg,
+    puertas:        state.puertas        || {},
+    hallazgos:      state.hallazgos      || [],
+    conteoMetadata: state.conteoMetadata || {},
+    alertasWMS:     state.alertasWMS     || {},  // FIX (rev ChatGPT BLOQUEANTE v5.2.22): sin esto el cliente nunca recibía las alertas y el badge no aparecía
+    date:           state.date,
+    version:        state.version,
+    activeUsers:    getActiveUsers(),
+    locks:          getLocks()
+  };
+}
+
+// ── API ───────────────────────────────────────────────────────────────────
+// ── Middleware de log de bandwidth (>200ms o >50KB) — debe ir antes de rutas ─
+app.use(function(req, res, next){
+  var start = Date.now();
+  var _end = res.end.bind(res);
+  var bytes = 0;
+  res.end = function(chunk){
+    if(chunk) bytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+    _end.apply(res, arguments);
+    var ms = Date.now()-start;
+    if(ms>200 || bytes>51200){
+      console.log('[BW] '+req.method+' '+req.path+' '+res.statusCode+' '+bytes+'B '+ms+'ms');
+    }
+  };
+  next();
+});
+
+app.post('/api/heartbeat', (req, res) => {
+  const { name } = req.body;
+  if(name) activeUsers[name] = Date.now();
+  res.json({ active: getActiveUsers() });
+});
+
+app.get('/api/state', (req, res) => {
+  var stateTag = '"state-' + state.version + '"';
+  res.set('ETag', stateTag);
+  res.set('Cache-Control', 'no-cache');
+
+  // 304 por ?version (clientes nuevos) O por If-None-Match (clientes viejos/navegador)
+  var clientVersion = req.query.version !== undefined ? Number(req.query.version) : -1;
+  if((clientVersion >= 0 && clientVersion === state.version) ||
+     req.headers['if-none-match'] === stateTag) {
+    return res.status(304).end();
+  }
+  var ps = publicState();
+  try {
+    ps.stateSizeBytes = Buffer.byteLength(JSON.stringify(buildDailyStatePayload()), 'utf8');
+  } catch(e) { /* no bloquear el estado si falla el cálculo */ }
+  res.json(ps);
+});
+
+// Full state save (from client). Merges, never deletes existing data.
+app.post('/api/conteo', (req, res) => {
+  const { cont, data, usuario } = req.body;
+  if(!cont || !data) return res.status(400).json({ ok:false });
+  state.fisico[cont] = data;
+  addHistorial(usuario||'—', 'Conteo guardado', cont);
+  // Debounced — agrupa escrituras concurrentes. addHistorial ya llama scheduleSave,
+  // así que aquí no hace falta llamar de nuevo.
+  res.json({ ok:true, version:state.version });
+});
+
+app.post('/api/asign', (req, res) => {
+  const { cont, name, action, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false });
+  if(!state.asignaciones[cont]) state.asignaciones[cont] = [];
+  if(action === 'add') {
+    if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
+    addHistorial(usuario||'—', 'Asignación', cont+' → '+name);
+  } else if(action === 'remove') {
+    state.asignaciones[cont] = state.asignaciones[cont].filter(n => n !== name);
+    addHistorial(usuario||'—', 'Asignación removida', cont+' ← '+name);
+  } else if(action === 'self') {
+    if(!state.asignaciones[cont].includes(name)) state.asignaciones[cont].push(name);
+    addHistorial(name, 'Auto-asignación', cont);
+  }
+  state.version++;
+  // Debounced — addHistorial dentro de cada rama ya llamó scheduleSave.
+  res.json({ ok:true, version:state.version });
+});
+
+// ── CDG ───────────────────────────────────────────────────────────────────
+app.get('/api/cdg', (req, res) => res.json(state.cdg||{}));
+
+app.post('/api/cdg/save', (req, res) => {
+  const { contId, items, usuario, tipo, fotoGral, fotos } = req.body;
+  if(!contId) return res.status(400).json({ ok:false });
+  // FIX (sáb 30-may-2026, v19): validación defensiva de items.
+  // Si items llega null/undefined (payload mal formado, tablet vieja, etc.),
+  // rechazar antes de tocar el state. Sin esto, items:null pasa la guardia
+  // ((null||[]).length = 0) y luego state.cdg[contId].items = null rompe el conteo.
+  if(!Array.isArray(items)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'No se guardó: el conteo llegó sin lista de líneas válida. Recargá la pantalla e intentá de nuevo.'
+    });
+  }
+  if(!state.cdg[contId]) {
+    state.cdg[contId] = {
+      items:  [],
+      status: 'open',
+      autor:  usuario,
+      fecha:  new Date().toLocaleDateString('es')
+    };
+  }
+  // FIX (sáb 30-may-2026, v19): protección contra sobreescritura accidental.
+  // Escenario: Julio guarda 50 items. Otro usuario abre CDG con lista vacía y
+  // guarda 1 item → borra los 50 de Julio (Bug B1 CDG v1).
+  // Guardia: si ya hay items y el nuevo array tiene menos de la mitad Y el
+  // usuario no es el autor original → rechazar con 409 y mensaje claro.
+  // Nota: items ya validado como Array arriba, usar .length directo.
+  var existentes    = (state.cdg[contId].items || []).length;
+  var nuevos        = items.length;
+  var autorOriginal = state.cdg[contId].autor || state.cdg[contId].lastEditor;
+  if(existentes > 2 && nuevos < existentes / 2 && autorOriginal && autorOriginal !== usuario) {
+    console.log('CDG save BLOQUEADO: ' + usuario + ' intentó reducir ' + contId + ' de ' + existentes + ' a ' + nuevos + ' items (autor: ' + autorOriginal + ')');
+    return res.status(409).json({
+      ok:    false,
+      error: 'Este conteo ya tiene ' + existentes + ' líneas. Recargá el conteo antes de guardar. Para reemplazarlo usá desbloqueo de supervisor o CDG v2 multiusuario.'
+    });
+  }
+  state.cdg[contId].items      = items;
+  state.cdg[contId].lastEditor = usuario;
+  if(tipo)     state.cdg[contId].tipo     = tipo;
+  if(fotoGral) state.cdg[contId].fotoGral = fotoGral;
+  if(fotos)    state.cdg[contId].fotos    = fotos;
+  addHistorial(usuario, 'CDG guardado', contId);
+  state.version++;
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
+});
+
+// CDG Unlock (supervisor only — enforced client-side)
+app.post('/api/cdg/unlock', (req, res) => {
+  const { contId, usuario } = req.body;
+  if(!contId) return res.status(400).json({ ok:false });
+  if(state.cdg[contId]) {
+    state.cdg[contId].bloqueado       = false;
+    state.cdg[contId].desbloqueadoPor = usuario;
+    state.cdg[contId].desbloqueadoTs  = new Date().toLocaleString('es');
+  }
+  // Also unblock in teorico
+  if(state.teorico[contId]) state.teorico[contId].cdgBloqueado = false;
+  addHistorial(usuario||'—', 'Desbloqueó CDG', contId);
+  state.version++;
+  // Debounced — addHistorial ya disparó scheduleSave.
+  res.json({ ok:true });
+});
+
+
+// ── cdgEnriquecerItemsWMS ──────────────────────────────────────────────────
+// FIX (lun 1-jun-2026, server v20 rev): devuelve la UNIÓN de items CDG + SKUs WMS.
+//
+// CORRECCIÓN vs versión anterior (solo hacía map sobre items CDG):
+//   La versión anterior agregaba teoricoWMS a SKUs que CDG sí contó, pero dejaba
+//   invisible cualquier SKU que existiera en WMS y CDG no hubiera contado.
+//   Un SKU WMS con 50 unidades y qty CDG = 0 quedaba fuera de Hamilton → faltante
+//   invisible. Esto era bloqueante.
+//
+// Comportamiento correcto:
+//   1. SKU en CDG y WMS → qty = Validado CDG, teoricoWMS = cantidad WMS.
+//   2. SKU en CDG, NO en WMS → item sin cambios (sin teoricoWMS). Fallback legacy OK.
+//   3. SKU en WMS, NO en CDG → nueva línea: qty=0, teoricoWMS=cantidad WMS.
+//      Aparece en Hamilton: Teórico s/WMS=N, Validado CDG=0.
+//
+// DEUDA TÉCNICA (no resuelta en este fix):
+//   Los exports de Traslados CDG y updateSummaryCard usan item.qty para calcular
+//   diferencias. Con los nuevos items WMS-only (qty=0), el resumen Hamilton puede
+//   contar más faltantes de lo que muestra la tabla si no se actualiza esa lógica.
+//   Fix pendiente: ajustar buildReporte / exportCDG para leer teoricoWMS como base
+//   de diferencia cuando esCDG, igual que renderConteo ya hace.
+//
+// Si no hay WMS o falla la consulta → devuelve items sin cambios (backward-compatible).
+// Se usa en /api/cdg/finalizar (v1) y en el cierre CDG v2.
+async function cdgEnriquecerItemsWMS(licenciaId, items) {
+  if(!SUPABASE_URL || !SUPABASE_KEY || !licenciaId) return items || [];
+  try {
+    var wmsRows = await supabase('GET', 'cdg_wms', null,
+      '?licencia_id=eq.' + encodeURIComponent(cdgNormId(licenciaId)) + '&limit=1');
+    if(!Array.isArray(wmsRows) || !wmsRows.length) return items || []; // sin WMS — OK
+    var wmsRow = wmsRows[0];
+    var skusWMS = typeof wmsRow.skus === 'string' ? JSON.parse(wmsRow.skus) : (wmsRow.skus || []);
+
+    // Mapa WMS: SKU_NORMALIZADO → { cantidad, descripcion }
+    var wmsMap = {};
+    skusWMS.forEach(function(s){
+      var sk = String(s.sku || '').trim().toUpperCase();
+      if(!wmsMap[sk]) {
+        wmsMap[sk] = { cantidad: 0, descripcion: s.descripcion || '' };
+      }
+      wmsMap[sk].cantidad += (Number(s.cantidad) || 0);
+      // Preferir descripción no vacía si la anterior era vacía
+      if(!wmsMap[sk].descripcion && s.descripcion) wmsMap[sk].descripcion = s.descripcion;
+    });
+
+    // Conjunto de SKUs ya cubiertos por CDG (para detectar solo-WMS al final)
+    var itemsCdg = Array.isArray(items) ? items : [];
+    var skusCDG = {};
+    var resultado = itemsCdg.map(function(item) {
+      var sk = String(item.sku || '').trim().toUpperCase();
+      skusCDG[sk] = true;
+      if(wmsMap[sk] !== undefined) {
+        // SKU en CDG y en WMS → agregar teoricoWMS
+        return Object.assign({}, item, { teoricoWMS: wmsMap[sk].cantidad });
+      }
+      // SKU en CDG pero no en WMS → sin teoricoWMS (fallback legacy)
+      return item;
+    });
+
+    // SKUs en WMS que CDG NO contó → agregar como líneas con qty=0
+    var tipoEfectivo = 'CDG'; // valor por defecto; el llamador lo conoce pero no se pasa aquí
+    Object.keys(wmsMap).forEach(function(sk){
+      if(skusCDG[sk]) return; // ya cubierto por CDG
+      var entrada = wmsMap[sk];
+      resultado.push({
+        sku:         sk,
+        desc:        entrada.descripcion || '',
+        qty:         0,           // Validado CDG = 0 (no fue contado)
+        teoricoWMS:  entrada.cantidad,
+        raw:         { origen: tipoEfectivo, status: tipoEfectivo + ' Validado' },
+        _soloWMS:    true         // marca interna para diagnóstico; no afecta renderConteo
+      });
+    });
+
+    return resultado;
+  } catch(e) {
+    console.log('cdgEnriquecerItemsWMS warn (non-fatal):', e.message);
+    return items || []; // fallo silencioso — no romper el cierre CDG
+  }
+}
+
+app.post('/api/cdg/finalizar', async (req, res) => {
+  const { contId, items, usuario, traslado, tipo, fotoGral, fotos, bloqueado } = req.body;
+  if(!contId) return res.status(400).json({ ok:false });
+  state.cdg[contId] = {
+    items,
+    status:    'closed',
+    autor:     usuario,
+    fecha:     new Date().toLocaleDateString('es'),
+    traslado,
+    tipo:      tipo || 'CDG',
+    fotoGral:  fotoGral || null,
+    fotos:     fotos    || null,
+    bloqueado: bloqueado || false
+  };
+  const num = traslado || contId;
+  if(!state.teorico[num]) {
+    // FIX (sáb 23-may-2026): raw.origen y raw.status ahora reflejan el tipo real
+    // (KTM, CDG, Otros). Antes era hardcoded 'CDG' lo que hacía que el export
+    // de Traslados mostrara "CDG" para TODOS los contenedores finalizados desde
+    // esta sección, incluyendo los KTM. Erick + Ever confirmaron 23-may que KTM
+    // debe verse como categoría distinta en el export.
+    var tipoEfectivo = tipo || 'CDG';
+    // FIX (lun 1-jun-2026, server v20): enriquecer items con teoricoWMS desde cdg_wms.
+    // qty = Validado CDG (el conteo físico CDG). teoricoWMS = teórico del WMS si existe.
+    var itemsEnriquecidos = await cdgEnriquecerItemsWMS(num, items.map(i => ({
+      sku:  i.sku,
+      desc: i.desc,
+      qty:  i.qty,
+      raw:  { origen:tipoEfectivo, status:tipoEfectivo+' Validado', fecha:new Date().toLocaleDateString('es') }
+    })));
+    state.teorico[num] = {
+      type:         'Traslados',
+      fromCDG:      true,
+      cdgRef:       contId,
+      cdgValidado:  true,
+      cdgBloqueado: true,
+      cdgTipo:      tipoEfectivo,
+      items: itemsEnriquecidos
+    };
+    state.fisico[num] = null;
   } else {
-    // Rango, solo licencia, solo rango, o con estado: listado filtrado
-    bodCargarListadoSesiones(desde, hasta, lic, estado, msgEl);
+    state.teorico[num].cdgValidado = true;
+    // Asegurar que el tipo quede registrado también si el contenedor ya existía
+    // (defensivo, no rompe nada si ya estaba)
+    if(tipo && !state.teorico[num].cdgTipo) state.teorico[num].cdgTipo = tipo;
+  }
+  addHistorial(usuario, 'CDG finalizado → Traslado', contId+' → '+num);
+  state.version++;
+
+  // FIX CRÍTICO (mié 20-may-2026): mismo patrón que upload. Cancelar debounced
+  // pending y awaitear el save, responder con error si Supabase falla.
+  // FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'CDG final save'
+    );
+    console.log('CDG final save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('CDG final save FAILED:', saveErr.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'El CDG sí se procesó, pero NO quedó guardado. No cierres la app. Volvé a finalizarlo. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({ ok:true, traslado:num, version:state.version });
+});
+
+// ── Costos ────────────────────────────────────────────────────────────────
+app.post('/api/costos', upload.single('file'), (req, res) => {
+  try {
+    const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    const sn = wb.SheetNames.find(n =>
+      n.toLowerCase().includes('existencia') || n.toLowerCase().includes('sap')
+    ) || wb.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'', raw:false });
+    const hdr  = rows[0].map(h => norm(String(h)));
+    const cSku  = findCol(hdr, ['articulo','artículo','sku','codigo']);
+    const cCost = findCol(hdr, ['costo promedio','costo']);
+    if(cSku < 0 || cCost < 0) {
+      return res.status(400).json({ ok:false, error:'Columnas no encontradas' });
+    }
+    const raw = {};
+    rows.slice(1).forEach(row => {
+      const sku  = String(row[cSku]||'').trim();
+      const cost = parseFloat(String(row[cCost]).replace(',','.'));
+      if(sku && !isNaN(cost) && cost > 0) {
+        if(!raw[sku]) raw[sku] = { sum:0, n:0 };
+        raw[sku].sum += cost;
+        raw[sku].n++;
+      }
+    });
+    state.costos = {};
+    let cnt = 0;
+    Object.keys(raw).forEach(sku => {
+      state.costos[sku] = raw[sku].sum / raw[sku].n;
+      cnt++;
+    });
+    res.json({ ok:true, count:cnt });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
 
-// bodRenderAuditoria: header + tabs + vista activa
-function bodRenderAuditoria(data) {
-  var el = document.getElementById('bod-aud-contenido');
-  if(!el) return;
-  var sesion = (data && data.sesion) || {};
-  // Construir badge de licencias adicionales para mostrar en el header
-  var licAdicBadges = bodLicenciasAdicionales.length
-    ? ' <span style="font-size:.7rem;background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px">+'+bodLicenciasAdicionales.join(', +')+'</span>' : '';
-  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem">'
-    +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">'
-    +'<span>Sesión <strong>'+escH(sesion.id||'')+'</strong>'
-    +' · '+escH(sesion.licencia_id||'')+licAdicBadges+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
-    +'<button class="btn btn-xs" id="bod-btn-consolidado" style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;margin-left:auto">📥 Consolidado Excel</button>'
-    +'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-    +'<label style="font-size:.73rem;color:#888">+ Licencia bolsón:</label>'
-    +'<input type="text" id="bod-adic-licencia" class="field-inp" placeholder="Ej: U25-162300"'
-    +' style="width:130px;padding:3px 7px;font-size:.78rem;text-transform:uppercase">'
-    +'<button class="btn btn-xs" id="bod-btn-adic-add" style="background:#e3f2fd;color:#1565c0;font-size:.72rem">Añadir</button>'
-    +'<span id="bod-adic-lista" style="font-size:.73rem;color:#555"></span>'
-    +'<span id="bod-adic-msg" style="font-size:.73rem;margin-left:4px"></span>'
-    +'</div>'
-    +'</div>';
-  // Tabs
-  var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
-    +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
-    +'<button class="tab-pill'+(bodAudVista==='detalle'?' on':'')+'" id="bod-tab-detalle">📋 Detalle</button>'
-    +'<button class="tab-pill'+(bodAudVista==='wms-app'?' on':'')+'" id="bod-tab-wms-app">📂 Carga Teórico</button>'
-    +'<button class="tab-pill'+(bodAudVista==='flujo'?' on':'')+'" id="bod-tab-flujo">📝 Papel de Trabajo</button>'
-    +'<button class="tab-pill'+(bodAudVista==='manifiesto'?' on':'')+'" id="bod-tab-manifiesto">📦 Manifiesto</button>'
-    /* Remanentes oculto en Fase 1 — se re-habilita si se necesita */
-    +'</div>';
-  el.innerHTML = header + tabs + '<div id="bod-aud-vista"></div>';
-  // Wire botón consolidado
-  var btnCons = document.getElementById('bod-btn-consolidado');
-  if(btnCons) btnCons.addEventListener('click', bodDescargarConsolidado);
+// Save pre-processed costos from client
+// FIX CRÍTICO (mié 20-may-2026): dbSet ya no se hace sin await. Mismo bug
+// que upload teorico — si Render reiniciaba después de responder, los costos
+// se perdían silenciosamente.
+// FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+app.post('/api/costos-save', async (req, res) => {
+  const { costos: c } = req.body;
+  if(!c || Object.keys(c).length === 0) {
+    return res.json({ ok:false });
+  }
+  state.costos = c;
+  try {
+    await withTimeout(
+      dbSet('costos_state', { costos: c }),
+      15000,
+      'Costos save'
+    );
+    console.log('Costos save: persisted to Supabase ✓');
+    res.json({ ok:true, count: Object.keys(c).length });
+  } catch(e) {
+    console.log('Costos save FAILED:', e.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Los costos sí se procesaron, pero NO quedaron guardados. No cierres la app. Volvé a subirlos. (' + e.message + ')'
+    });
+  }
+});
 
-  // Wire añadir licencia adicional
-  var btnAdic = document.getElementById('bod-btn-adic-add');
-  var adicMsgEl = document.getElementById('bod-adic-msg');
-  if(btnAdic) btnAdic.addEventListener('click', function(){
-    var inp = document.getElementById('bod-adic-licencia');
-    var lic = (inp ? inp.value : '').trim().toUpperCase();
-    if(!lic){ if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">Ingresá una licencia.</span>'; return; }
-    var licBase = (bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.licencia_id) || '';
-    if(lic === licBase || bodLicenciasAdicionales.includes(lic)){
-      if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#e65100">Esa licencia ya está incluida.</span>'; return;
+app.get('/api/costos', (req, res) => res.json(state.costos));
+
+// ── Hallazgos ─────────────────────────────────────────────────────────────
+app.post('/api/hallazgo', (req, res) => {
+  const { hallazgo, action, id } = req.body;
+  if(!state.hallazgos) state.hallazgos = [];
+  if(action === 'add' && hallazgo) {
+    state.hallazgos.push(hallazgo);
+  } else if(action === 'edit' && id) {
+    const idx = state.hallazgos.findIndex(h => h.id === id);
+    if(idx >= 0) state.hallazgos[idx] = hallazgo;
+  } else if(action === 'delete' && id) {
+    // FIX (mié 20-may-2026 noche): soporte para eliminar hallazgos desde el
+    // botón "🗑 Eliminar" del cliente (visible solo para Erick Vela). Sin
+    // este case el server caería en el branch implícito y reescribiría
+    // Supabase reviviendo el hallazgo eliminado.
+    state.hallazgos = state.hallazgos.filter(h => h.id !== id);
+  }
+  state.version++;
+  // Debounced — hallazgos pueden venir en ráfaga
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
+});
+
+// ── Metadata (puerta, fechaIngreso, fechaFurgon, placas per container) ────
+app.post('/api/metadata', (req, res) => {
+  const { cont, metadata, puerta, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false });
+  if(!state.conteoMetadata) state.conteoMetadata = {};
+  if(!state.puertas)        state.puertas        = {};
+  if(metadata)             state.conteoMetadata[cont] = metadata;
+  if(puerta !== undefined) state.puertas[cont]        = puerta;
+  addHistorial(usuario||'—', 'Metadata actualizada', cont);
+  state.version++;
+  // Debounced — addHistorial ya disparó scheduleSave.
+  res.json({ ok:true, version:state.version });
+});
+
+// FIX (mar 19-may-2026): edición manual de fechaCarga del teorico.
+// Permite asignar/cambiar la fecha de trabajo de un contenedor desde la UI,
+// por ejemplo para contenedores históricos que no tenían fechaCarga.
+// Formato esperado: 'YYYY-MM-DD' o cadena vacía ('') para limpiar.
+//
+// FIX (rev Claude2): valida también la fecha calendáricamente, no solo
+// el formato. Rechaza overflows como 2026-02-30 o 9999-99-99.
+//
+// FIX (mié 20-may-2026, post-deploy v8.1): mismo patrón que upload teorico.
+// Antes el endpoint dependía de addHistorial → scheduleSave debounced (1.5s)
+// para persistir. Si Render reiniciaba en ese gap, la edición se perdía
+// silenciosamente. Ahora cancelamos pending, awaitamos con timeout, y
+// respondemos error si Supabase falla. Igual que /api/upload y CDG finalizar.
+app.post('/api/teorico/fecha-carga', async (req, res) => {
+  const { cont, fechaCarga, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.teorico[cont]) return res.status(404).json({ ok:false, error:'cont no existe' });
+  // Validar formato + fecha calendárica real
+  if(fechaCarga !== '' && fechaCarga !== null && fechaCarga !== undefined) {
+    var s = String(fechaCarga);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      return res.status(400).json({ ok:false, error:'formato debe ser YYYY-MM-DD o vacío' });
     }
-    var fecha = bodAuditoriaData && bodAuditoriaData.sesion ? (bodAuditoriaData.sesion.fecha_trabajo||'') : '';
-    if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#888">Verificando…</span>';
-    fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!d.ok || !d.sesion){
-          if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">No se encontró sesión para <strong>'+escH(lic)+'</strong> en esta fecha.</span>';
-          return;
-        }
-        bodLicenciasAdicionales.push(lic);
-        if(inp) inp.value = '';
-        if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#1e7e34">✅ '+escH(lic)+' agregada.</span>';
-        bodActualizarListaAdicionales();
-        // Refrescar vista activa si aplica
-        if(bodAudVista==='wms-app')    bodCargarWmsVsApp(licBase, bodAuditoriaData&&bodAuditoriaData.sesion?bodAuditoriaData.sesion.id:'');
-        else if(bodAudVista==='flujo') bodRenderFlujoBolson();
-        /* remanentes oculto en Fase 1 */
-      }).catch(function(){ if(adicMsgEl) adicMsgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+    // Validar fecha calendárica: el truco es comparar contra round-trip via Date.
+    // Si entró 2026-02-30, new Date lo normaliza a 2026-03-02, y la comparación falla.
+    var d = new Date(s + 'T00:00:00Z');
+    if(isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+      return res.status(400).json({ ok:false, error:'fecha calendárica inválida' });
+    }
+  }
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // Antes: si Supabase fallaba, el cambio quedaba aplicado en memoria pero NO
+  // en Supabase. El cliente veía "error" pero la fecha cambiada en pantalla
+  // hasta el próximo polling. Confusión + divergencia.
+  // Ahora: snapshot del valor previo + version + historial. En catch, restaura.
+  //
+  // FIX (rev cruzada Claude3 + ChatGPT, post-v18 borrador): addHistorial()
+  // muta state.version e state.historial internamente. Snapshot debe capturar
+  // AMBOS antes de cualquier mutación para revertir correctamente. Antes del
+  // fix, el rollback hacía state.version-- (revertía solo 1 de 2 incrementos)
+  // y dejaba el historial con la entrada del intento fallido.
+  var prevFechaCarga    = state.teorico[cont].fechaCarga;
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
+  state.teorico[cont].fechaCarga = fechaCarga || null;
+  addHistorial(usuario||'—', 'Cambió fecha de trabajo a ' + (fechaCarga || '(vacío)'), cont);
+  state.version++;
+
+  // Cancelar debounced pending y await el save para garantizar persistencia.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Fecha-carga save'
+    );
+    console.log('Fecha-carga save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Fecha-carga save FAILED:', saveErr.message);
+    // Rollback completo: restaurar valor + historial + version (revierte
+    // tanto el version++ del endpoint como el version++ interno de addHistorial)
+    state.teorico[cont].fechaCarga = prevFechaCarga;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
+    return res.status(500).json({
+      ok: false,
+      error: 'La fecha NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({ ok:true, version:state.version, fechaCarga: state.teorico[cont].fechaCarga });
+});
+
+// FIX (sáb 23-may-2026): endpoint para clasificación manual de contenedores.
+// Resuelve el bug B1 (server-memory desactualizada): antes el cliente llamaba
+// saveDirectToSupabase con PATCH directo, lo que persistía en Supabase pero
+// dejaba al server.js con state.teorico EN MEMORIA sin la clasificación.
+// En el siguiente GET /api/state el server respondía con su memoria vieja
+// y el cliente perdía visualmente la clasificación manual.
+//
+// Ahora el cliente llama este endpoint. El server:
+//   1. Actualiza state.teorico[cont].clasificacion + clasificacionManual
+//   2. Awaitea el save a Supabase con timeout 15s (mismo patrón que fecha-carga)
+//   3. Cancela debounced pending para que no pise el cambio
+//
+// Permite limpiar el override (clasificacion=null, manual=false) para
+// soportar la lógica "quitar manual si coincide con el automático" del UI.
+app.post('/api/clasificacion/set', async (req, res) => {
+  const { cont, clasificacion, manual, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.teorico[cont]) return res.status(404).json({ ok:false, error:'cont no existe' });
+
+  // Validar clasificación si viene con valor
+  if(clasificacion !== null && clasificacion !== undefined && clasificacion !== '') {
+    var allowed = ['Auditado', 'En Revisión', 'No auditado'];
+    if(!allowed.includes(String(clasificacion))) {
+      return res.status(400).json({ ok:false, error:'clasificacion inválida (debe ser ' + allowed.join('|') + ')' });
+    }
+  }
+
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // Snapshot ANTES de mutar (los 2 campos que vamos a tocar).
+  // FIX (rev cruzada post-v18 borrador): también capturamos version + historial
+  // porque addHistorial() los muta internamente. Sin esto, el rollback dejaba
+  // version en N+1 y el historial con la entrada del intento fallido.
+  var prevClasificacion       = state.teorico[cont].clasificacion;
+  var prevClasificacionManual = state.teorico[cont].clasificacionManual;
+  var prevTeniaClasif         = 'clasificacion'       in state.teorico[cont];
+  var prevTeniaManual         = 'clasificacionManual' in state.teorico[cont];
+  var snapshotVersion         = state.version;
+  var snapshotHistorial       = state.historial.slice();
+
+  // Si clasificacion es null/vacío Y manual no es true → quitar override
+  if((clasificacion === null || clasificacion === undefined || clasificacion === '') && !manual) {
+    delete state.teorico[cont].clasificacion;
+    delete state.teorico[cont].clasificacionManual;
+    addHistorial(usuario||'—', 'Quitó clasificación manual', cont);
+  } else {
+    state.teorico[cont].clasificacion = clasificacion;
+    state.teorico[cont].clasificacionManual = !!manual;
+    addHistorial(usuario||'—', 'Clasificación ' + (manual ? 'manual' : 'auto') + ': ' + clasificacion, cont);
+  }
+  state.version++;
+
+  // Cancelar debounced pending y await el save para garantizar persistencia.
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Clasificación save'
+    );
+    console.log('Clasificación save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Clasificación save FAILED:', saveErr.message);
+    // Rollback completo: restaurar campos previos (respetando si existían),
+    // historial y version (revierte tanto el version++ del endpoint como el
+    // version++ interno de addHistorial).
+    if(prevTeniaClasif) state.teorico[cont].clasificacion = prevClasificacion;
+    else delete state.teorico[cont].clasificacion;
+    if(prevTeniaManual) state.teorico[cont].clasificacionManual = prevClasificacionManual;
+    else delete state.teorico[cont].clasificacionManual;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
+    return res.status(500).json({
+      ok: false,
+      error: 'La clasificación NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({
+    ok: true,
+    version: state.version,
+    clasificacion: state.teorico[cont].clasificacion || null,
+    manual: !!state.teorico[cont].clasificacionManual
+  });
+});
+
+// FIX (sáb 23-may-2026): endpoint para borrar CDG.
+// Misma motivación que /api/clasificacion/set: evitar bug B1.
+// Cuando se borra un CDG, también se borra el contenedor Traslado que
+// se creó a partir de él (decisión Erick 23-may: limpio total).
+//
+// Identificación del Traslado asociado:
+//   - El CDG tiene state.cdg[contId].traslado (asignado en /api/cdg/finalizar)
+//   - El Traslado tiene state.teorico[num].cdgRef === contId
+//   - Borramos AMBOS con todas sus referencias (teorico + fisico + asignaciones)
+app.post('/api/cdg/delete', async (req, res) => {
+  const { contId, usuario } = req.body;
+  if(!contId) return res.status(400).json({ ok:false, error:'falta contId' });
+  if(!state.cdg[contId]) return res.status(404).json({ ok:false, error:'CDG no existe' });
+
+  // Identificar el contenedor Traslado asociado
+  var trasladoNum = state.cdg[contId].traslado || null;
+
+  // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+  // ANTES de borrar nada, snapshot completo de TODO lo que vamos a borrar.
+  // Esto incluye: el CDG, el Traslado (en sus 6 ubicaciones), y los traslados
+  // detectados por fallback (cdgRef). El rollback restaura cada referencia.
+  //
+  // FIX (rev cruzada post-v18 borrador): también capturamos version + historial
+  // porque addHistorial() los muta internamente. Sin esto, el rollback dejaba
+  // version en N+1 y el historial con la entrada del intento fallido.
+  var rollbackData = {
+    cdg:           state.cdg[contId],
+    trasladoPrimary: null,    // el del .traslado
+    trasladosFallback: []     // los detectados por cdgRef
+  };
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
+  // Helper para capturar TODO el sub-state asociado a un traslado.
+  // Usa 'in' para distinguir "propiedad existe con valor null" vs "propiedad ausente".
+  // Esto es importante para que el rollback restaure exactamente el estado previo.
+  function captureTraslado(num) {
+    return {
+      num:           num,
+      teorico:       state.teorico[num],
+      teniaFisico:        ('fisico' in state && num in state.fisico),
+      fisico:        (state.fisico && num in state.fisico) ? state.fisico[num] : null,
+      teniaAsign:         ('asignaciones' in state && num in state.asignaciones),
+      asignaciones:  (state.asignaciones && num in state.asignaciones) ? state.asignaciones[num] : null,
+      teniaPuerta:        (state.puertas && num in state.puertas),
+      puerta:        (state.puertas && num in state.puertas) ? state.puertas[num] : null,
+      teniaMetadata:      (state.conteoMetadata && num in state.conteoMetadata),
+      metadata:      (state.conteoMetadata && num in state.conteoMetadata) ? state.conteoMetadata[num] : null,
+      teniaAlerta:        (state.alertasWMS && num in state.alertasWMS),
+      alertaWMS:     (state.alertasWMS && num in state.alertasWMS) ? state.alertasWMS[num] : null
+    };
+  }
+
+  if(trasladoNum && state.teorico[trasladoNum] && state.teorico[trasladoNum].cdgRef === contId) {
+    rollbackData.trasladoPrimary = captureTraslado(trasladoNum);
+  }
+  Object.keys(state.teorico).forEach(function(k){
+    if(state.teorico[k] && state.teorico[k].cdgRef === contId
+       && k !== trasladoNum) {  // ya capturado arriba si match
+      rollbackData.trasladosFallback.push(captureTraslado(k));
+    }
   });
 
-  bodActualizarListaAdicionales();
-
-  // Wire tabs sin onclick — manejados todos por el forEach de _switchTab más abajo
-  var btnTarimas = document.getElementById('bod-tab-tarimas');
-  var btnDetalle = document.getElementById('bod-tab-detalle');
-  var btnManifiesto = document.getElementById('bod-tab-manifiesto');
-  function _switchTab(vista, fn) {
-    var ALL = ['bod-tab-tarimas','bod-tab-detalle','bod-tab-manifiesto','bod-tab-wms-app','bod-tab-flujo','bod-tab-remanentes'];
-    ALL.forEach(function(id){ var b=document.getElementById(id); if(b) b.classList.remove('on'); });
-    var active = document.getElementById('bod-tab-'+vista);
-    if(active) active.classList.add('on');
-    bodAudVista = vista;
-    fn();
+  // Helper de borrado seguro: usa 'in' en vez de truthy check. Antes:
+  //   if(state.fisico[trasladoNum]) delete state.fisico[trasladoNum]
+  // no borraba si el valor era null (común en contenedores no contados).
+  // Ahora: si la propiedad existe (aunque sea null), se borra.
+  function deleteTrasladoRefs(num) {
+    delete state.teorico[num];
+    if(state.fisico         && num in state.fisico)         delete state.fisico[num];
+    if(state.asignaciones   && num in state.asignaciones)   delete state.asignaciones[num];
+    if(state.puertas        && num in state.puertas)        delete state.puertas[num];
+    if(state.conteoMetadata && num in state.conteoMetadata) delete state.conteoMetadata[num];
+    if(state.alertasWMS     && num in state.alertasWMS)     delete state.alertasWMS[num];
   }
-  ['tarimas','detalle','manifiesto','wms-app','flujo'/* remanentes oculto en Fase 1 */].forEach(function(v){
-    var btn = document.getElementById('bod-tab-'+v);
-    if(btn) btn.addEventListener('click', function(){
-      _switchTab(v, function(){
-        if(v==='tarimas')    bodRenderTarimasAuditoria();
-        else if(v==='detalle')    bodRenderDetalleAuditoria(data);
-        else if(v==='manifiesto') bodRenderManifiestoAuditoria();
-        else if(v==='wms-app')   bodRenderWmsVsApp();
-        else if(v==='flujo')     bodRenderFlujoBolson();
-        /* remanentes oculto en Fase 1: else if(v==='remanentes') bodRenderRemanentes(); */
+
+  // Borrar el CDG
+  delete state.cdg[contId];
+
+  // Borrar el contenedor Traslado asociado si existe y vino del CDG
+  if(trasladoNum && rollbackData.trasladoPrimary) {
+    deleteTrasladoRefs(trasladoNum);
+  }
+
+  // Fallback: por si el traslado no estaba en .traslado pero sí en teorico con cdgRef
+  // (escenario raro pero defensivo)
+  rollbackData.trasladosFallback.forEach(function(t){
+    deleteTrasladoRefs(t.num);
+  });
+
+  addHistorial(usuario||'—', 'CDG eliminado (+ Traslado asociado)', contId + (trasladoNum ? ' → ' + trasladoNum : ''));
+  state.version++;
+
+  // Cancelar debounced pending y await el save
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'CDG delete save'
+    );
+    console.log('CDG delete save: persisted to Supabase ✓ (CDG ' + contId + ', Traslado ' + (trasladoNum||'—') + ')');
+  } catch(saveErr) {
+    console.log('CDG delete save FAILED:', saveErr.message);
+    // Rollback completo: CDG, traslado primario, traslados fallback, historial, version.
+    // Usa los flags tenia* para distinguir "propiedad existía con valor null/falsy"
+    // vs "propiedad no existía" y restaurar el estado EXACTO previo.
+    state.cdg[contId] = rollbackData.cdg;
+    function restoreTraslado(t) {
+      state.teorico[t.num] = t.teorico;
+      if(t.teniaFisico   && state.fisico)         state.fisico[t.num]         = t.fisico;
+      if(t.teniaAsign    && state.asignaciones)   state.asignaciones[t.num]   = t.asignaciones;
+      if(t.teniaPuerta   && state.puertas)        state.puertas[t.num]        = t.puerta;
+      if(t.teniaMetadata && state.conteoMetadata) state.conteoMetadata[t.num] = t.metadata;
+      if(t.teniaAlerta   && state.alertasWMS)     state.alertasWMS[t.num]     = t.alertaWMS;
+    }
+    if(rollbackData.trasladoPrimary) restoreTraslado(rollbackData.trasladoPrimary);
+    rollbackData.trasladosFallback.forEach(restoreTraslado);
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
+    return res.status(500).json({
+      ok: false,
+      error: 'El CDG NO se borró (memoria restaurada). Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({ ok:true, version:state.version, deletedCDG:contId, deletedTraslado:trasladoNum });
+});
+
+// FIX (dom 24-may-2026 PM, server v15): endpoint para "Sincronizar con WMS".
+// Cuando un contenedor está congelado (tiene físico contado) y el WMS tiene
+// cambios pendientes en state.alertasWMS, el supervisor puede aplicar esos
+// cambios manualmente con este endpoint.
+//
+// Comportamiento:
+//   1. Validar que la alerta existe para el contenedor
+//   2. Aplicar los items del WMS al teorico (sobreescribe items)
+//   3. Preservar fechaCarga, clasificacion, etc. (Object.assign)
+//   4. Eliminar la alerta del state.alertasWMS
+//   5. Registrar en historial
+//
+// Permisos: solo supervisores (validado en el cliente; el server confía
+// pero loggea quién hizo la sincronización).
+app.post('/api/wms/sincronizar', async (req, res) => {
+  const { cont, usuario } = req.body;
+  if(!cont) return res.status(400).json({ ok:false, error:'falta cont' });
+  if(!state.alertasWMS || !state.alertasWMS[cont]) {
+    return res.status(404).json({ ok:false, error:'no hay alerta WMS pendiente para este contenedor' });
+  }
+  if(!state.teorico[cont]) {
+    return res.status(404).json({ ok:false, error:'contenedor no existe en teorico' });
+  }
+
+  var alerta = state.alertasWMS[cont];
+  if(!Array.isArray(alerta.itemsWMS) || alerta.itemsWMS.length === 0) {
+    return res.status(400).json({ ok:false, error:'la alerta no tiene snapshot de items del WMS' });
+  }
+
+  // FIX (rev Claude2+ChatGPT BLOQUEANTE v5.2.22): re-mapear el fisico por SKU
+  // antes de aplicar los items nuevos. Esto evita el riesgo de desalineamiento
+  // que detectaron ambos validadores: el fisico se alinea por índice posicional
+  // con teorico.items[idx]. Si el WMS elimina/reordena líneas, los conteos
+  // físicos quedan apuntando a SKUs equivocados.
+  //
+  // Estrategia: indexar el fisico viejo por el SKU que tenía, y reconstruir
+  // un fisico nuevo donde cada conteo se asigna al índice del MISMO SKU en
+  // la lista nueva. Los SKUs eliminados del WMS pierden su conteo (decisión
+  // operativa: el WMS dice "esa línea ya no existe"). Los SKUs agregados
+  // quedan con físico null (sin contar todavía, correcto).
+  var prev = state.teorico[cont];
+  var prevItems = Array.isArray(prev.items) ? prev.items : [];
+  var prevFisico = Array.isArray(state.fisico[cont]) ? state.fisico[cont] : null;
+  var newFisico = null;
+  if(prevFisico) {
+    // Indexar fisico viejo por SKU
+    var fisicoBySku = {};
+    prevItems.forEach(function(it, i){
+      if(it && it.sku && prevFisico[i]) {
+        fisicoBySku[it.sku] = prevFisico[i];
+      }
+    });
+    // Construir nuevo fisico alineado con los items del WMS
+    newFisico = alerta.itemsWMS.map(function(it){
+      return (it && it.sku && fisicoBySku[it.sku]) ? fisicoBySku[it.sku] : null;
+    });
+  }
+
+  // Aplicar items del WMS, preservar resto de propiedades (auditoría)
+  state.teorico[cont] = Object.assign({}, prev, {
+    items: alerta.itemsWMS,
+    meta:  alerta.metaWMS || prev.meta || {}   // FIX (server v16): aplicar meta del WMS al sincronizar
+  });
+  // Aplicar fisico re-mapeado (solo si había fisico antes)
+  if(newFisico) state.fisico[cont] = newFisico;
+
+  // Contar cuántos conteos se mantuvieron / perdieron por SKUs eliminados
+  var conteosMantenidos = 0, conteosPerdidos = 0;
+  if(prevFisico && newFisico) {
+    prevFisico.forEach(function(f){
+      if(f && f.fisico !== undefined && f.fisico !== null && f.fisico !== '') {
+        // Estaba contado antes. Ver si quedó en el nuevo.
+        var sigueEnNuevo = newFisico.some(function(nf){
+          return nf === f;
+        });
+        if(sigueEnNuevo) conteosMantenidos++;
+        else conteosPerdidos++;
+      }
+    });
+  }
+
+  // Snapshot version + historial ANTES de mutar (addHistorial los mutará).
+  // FIX (rev cruzada post-v18 borrador): el patrón original solo hacía version--
+  // que revertía solo 1 de 2 incrementos y dejaba historial con la entrada
+  // del intento fallido. Mismo fix que aplicamos a los otros 4 endpoints v18.
+  var snapshotVersion   = state.version;
+  var snapshotHistorial = state.historial.slice();
+
+  // Eliminar la alerta
+  delete state.alertasWMS[cont];
+
+  addHistorial(usuario||'—', 'Sincronizó con WMS: ' + alerta.totalDiffs + ' cambios aplicados (conteos: ' + conteosMantenidos + ' mantenidos, ' + conteosPerdidos + ' perdidos)', cont);
+  state.version++;
+
+  // Persistir await (mismo patrón que clasificacion/set)
+  if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    await withTimeout(
+      dbSet('daily_state', buildDailyStatePayload()),
+      15000,
+      'Sincronizar WMS save'
+    );
+    console.log('Sincronizar WMS save: persisted to Supabase ✓');
+  } catch(saveErr) {
+    console.log('Sincronizar WMS save FAILED:', saveErr.message);
+    // Rollback completo: items + fisico + alerta + historial + version.
+    state.teorico[cont] = prev;
+    if(prevFisico) state.fisico[cont] = prevFisico;
+    state.alertasWMS[cont] = alerta;
+    state.historial = snapshotHistorial;
+    state.version   = snapshotVersion;
+    return res.status(500).json({
+      ok: false,
+      error: 'La sincronización NO quedó guardada. Reintentá. (' + saveErr.message + ')'
+    });
+  }
+
+  res.json({
+    ok: true,
+    version: state.version,
+    cont: cont,
+    itemsAplicados: alerta.itemsWMS.length,
+    cambiosAplicados: alerta.totalDiffs,
+    conteosMantenidos: conteosMantenidos,
+    conteosPerdidos:   conteosPerdidos
+  });
+});
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+// ── Field locking ─────────────────────────────────────────────────────────
+app.post('/api/lock', (req, res) => {
+  cleanLocks();
+  const { cont, idx, user } = req.body;
+  const key = cont + ':' + idx;
+  const existing = fieldLocks[key];
+  if(existing && existing.user !== user && existing.expires > Date.now()) {
+    return res.json({ ok:false, lockedBy: existing.user, since: existing.since });
+  }
+  fieldLocks[key] = { user, since: Date.now(), expires: Date.now() + LOCK_TIMEOUT };
+  state.version++;
+  res.json({ ok:true });
+});
+
+app.post('/api/unlock', (req, res) => {
+  const { cont, idx, user } = req.body;
+  const key = cont + ':' + idx;
+  if(fieldLocks[key] && fieldLocks[key].user === user) delete fieldLocks[key];
+  state.version++;
+  res.json({ ok:true });
+});
+
+// Auto-save single field
+app.post('/api/conteo/field', (req, res) => {
+  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario } = req.body;
+  if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
+  if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
+  const prev = state.fisico[cont][idx] || {};
+  // Preserve null/undefined distinction — only fall back to prev when the
+  // new value wasn't sent (undefined). Don't coerce null to 0.
+  state.fisico[cont][idx] = {
+    fisico:    fisico    !== undefined ? fisico    : prev.fisico,
+    daniado:   daniado   !== undefined ? daniado   : prev.daniado,
+    cobertura: cobertura !== undefined ? cobertura : (prev.cobertura || 'En revisión'),
+    // FIX (mar 19-may-2026): el cliente nuevo ya no envía calcExpr (campo
+    // Cálculo eliminado de la UI). Pero clientes con caché viejo todavía
+    // pueden mandar calcExpr: ''. Tratamos null/undefined/'' como "no enviar"
+    // y preservamos siempre el histórico previo. Solo aceptamos valores
+    // no-vacíos (compatibilidad con clientes legacy que aún calculan).
+    calcExpr:  (calcExpr != null && calcExpr !== '') ? calcExpr : ((prev && prev.calcExpr) || ''),
+    quien:     usuario,
+    ts:        new Date().toLocaleString('es'),
+    lastUser:  usuario,
+    lastAt:    Date.now()
+  };
+  state.version++;
+  // Debounced (1.5s) — agrupa multiples tecleos seguidos del mismo o varios
+  // usuarios. Antes hacía saveDailyState() sync por cada keystroke, lo que
+  // serializaba el state completo (~7MB) en cada request y agotaba el heap.
+  scheduleSave();
+  res.json({ ok:true, version:state.version });
+});
+
+// ── Upload teórico ────────────────────────────────────────────────────────
+// FIX CRÍTICO (mié 20-may-2026): el endpoint era sync con respuesta antes
+// del save real. Eso causó pérdida silenciosa de contenedores ayer (HP26-0357,
+// HP26-0591 entre otros). Dos problemas que se combinaban:
+//   1) saveDailyState() retornaba Promesa pero NO se awaiteaba. La respuesta
+//      {ok:true} se enviaba antes que Supabase confirmara. Si Render
+//      reiniciaba en esos ms, el upload se perdía.
+//   2) Si había un scheduleSave debounced pendiente de otro usuario, los
+//      dos saves competían en paralelo. El debounced podía ganar y pisar
+//      el upload con un state pre-upload en memoria.
+// Fix: (a) cancelar saveTimer pendiente antes del upload, (b) hacer await
+// del save crítico, (c) responder con error si el save falla.
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  try {
+    const wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    const usuario = req.body.usuario || '—';
+
+    // FIX (mié 28-may-2026, server v18): rollback ante fallo de persistencia.
+    // mergeSheet muta state.teorico, state.fisico y state.alertasWMS reemplazando
+    // entradas por contenedor. Snapshot somero de esos 3 objetos preserva las
+    // referencias previas; al revertir, los contenedores modificados vuelven a
+    // apuntar a sus objetos originales (los no tocados nunca cambiaron).
+    // Costo: tres spreads superficiales (~ms), no deep clone.
+    //
+    // LIMITACIÓN CONOCIDA del snapshot somero (deuda en backlog):
+    // mergeSheet también muta PROPIEDADES de objetos existentes — concretamente
+    // hace `state.teorico[cont].cdgValidado = true` para contenedores que ya
+    // tienen `fromCDG=true` (línea ~1352). Como el snapshot guarda referencias,
+    // esa mutación NO se revierte al hacer rollback: el contenedor preserva su
+    // objeto original, pero ese objeto ahora tiene `cdgValidado=true` adentro.
+    // Severidad baja:
+    //   - el flag no destruye datos (solo marca como validado un contenedor
+    //     que ya tenía fromCDG=true; semánticamente coherente)
+    //   - el próximo upload exitoso lo normaliza igual
+    //   - el operario no percibe nada distinto en la UI
+    // Fix completo en backlog: deep clone selectivo de los fromCDG, o refactor
+    // de mergeSheet para que no mute propiedades (que devuelva los cambios a
+    // aplicar y el caller los aplique). Hoy NO se hace por costo/riesgo vs
+    // beneficio marginal.
+    var snapshotTeorico    = Object.assign({}, state.teorico);
+    var snapshotFisico     = Object.assign({}, state.fisico);
+    var snapshotAlertasWMS = Object.assign({}, state.alertasWMS || {});
+    var snapshotHistorial  = state.historial.slice();
+    var snapshotVersion    = state.version;
+
+    let loaded = [];
+    wb.SheetNames.forEach(sn => {
+      const nl = sn.toLowerCase();
+      const type = nl.includes('traslado') ? 'Traslados'
+                 : nl.includes('embarque') ? 'Embarques'
+                 : null;
+      if(!type) return;
+      const rows  = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'', raw:false });
+      const count = mergeSheet(rows, type);
+      if(count > 0) {
+        loaded.push(sn+'('+count+')');
+        addHistorial(usuario, 'Teórico cargado', type+' — '+count+' contenedores');
+      }
+    });
+    if(loaded.length === 0) {
+      const rows  = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'', raw:false });
+      const count = mergeSheet(rows, 'General');
+      if(count > 0) loaded.push(wb.SheetNames[0]+'('+count+')');
+      addHistorial(usuario, 'Teórico cargado', loaded.join());
+    }
+    state.version++;
+
+    // Cancelar cualquier debounced save pendiente: si existe, contendría
+    // una copia del state PRE-upload y al ejecutarse pisaría el upload.
+    if(saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+
+    // Await: NO responder éxito hasta que Supabase confirme.
+    // Usar buildDailyStatePayload directo (no saveDailyState que swallow errores).
+    // FIX (rev Claude2): timeout 15s. FIX (rev ChatGPT): mensaje operativo.
+    try {
+      await withTimeout(
+        dbSet('daily_state', buildDailyStatePayload()),
+        15000,
+        'Upload save'
+      );
+      console.log('Upload save: persisted to Supabase ✓');
+    } catch(saveErr) {
+      console.log('Upload save FAILED:', saveErr.message);
+      // Rollback: restaurar los 3 objetos shallow + historial + version.
+      // Esto deshace el mergeSheet completo (todos los contenedores tocados
+      // vuelven a apuntar a sus objetos previos).
+      state.teorico    = snapshotTeorico;
+      state.fisico     = snapshotFisico;
+      state.alertasWMS = snapshotAlertasWMS;
+      state.historial  = snapshotHistorial;
+      state.version    = snapshotVersion;
+      return res.status(500).json({
+        ok: false,
+        error: 'El archivo NO se guardó (memoria restaurada). Volvé a subirlo. (' + saveErr.message + ')'
+      });
+    }
+
+    res.json({ ok:true, loaded });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── Fotos: upload a Supabase Storage ──────────────────────────────────────
+// Endpoint que recibe una foto en base64 desde el cliente y la sube al
+// bucket 'app-fotos' de Supabase Storage. Devuelve la URL pública para
+// que el cliente la guarde en el campo `foto` del hallazgo/CDG en vez de
+// almacenar el base64 completo dentro del state.
+//
+// FIX (mié 20-may-2026): migración fotos a Storage para resolver
+// PayloadTooLargeError + state inflado por base64. Decisiones del diseño:
+//   - bucket público (URLs largas+random como protección por oscuridad)
+//   - validación de tamaño max 5MB (cliente debe comprimir antes)
+//   - validación de mime type permitidos
+//   - timeout 15s (subida puede ser lenta en red mala)
+//   - path por kind: 'hallazgo-{id}.jpg', 'cdg-gral-{id}.jpg', 'cdg-sku-{id}.jpg'
+//   - si el path ya existe, sobrescribe (Prefer: x-upsert=true)
+function uploadToStorage(buffer, path, contentType) {
+  return new Promise((resolve, reject) => {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return reject(new Error('Supabase no configurado'));
+    }
+    var url = new URL(`${SUPABASE_URL}/storage/v1/object/app-fotos/${path}`);
+    var opts = {
+      hostname: url.hostname,
+      path:     url.pathname,
+      method:   'POST',
+      headers: {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  contentType,
+        'Content-Length': buffer.length,
+        'x-upsert':      'true', // sobrescribir si existe
+        'Cache-Control': '3600'
+      }
+    };
+    var req = https.request(opts, function(res){
+      var raw = '';
+      res.on('data', function(c){ raw += c; });
+      res.on('end', function(){
+        if(res.statusCode >= 400) {
+          var errMsg = 'Storage HTTP ' + res.statusCode;
+          try {
+            var b = raw ? JSON.parse(raw) : null;
+            if(b && b.message) errMsg += ': ' + b.message;
+            else if(b && b.error) errMsg += ': ' + b.error;
+            else if(raw) errMsg += ': ' + raw.slice(0, 200);
+          } catch(e) {
+            if(raw) errMsg += ': ' + raw.slice(0, 200);
+          }
+          return reject(new Error(errMsg));
+        }
+        // Construir URL pública. Para buckets públicos:
+        // https://{project}.supabase.co/storage/v1/object/public/app-fotos/{path}
+        var publicUrl = `${SUPABASE_URL}/storage/v1/object/public/app-fotos/${path}`;
+        resolve({ ok:true, url: publicUrl, key: path });
       });
     });
+    req.on('error', reject);
+    req.write(buffer);
+    req.end();
   });
-  if(bodAudVista === 'tarimas')     bodRenderTarimasAuditoria();
-  else if(bodAudVista === 'manifiesto') bodRenderManifiestoAuditoria();
-  else if(bodAudVista === 'wms-app')   bodRenderWmsVsApp();
-  else if(bodAudVista === 'flujo')     bodRenderFlujoBolson();
-  /* remanentes oculto en Fase 1 */
-  else bodRenderDetalleAuditoria(data);
 }
 
-// ── Vista Tarimas ─────────────────────────────────────────────────────────
-function bodRenderTarimasAuditoria() {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var data    = bodAuditoriaData;
-  var sesion  = data.sesion || {};
-  var sesId   = sesion.id   || '';
-  var lineas  = data.lineas || [];
-  var usuario = window.currentUser ? window.currentUser.name : '';
-  var esAud   = isBodAuditor();
+const ALLOWED_PHOTO_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
 
-  // Mapa tarima → furgon (asignaciones heredadas)
-  var asigMap = {};
-  bodFurgonAsignaciones.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
-
-  // Cargas logísticas (bod_furgon_cierres)
-  var cargas = (bodAuditoriaData._cargas) || [];
-
-  // Mapa tarima → carga (tarimas que ya tienen carga logística)
-  var tarimaCargaMap = {};
-  cargas.forEach(function(cg){
-    var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
-    ts.forEach(function(t){ tarimaCargaMap[t] = cg; });
-  });
-
-  // Resumen de tarimas + fecha de creación (primer ts_captura de la tarima)
-  var resumenes = {};
-  var tarimaPrimerTs = {};
-  if(data.resumenTarimas && data.resumenTarimas.length) {
-    data.resumenTarimas.forEach(function(r){ resumenes[r.tarima] = { lineas:r.lineas, unidades:r.unidades }; });
-  } else {
-    lineas.forEach(function(l){
-      var t = l.tarima||'?';
-      if(!resumenes[t]) resumenes[t] = { lineas:0, unidades:0 };
-      resumenes[t].lineas++;
-      resumenes[t].unidades += Number(l.cantidad)||0;
-    });
-  }
-  // Calcular primer timestamp por tarima para mostrar Fecha creada
-  lineas.forEach(function(l){
-    var t = l.tarima||'?'; var ts = l.ts_captura||l.ts_creacion||'';
-    if(ts && (!tarimaPrimerTs[t] || ts < tarimaPrimerTs[t])) tarimaPrimerTs[t] = ts;
-  });
-  var tarimaKeys = bodSortTarimas(Object.keys(resumenes));
-
-  // ── FILTROS DE FECHA ──────────────────────────────────────────────────────
-  var filtFechaDesde = (document.getElementById('bod-tar-fecha-desde')||{}).value || '';
-  var filtFechaHasta = (document.getElementById('bod-tar-fecha-hasta')||{}).value || '';
-
-  // Agrupar tarimas por fecha (YYYY-MM-DD Guatemala)
-  var tarimaFechaMap = {};  // tarima → fecha YYYY-MM-DD
-  Object.keys(tarimaPrimerTs).forEach(function(t){
-    var ts = tarimaPrimerTs[t];
-    var fecha = '';
-    if(ts) {
-      try { fecha = new Date(ts).toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}); } catch(e){}
+app.post('/api/foto/upload', async (req, res) => {
+  try {
+    const { foto, kind, refId, usuario } = req.body;
+    if(!foto || !kind || !refId) {
+      return res.status(400).json({ ok:false, error:'faltan campos: foto, kind, refId' });
     }
-    tarimaFechaMap[t] = fecha || '—';
-  });
+    // kind permitido: hallazgo, cdg-gral, cdg-sku
+    if(!['hallazgo', 'cdg-gral', 'cdg-sku'].includes(kind)) {
+      return res.status(400).json({ ok:false, error:'kind inválido (debe ser hallazgo|cdg-gral|cdg-sku)' });
+    }
+    // refId sanitizado: solo alfanumérico, guiones, slashes, puntos.
+    if(!/^[A-Za-z0-9_\-./]+$/.test(String(refId))) {
+      return res.status(400).json({ ok:false, error:'refId inválido (solo A-Z 0-9 _ - . /)' });
+    }
 
-  // Filtrar tarimaKeys por rango de fecha
-  var tarimaKeysFiltradas = tarimaKeys.filter(function(t){
-    var f = tarimaFechaMap[t];
-    if(filtFechaDesde && f < filtFechaDesde) return false;
-    if(filtFechaHasta && f > filtFechaHasta) return false;
-    return true;
-  });
+    // El foto viene como data URL: "data:image/jpeg;base64,XXX..."
+    var match = String(foto).match(/^data:([^;]+);base64,(.+)$/);
+    if(!match) {
+      return res.status(400).json({ ok:false, error:'foto debe ser data URL base64' });
+    }
+    var mimeType = match[1].toLowerCase();
+    var base64Data = match[2];
 
-  // Estado de colapso por fecha (persiste entre re-renders)
-  if(!window._bodFechasColapsadas) window._bodFechasColapsadas = {};
+    if(!ALLOWED_PHOTO_MIME.includes(mimeType)) {
+      return res.status(400).json({ ok:false, error:'mime type no permitido: ' + mimeType });
+    }
 
-  // Agrupar keys filtradas por fecha
-  var porFechaOrdenado = [];
-  var gruposFecha = {};
-  tarimaKeysFiltradas.forEach(function(t){
-    var f = tarimaFechaMap[t];
-    if(!gruposFecha[f]) { gruposFecha[f]=[]; porFechaOrdenado.push(f); }
-    gruposFecha[f].push(t);
-  });
-  // Ordenar fechas descendente
-  porFechaOrdenado.sort(function(a,b){ return b.localeCompare(a); });
+    // Decodificar base64 a buffer
+    var buffer;
+    try {
+      buffer = Buffer.from(base64Data, 'base64');
+    } catch(e) {
+      return res.status(400).json({ ok:false, error:'base64 inválido' });
+    }
 
-  // ── BLOQUE A: Tarimas disponibles ──────────────────────────────────────
-  var thead = '<thead><tr>'
-    +(esAud ? '<th></th>' : '')
-    +'<th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th>'
-    +'<th class="tc">Fecha creada</th>'
-    +'<th>Estado</th>'
-    +(esAud ? '<th></th>' : '')
-    +'</tr></thead>';
-
-  // Construir filas agrupadas por fecha
-  var filas = '';
-  porFechaOrdenado.forEach(function(fecha){
-    var grupo = gruposFecha[fecha];
-    var colapsado = !!window._bodFechasColapsadas[fecha];
-    // Calcular totales del grupo
-    var totLineas=0, totUnidades=0;
-    grupo.forEach(function(t){ totLineas+=resumenes[t].lineas; totUnidades+=resumenes[t].unidades; });
-    var fechaDisplay = fecha==='—' ? 'Sin fecha' : fecha;
-    // Encabezado del grupo
-    filas += '<tr class="bod-fecha-grupo" data-fecha="'+escH(fecha)+'"'
-      +' style="background:#eef2f7;cursor:pointer;user-select:none">'
-      +(esAud?'<td></td>':'')
-      +'<td colspan="'+(3+(esAud?2:0))+'" style="padding:4px 6px;font-size:.78rem;font-weight:700;color:#333">'
-      +'<span style="font-size:.8rem">'+(colapsado?'▶':'▼')+'</span> '
-      +'📅 '+escH(fechaDisplay)
-      +' <span style="font-weight:400;font-size:.73rem;color:#666;margin-left:8px">'
-      +grupo.length+' tarimas · '+totLineas+' líneas · '+totUnidades+' unidades'
-      +'</span></td>'
-      +'<td></td>'+(esAud?'<td></td>':'')
-      +'</tr>';
-    // Filas de tarimas del grupo
-    if(!colapsado) {
-      grupo.forEach(function(t){
-        var r = resumenes[t];
-        var carga = tarimaCargaMap[t];
-        var furg  = asigMap[t];
-        var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
-        var checkCell = '', estadoCell = '';
-        if(carga){
-          estadoCell = '<span style="background:#e3f2fd;color:#1565c0;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-            +'🔒 Carga '+escH(carga.furgon)+'</span>';
-          checkCell = esAud ? '<td></td>' : '';
-        } else if(furg){
-          var btnLiberar = esAud
-            ? '<button class="btn btn-xs bod-btn-liberar-herencia" data-tarima="'+escH(t)+'" data-furgon="'+escH(furg)+'"'
-              +' style="background:#fdecea;color:#c0392b;font-size:.71rem;margin-left:4px">Liberar</button>'
-            : '';
-          estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-            +'Furgón '+escH(furg)+' (herencia)</span>'+btnLiberar;
-          checkCell = esAud ? '<td></td>' : '';
-        } else {
-          estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
-          checkCell = esAud
-            ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
-            : '';
-        }
-        var tsRaw = tarimaPrimerTs[t] || '';
-        var tsFmt = '';
-        if(tsRaw) {
-          try { var dd=new Date(tsRaw); tsFmt=dd.toLocaleDateString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit'})+' '+dd.toLocaleTimeString('es-GT',{timeZone:'America/Guatemala',hour:'2-digit',minute:'2-digit'}); } catch(e){}
-        }
-        var btnAuditar = esAud
-          ? '<button class="btn btn-xs bod-btn-auditar-tarima" data-tarima="'+escH(t)+'"'
-            +' style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem">🔍 Auditar</button>'
-          : '';
-        filas += '<tr>'+checkCell
-          +'<td style="font-weight:700">'+escH(t)+'</td>'
-          +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
-          +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
-          +'<td class="tc" style="font-size:.75rem;color:#888">'+tsFmt+'</td>'
-          +'<td>'+estadoCell+'</td>'
-          +(esAud ? '<td>'+btnAuditar+'</td>' : '')
-          +'</tr>';
+    if(buffer.length > MAX_PHOTO_BYTES) {
+      return res.status(413).json({
+        ok: false,
+        error: 'foto muy grande (' + Math.round(buffer.length/1024) + ' KB). Máximo: ' + Math.round(MAX_PHOTO_BYTES/1024) + ' KB. Comprimí antes de subir.'
       });
     }
-  });
-  if(!filas) filas='<tr><td colspan="'+(5+(esAud?2:0))+'" style="color:#aaa;font-size:.82rem;padding:10px">Sin tarimas'+(filtFechaDesde||filtFechaHasta?' para el rango de fechas seleccionado.':'.')+'</td></tr>';
 
-  // Formulario "Crear carga logística" (solo si auditor)
-  var formCarga = '';
-  if(esAud) {
-    formCarga = '<div id="bod-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.75rem;margin-bottom:.6rem">'
-      +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Crear carga logística</div>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
-      +'<input type="text" id="bod-furgon-input" class="field-inp" placeholder="Ej: 1"'
-      +' style="width:70px;padding:4px 8px;font-size:.82rem"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
-      +'<input type="text" id="bod-carga-placa" class="field-inp" placeholder="ABC-123"'
-      +' style="width:90px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Marchamo</label>'
-      +'<input type="text" id="bod-carga-marchamo" class="field-inp" placeholder="Marchamo"'
-      +' style="width:110px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
-      +'<input type="text" id="bod-carga-licencia-hija" class="field-inp" placeholder="U25-XXXXXX"'
-      +' style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Destino TR999</label>'
-      +'<input type="text" id="bod-carga-destino" class="field-inp" placeholder="TR999.001.01"'
-      +' style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div style="flex:1;min-width:100px"><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Observación</label>'
-      +'<input type="text" id="bod-carga-obs" class="field-inp" placeholder="Opcional"'
-      +' style="width:100%;padding:4px 8px;font-size:.82rem"></div>'
-      +'<button class="btn btn-sm btn-dark" id="btn-bod-crear-carga" style="align-self:flex-end">✅ Crear carga</button>'
-      +'</div>'
-      +'<div id="bod-carga-msg" style="font-size:.78rem;margin-top:.4rem;min-height:1.2em"></div>'
-      +'</div>';
+    // Construir path en el bucket. Extensión a partir del mime.
+    var ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    var timestamp = Date.now();
+    var safeRefId = String(refId).replace(/[^A-Za-z0-9_\-]/g, '_');
+    var path = `${kind}/${safeRefId}_${timestamp}.${ext}`;
+
+    // Subir a Storage con timeout
+    var result;
+    try {
+      result = await withTimeout(
+        uploadToStorage(buffer, path, mimeType),
+        15000,
+        'Foto upload'
+      );
+      console.log('Foto upload OK:', path, '(' + Math.round(buffer.length/1024) + ' KB)');
+    } catch(uploadErr) {
+      console.log('Foto upload FAILED:', uploadErr.message);
+      return res.status(500).json({
+        ok: false,
+        error: 'No se pudo subir la foto al Storage. Reintentá. (' + uploadErr.message + ')'
+      });
+    }
+
+    res.json({
+      ok: true,
+      url: result.url,
+      key: result.key,
+      bytes: buffer.length
+    });
+  } catch(e) {
+    console.log('Foto upload exception:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function norm(s) {
+  return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function findCol(hdr, terms) {
+  for(const t of terms) { const i = hdr.findIndex(h => h === norm(t)); if(i >= 0) return i; }
+  for(const t of terms) { const i = hdr.findIndex(h => h.includes(norm(t))); if(i >= 0) return i; }
+  return -1;
+}
+
+function mergeSheet(rows, type) {
+  if(!rows || rows.length < 2) return 0;
+  // Find actual header row (contains 'sku' or 'numero')
+  let hdrRowIdx = 0;
+  for(let ri = 0; ri < Math.min(rows.length, 10); ri++) {
+    const r = rows[ri].map(h => norm(h));
+    if(r.some(h => h === 'sku' || h.includes('sku')) ||
+       r.some(h => h === 'numero' || h === 'número')) {
+      hdrRowIdx = ri;
+      break;
+    }
+  }
+  const hdr      = rows[hdrRowIdx].map(h => norm(h));
+  const dataRows = rows.slice(hdrRowIdx + 1);
+  const colCont = findCol(hdr, ['numero','número']);
+  const colSku  = findCol(hdr, ['sku']);
+  const colQty  = findCol(hdr, ['cant.','cant','cantidad']);
+  let colDesc = -1;
+  for(let i = colSku + 1; i < hdr.length; i++) {
+    if(hdr[i].includes('nombre') || hdr[i].includes('descripcion')) { colDesc = i; break; }
+  }
+  if(colDesc < 0) colDesc = findCol(hdr, ['nombre','descripcion']);
+  if(colCont < 0 || colSku < 0 || colDesc < 0 || colQty < 0) return 0;
+
+  const g = (row, i) => i >= 0 ? row[i] : '';
+  // FIX (sáb 23-may-2026): el WMS de Embarques trae DOS columnas relevantes para
+  // proveedor: 'Proveedor' (código, ej. HPP001199) y 'Nombre' (razón social, ej.
+  // LONGTAI TRADING FZCO). Antes solo se capturaba el código en codProv, así que
+  // raw.nomProv quedaba undefined y getOrigenDesc (export) recibía el código →
+  // 'Descripción de origen' salía como el código en vez de Truper China/México.
+  // Capturamos el 'Nombre' que aparece JUSTO DESPUÉS de la columna Proveedor,
+  // para no confundirlo con el 'Nombre' de descripción del SKU (que va después de SKU).
+  const cCodProvIdx = findCol(hdr, ['proveedor','código de proveedor','codigo de proveedor']);
+  let cNomProvIdx = -1;
+  if(cCodProvIdx >= 0) {
+    for(let i = cCodProvIdx + 1; i < hdr.length; i++) {
+      if(hdr[i].includes('nombre')) { cNomProvIdx = i; break; }
+      // No buscar más allá del SKU: el 'Nombre' de descripción va después del SKU
+      if(hdr[i] === 'sku' || hdr[i].includes('sku')) break;
+    }
+  }
+  const ex = {
+    cFecha:    findCol(hdr, ['fecha']),
+    cCodProv:  cCodProvIdx,
+    cNomProv:  cNomProvIdx,
+    cLineas:   findCol(hdr, ['lineas','líneas']),
+    cStatus:   findCol(hdr, ['status']),
+    cOC:       findCol(hdr, ['orden de compra','# orden']),
+    cIngr:     findCol(hdr, ['ingresado']),
+    cColoc:    findCol(hdr, ['colocado']),
+    cFalt:     findCol(hdr, ['faltantes']),
+    cSobr:     findCol(hdr, ['sobrantes']),
+    cDan:      findCol(hdr, ['dañado','danado']),
+    cOrigen:   findCol(hdr, ['origen']),
+    cIngreso:  findCol(hdr, ['# ingreso','ingreso']),
+    cDocSap:   findCol(hdr, ['doc. sap','doc sap']),
+    cTipo:     findCol(hdr, ['tipo']),
+    cUnidad:   findCol(hdr, ['unidad']),
+    cUnidades: findCol(hdr, ['unidades']),
+    cDestino:  findCol(hdr, ['destino'])
+  };
+  const newConts = {};
+  // FIX (dom 25-may-2026, server v16): OPTIMIZACIÓN DE TAMAÑO DEL STATE.
+  // Antes, cada item guardaba 18 campos en raw. Medido contra el WMS real,
+  // 10 de esos campos (fecha, codProv, nomProv, lineas, status, origen,
+  // ingreso, docSap, tipo, destino) son CONSTANTES dentro de un mismo
+  // contenedor — se repetían idénticos en cada una de sus ~150 líneas.
+  // Ahora esos campos van UNA sola vez a newMeta[cont] (nivel contenedor),
+  // y raw queda solo con los que VARÍAN por línea (oc, ingresado, colocado,
+  // faltantes, sobrantes, daniado, unidad, unidades). Reducción ~70% del teorico.
+  // Compatibilidad: el cliente lee raw heredando de meta (Object.assign), así
+  // que los exports siguen funcionando y los contenedores VIEJOS (con raw
+  // completo y sin meta) también, porque su raw viejo gana sobre el meta ausente.
+  const newMeta = {};
+  dataRows
+    .filter(r => r && r.some(c => String(c).trim() !== ''))
+    .forEach(row => {
+      const cont = String(row[colCont]||'').trim();
+      if(!cont) return;
+      // FIX (mar 26-may-2026, server v17): LISTA BLANCA de nombre de contenedor.
+      // El export de Power BI trae texto al pie ("Filtros aplicados: ... Embarque
+      // es HP26-XXXX Aplica es 1", "Total general", etc.) que el parser leía como
+      // contenedores basura. Ahora SOLO se acepta una fila si su nombre tiene el
+      // formato real: empieza con H o U, dígitos, guion, dígitos, con sufijo
+      // opcional (ej. /CS). HP26-0540, H274-0123, U25-161410, U147-0089.
+      // Cualquier otra cosa (texto largo, notas, totales) se ignora automáticamente.
+      if(!/^[HU][A-Z0-9]*-[0-9]+(\/[A-Z0-9]+)?$/i.test(cont)) return;
+      // FIX (mar 26-may-2026, server v17): los contenedores terminados en /CS
+      // existen en la base del WMS pero el equipo NO los usa. Antes había que
+      // borrarlos a mano tras cada carga del maestro porque se volvían a meter.
+      // Ahora se ignoran automáticamente al cargar.
+      if(/\/CS$/i.test(cont)) return;
+      if(!newConts[cont]) newConts[cont] = [];
+      // Meta a nivel contenedor: se captura de la primera fila (campos constantes).
+      if(!newMeta[cont]) {
+        newMeta[cont] = {
+          fecha:    g(row, ex.cFecha),
+          codProv:  g(row, ex.cCodProv),
+          nomProv:  g(row, ex.cNomProv),
+          lineas:   g(row, ex.cLineas),
+          status:   g(row, ex.cStatus),
+          origen:   g(row, ex.cOrigen),
+          ingreso:  g(row, ex.cIngreso),
+          docSap:   g(row, ex.cDocSap),
+          tipo:     g(row, ex.cTipo),
+          destino:  g(row, ex.cDestino)
+        };
+      }
+      newConts[cont].push({
+        sku:  String(row[colSku] ||'').trim(),
+        desc: String(row[colDesc]||'').trim(),
+        qty:  parseFloat(String(row[colQty]).replace(',','.')) || 0,
+        raw: {
+          // Solo campos que VARÍAN por línea:
+          oc:        g(row, ex.cOC),
+          ingresado: g(row, ex.cIngr),
+          colocado:  g(row, ex.cColoc),
+          faltantes: g(row, ex.cFalt),
+          sobrantes: g(row, ex.cSobr),
+          daniado:   g(row, ex.cDan),
+          unidad:    g(row, ex.cUnidad),
+          unidades:  g(row, ex.cUnidades)
+        }
+      });
+    });
+
+  // FIX (dom 24-may-2026 PM, server v15): FREEZE de contenedores ya contados.
+  // Contexto: el equipo va a subir el Excel del Power BI varias veces al día.
+  // El WMS puede cambiar cantidades o eliminar líneas de un contenedor que
+  // YA empezamos a contar. Si dejáramos que el upload sobreescriba, el equipo
+  // perdería referencia (físico contado vs teórico modificado).
+  //
+  // Regla: si state.fisico[cont] tiene AL MENOS 1 línea con valor (contada),
+  // el contenedor se considera "frozen" y NO se actualiza su teorico desde el
+  // upload. EN CAMBIO, se registra una alerta en state.alertasWMS para que el
+  // supervisor decida si "descongelar" y sincronizar manualmente.
+  //
+  // Helper: detectar si un contenedor ya tiene físico contado
+  function hasPhysicalCounted(contKey) {
+    var f = state.fisico && state.fisico[contKey];
+    if(!Array.isArray(f)) return false;
+    for(var i = 0; i < f.length; i++) {
+      var x = f[i];
+      if(x && x.fisico !== undefined && x.fisico !== null && x.fisico !== '') return true;
+    }
+    return false;
   }
 
-  // ── BLOQUE B: Cargas logísticas existentes ──────────────────────────────
-  var bloqueCargasHtml = '';
-  if(cargas.length) {
-    bloqueCargasHtml = '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin:.75rem 0 .3rem;letter-spacing:.3px">Cargas logísticas</div>';
-    cargas.forEach(function(cg){
-      var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
-      var skus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
-      var esCerrada  = cg.estado === 'cerrada';
-      var esSup      = isSup();
-      var btnAcciones;
-      if(esCerrada) {
-        var badgeEnv = cg.enviado_hamilton
-          ? '<span style="background:#1565c0;color:#fff;font-size:.71rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Enviado a Hamilton</span>'
-          : (esAud
-              ? '<button class="btn btn-xs bod-btn-enviar-hamilton" data-id="'+escH(cg.id)+'"'
-                +' style="background:#1565c0;color:#fff;font-size:.72rem">🚀 Enviar a Hamilton</button>'
-              : '');
-        btnAcciones = '<span style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Cerrada</span>'
-          +badgeEnv
-          +(esSup ? ' <button class="btn btn-xs bod-btn-reabrir-carga" data-id="'+escH(cg.id)+'"'
-            +' style="background:#fff3e0;color:#e65100;font-size:.72rem">🔓 Reabrir</button>' : '')
-          +'<label class="btn btn-xs" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.72rem;position:relative">'
-          +'📂 Subir licencia'
-          +'<input type="file" class="bod-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
-          +'</label>'
-          +'<span class="bod-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.72rem;min-height:1em"></span>';
-      } else if(esAud) {
-        btnAcciones = '<button class="btn btn-xs bod-btn-editar-carga" data-id="'+escH(cg.id)+'"'
-          +' style="background:#fff3e0;color:#e65100;font-size:.72rem">✏ Editar</button>'
-          +'<button class="btn btn-xs bod-btn-eliminar-carga" data-id="'+escH(cg.id)+'"'
-          +' style="background:#fdecea;color:#c0392b;font-size:.72rem">🗑 Eliminar</button>'
-          +'<label class="btn btn-xs bod-btn-subir-hija" style="cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.72rem;position:relative">'
-          +'📂 Subir licencia'
-          +'<input type="file" class="bod-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
-          +'</label>'
-          +'<button class="btn btn-xs bod-btn-cerrar-carga" data-id="'+escH(cg.id)+'"'
-          +' style="background:#e3f2fd;color:#0d47a1;font-size:.72rem">🔒 Cerrar carga</button>'
-          +'<span class="bod-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.72rem;min-height:1em"></span>';
+  // Helper: comparar items prev vs new para detectar diferencias específicas
+  function compareItems(prevItems, newItems) {
+    var prev = Array.isArray(prevItems) ? prevItems : [];
+    var nw = Array.isArray(newItems) ? newItems : [];
+    var diffs = [];
+    // Index por SKU para comparación
+    var prevBySku = {}, newBySku = {};
+    prev.forEach(function(it){ if(it && it.sku) prevBySku[it.sku] = it; });
+    nw.forEach(function(it){ if(it && it.sku) newBySku[it.sku] = it; });
+    // SKUs eliminados (en prev pero no en new)
+    Object.keys(prevBySku).forEach(function(sku){
+      if(!newBySku[sku]) diffs.push({ tipo:'eliminado', sku:sku, qty:prevBySku[sku].qty });
+    });
+    // SKUs nuevos (en new pero no en prev)
+    Object.keys(newBySku).forEach(function(sku){
+      if(!prevBySku[sku]) diffs.push({ tipo:'agregado', sku:sku, qty:newBySku[sku].qty });
+    });
+    // SKUs con cantidad cambiada
+    Object.keys(prevBySku).forEach(function(sku){
+      if(newBySku[sku] && Number(prevBySku[sku].qty) !== Number(newBySku[sku].qty)) {
+        diffs.push({ tipo:'qty_cambio', sku:sku, qtyAntes:prevBySku[sku].qty, qtyNueva:newBySku[sku].qty });
+      }
+    });
+    return diffs;
+  }
+
+  // Inicializar el contenedor de alertas si no existe
+  if(!state.alertasWMS) state.alertasWMS = {};
+
+  var congeladosCount = 0;
+  var congeladosConCambio = 0;
+
+  Object.keys(newConts).forEach(cont => {
+    // Don't overwrite CDG-validated containers from teorico upload
+    if(state.teorico[cont] && state.teorico[cont].fromCDG) {
+      state.teorico[cont].cdgValidado = true;
+      return;
+    }
+
+    var prev = state.teorico[cont] || {};
+    var fechaCargaPrev = prev.fechaCarga || null;
+    var hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+
+    // ── FREEZE check (server v15) ───────────────────────────────
+    // Si el contenedor ya tiene físico contado, NO actualizar items.
+    // Pero SÍ comparar y registrar alerta si hay cambios.
+    var isFrozen = prev.items && hasPhysicalCounted(cont);
+
+    if(isFrozen) {
+      congeladosCount++;
+      var diffs = compareItems(prev.items, newConts[cont]);
+      if(diffs.length > 0) {
+        congeladosConCambio++;
+        // Guardar alerta CON los items nuevos del WMS. Esto permite al
+        // supervisor "Sincronizar con WMS" después, aplicando estos items.
+        // NO acumular alertas viejas: cada upload reemplaza la alerta con
+        // el snapshot más reciente del WMS, para no inflar el state.
+        state.alertasWMS[cont] = {
+          detectadoEn: hoy,
+          itemsAntes:  prev.items.length,
+          itemsNuevos: newConts[cont].length,
+          diffs:       diffs.slice(0, 30),  // límite defensivo: top 30 diffs
+          totalDiffs:  diffs.length,
+          // Snapshot completo de items del WMS para "Sincronizar" después
+          // (necesario porque sin esto el supervisor no podría aplicar el WMS
+          // ya que el upload solo se guarda si NO está congelado)
+          itemsWMS:    newConts[cont],
+          metaWMS:     newMeta[cont] || {}   // FIX (server v16): meta para aplicar al sincronizar
+        };
       } else {
-        btnAcciones = '';
+        // Sin diferencias: limpiar cualquier alerta vieja para este contenedor
+        if(state.alertasWMS[cont]) delete state.alertasWMS[cont];
       }
-      bloqueCargasHtml += '<div style="background:'+(esCerrada?'#e8f5e9':'#e3f2fd')+';border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;font-size:.8rem">'
-        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:.25rem">'
-        +'<strong>Furgón '+escH(cg.furgon)+'</strong>'
-        +'<span style="color:#1565c0">🔒 '+escH(cg.licencia_hija||'—')+'</span>'
-        +'<span style="color:#888">→ '+escH(cg.destino_tr999||'—')+'</span>'
-        +(cg.placa ? '<span style="color:#555">🚛 '+escH(cg.placa)+'</span>' : '')
-        +(cg.marchamo ? '<span style="color:#555">🔐 '+escH(cg.marchamo)+'</span>' : '')
-        +'<span style="color:#aaa;font-size:.73rem">por '+escH(cg.cerrado_por||'—')+'</span>'
-        +btnAcciones
-        +'</div>'
-        +'<div style="color:#555;font-size:.75rem">'
-        +'Tarimas: '+escH(ts.join(', '))+' · '
-        +skus.length+' SKUs · '+Number(cg.unidades_total)+' unidades'
-        +(cg.observacion ? ' · <em>'+escH(cg.observacion)+'</em>' : '')
-        +'</div></div>';
-    });
-  }
-
-  vistaEl.innerHTML = formCarga
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-    +'<label style="font-weight:600;color:#555">📅 Filtrar fechas:</label>'
-    +'<input type="date" id="bod-tar-fecha-desde" class="field-inp"'
-    +' style="padding:3px 7px;font-size:.76rem;max-width:130px"'
-    +' value="'+escH(filtFechaDesde)+'" title="Desde">'
-    +'<span style="color:#888">—</span>'
-    +'<input type="date" id="bod-tar-fecha-hasta" class="field-inp"'
-    +' style="padding:3px 7px;font-size:.76rem;max-width:130px"'
-    +' value="'+escH(filtFechaHasta)+'" title="Hasta">'
-    +'<button class="btn btn-xs" id="btn-tar-filtro-limpiar" style="font-size:.72rem">Limpiar</button>'
-    +'</div>'
-    +'<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.3rem;letter-spacing:.3px">Tarimas</div>'
-    +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>'
-    +bloqueCargasHtml;
-
-  // Wire: filtros de fecha re-renderizan Tarimas
-  ['bod-tar-fecha-desde','bod-tar-fecha-hasta'].forEach(function(id){
-    var el=document.getElementById(id);
-    if(el&&!el._bodWired){ el._bodWired=true; el.addEventListener('change',bodRenderTarimasAuditoria); }
-  });
-  var btnLimpFecha=document.getElementById('btn-tar-filtro-limpiar');
-  if(btnLimpFecha&&!btnLimpFecha._bodWired){ btnLimpFecha._bodWired=true; btnLimpFecha.addEventListener('click',function(){
-    var d=document.getElementById('bod-tar-fecha-desde'); if(d) d.value='';
-    var h=document.getElementById('bod-tar-fecha-hasta'); if(h) h.value='';
-    bodRenderTarimasAuditoria();
-  }); }
-
-  // Wire: colapso/expansión de grupos por fecha
-  vistaEl.querySelectorAll('.bod-fecha-grupo').forEach(function(row){
-    row.addEventListener('click', function(){
-      var fecha=row.dataset.fecha;
-      window._bodFechasColapsadas[fecha] = !window._bodFechasColapsadas[fecha];
-      bodRenderTarimasAuditoria();
-    });
-  });
-
-  // Restaurar bodFurgonDraft
-  var furgonInpNew = document.getElementById('bod-furgon-input');
-  if(furgonInpNew && bodFurgonDraft) furgonInpNew.value = bodFurgonDraft;
-  if(furgonInpNew) furgonInpNew.addEventListener('input', function(){ bodFurgonDraft = this.value; });
-
-  // Wire checkboxes
-  vistaEl.querySelectorAll('.bod-tarima-chk').forEach(function(chk){
-    chk.addEventListener('change', function(){
-      bodUltimaInteraccionTarimas = Date.now();
-      if(this.checked) bodTarimasSeleccionadasDraft[this.dataset.tarima] = true;
-      else             delete bodTarimasSeleccionadasDraft[this.dataset.tarima];
-    });
-  });
-
-  // Wire upload "Subir licencia" por cada carga logística
-  if(esAud) {
-    vistaEl.querySelectorAll('.bod-hija-file-inp').forEach(function(inp){
-      inp.addEventListener('change', function(){
-        if(!this.files||!this.files[0]) return;
-        var archivo   = this.files[0];
-        var licHija   = this.dataset.lichija;
-        var furgRelac = this.dataset.furgon;
-        var cargaId   = this.dataset.id;
-        var msgEl     = vistaEl.querySelector('.bod-hija-msg[data-id="'+cargaId+'"]');
-        if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Subiendo…</span>';
-        this.value = '';
-        var fd = new FormData();
-        fd.append('file', archivo);
-        fd.append('usuario', usuario);
-        fd.append('licencia_id', licHija);
-        fd.append('licencia_padre', sesion.licencia_id || '');
-        fd.append('furgon_relacionado', furgRelac);
-        fd.append('tipo_licencia', 'hija_salida');
-        fetch('/api/bod/wms/upload', { method:'POST', body:fd })
-          .then(function(r){ return r.json(); })
-          .then(function(d){
-            if(!msgEl) return;
-            if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
-            var col = d.advertencia ? '#e65100' : '#1e7e34';
-            var txt = '✅ '+d.procesadas+' filas · Salidas: '+((d.salidas_tr999)||0);
-            if(d.advertencia) txt += ' ⚠';
-            msgEl.innerHTML = '<span style="color:'+col+'">'+txt+'</span>';
-          }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
-      });
-    });
-  }
-
-  // Wire Liberar herencia (tarimas asignadas por viejo flujo, sin carga logística)
-  if(esAud) {
-    vistaEl.querySelectorAll('.bod-btn-liberar-herencia').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var tarima = btn.dataset.tarima;
-        var furg   = btn.dataset.furgon;
-        if(!confirm('Esto eliminará la asignación heredada de la tarima '+tarima+' al furgón '+furg+'. ¿Continuar?')) return;
-        bodFetch('DELETE', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgon/'+encodeURIComponent(tarima),
-          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-          .then(function(d){
-            if(!d.ok){ alert(d.error||'Error al liberar'); return; }
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-              .then(function(r){ return r.json(); })
-              .then(function(f){
-                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                bodRenderTarimasAuditoria();
-              });
-          }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-  }
-  if(esAud) {
-    vistaEl.querySelectorAll('.bod-btn-editar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId = btn.dataset.id;
-        var cg = cargas.find(function(c){ return c.id === cargaId; });
-        if(!cg) return;
-        var _p;
-        _p = prompt('Placa:', cg.placa||''); if(_p === null) return;
-        var newPlaca   = _p.trim().toUpperCase();
-        _p = prompt('Marchamo:', cg.marchamo||''); if(_p === null) return;
-        var newMarcha  = _p.trim().toUpperCase();
-        _p = prompt('Licencia hija:', cg.licencia_hija||''); if(_p === null) return;
-        var newLicHija = _p.trim().toUpperCase();
-        if(!newLicHija){ alert('La licencia hija es requerida.'); return; }
-        _p = prompt('Destino TR999 (ej: TR999.001.01):', cg.destino_tr999||''); if(_p === null) return;
-        var newDestino = _p.trim().toUpperCase();
-        if(!/^TR999\.\d{3}\.\d{2}$/i.test(newDestino)){ alert('El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01'); return; }
-        _p = prompt('Observación:', cg.observacion||''); if(_p === null) return;
-        var newObs     = _p.trim();
-        bodFetch('PATCH', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId), {
-          placa:newPlaca, marchamo:newMarcha, licencia_hija:newLicHija,
-          destino_tr999:newDestino, observacion:newObs,
-          usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
-        }).then(function(d){
-          if(!d.ok){ alert(d.error||'Error al editar'); return; }
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-            .then(function(r){ return r.json(); })
-            .then(function(f){
-              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-              if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-              bodRenderTarimasAuditoria();
-            });
-        }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-
-    // Wire Eliminar carga logística
-    vistaEl.querySelectorAll('.bod-btn-eliminar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId = btn.dataset.id;
-        var cg = cargas.find(function(c){ return c.id === cargaId; });
-        if(!cg) return;
-        if(!confirm('Esto eliminará la carga logística del furgón '+cg.furgon+' y liberará sus tarimas para reagrupar. ¿Continuar?')) return;
-        bodFetch('DELETE', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId), {
-          usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
-        }).then(function(d){
-          if(!d.ok){ alert(d.error||'Error al eliminar'); return; }
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-            .then(function(r){ return r.json(); })
-            .then(function(f){
-              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-              if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-              bodRenderTarimasAuditoria();
-            });
-        }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-
-    // Wire Cerrar carga logística
-    vistaEl.querySelectorAll('.bod-btn-cerrar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId = btn.dataset.id;
-        var cg = cargas.find(function(c){ return c.id === cargaId; });
-        if(!cg) return;
-        if(!confirm('¿Cerrar la carga del furgón '+cg.furgon+'?\n\nEsto bloqueará edición y eliminación.\nSolo un supervisor podrá reabrirla.')) return;
-        bodFetch('PATCH', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/cerrar',
-          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-          .then(function(d){
-            if(!d.ok){ alert(d.error||'Error al cerrar'); return; }
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-              .then(function(r){ return r.json(); })
-              .then(function(f){
-                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                bodRenderTarimasAuditoria();
-              });
-          }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-
-    // Wire Reabrir carga logística (solo supervisor)
-    vistaEl.querySelectorAll('.bod-btn-reabrir-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId = btn.dataset.id;
-        var cg = cargas.find(function(c){ return c.id === cargaId; });
-        if(!cg) return;
-        if(!confirm('¿Reabrir la carga del furgón '+cg.furgon+'? Esto permitirá volver a editar y eliminar.')) return;
-        bodFetch('PATCH', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/reabrir',
-          { usuario:usuario, supervisor:isSup() })
-          .then(function(d){
-            if(!d.ok){ alert(d.error||'Error al reabrir'); return; }
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-              .then(function(r){ return r.json(); })
-              .then(function(f){
-                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                bodRenderTarimasAuditoria();
-              });
-          }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-
-    // Wire Enviar a Hamilton
-    vistaEl.querySelectorAll('.bod-btn-enviar-hamilton').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId = btn.dataset.id;
-        var cg = cargas.find(function(c){ return c.id === cargaId; });
-        if(!cg) return;
-        if(!confirm('Enviar carga del furgón '+cg.furgon+' a Hamilton como licencia hija '+cg.licencia_hija+'. Esto creará el contenedor en Traslados CDG de Hamilton. ¿Continuar?')) return;
-        bodFetch('POST',
-          '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/enviar-hamilton',
-          { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-          .then(function(d){
-            if(!d.ok){ alert(d.error||'Error al enviar a Hamilton'); return; }
-            alert('Licencia hija '+cg.licencia_hija+' enviada a Hamilton → Traslados CDG. ('+d.skus+' SKUs)');
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-              .then(function(r){ return r.json(); })
-              .then(function(f){
-                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                bodRenderTarimasAuditoria();
-              });
-          }).catch(function(){ alert('Sin conexión'); });
-      });
-    });
-  }
-
-  // Wire "Crear carga logística"
-  if(esAud) {
-    var btnCrear = document.getElementById('btn-bod-crear-carga');
-    if(btnCrear) btnCrear.addEventListener('click', function(){
-      var furgon    = (document.getElementById('bod-furgon-input').value||'').trim();
-      var placa     = (document.getElementById('bod-carga-placa').value||'').trim().toUpperCase();
-      var marchamo  = (document.getElementById('bod-carga-marchamo').value||'').trim().toUpperCase();
-      var licHija   = (document.getElementById('bod-carga-licencia-hija').value||'').trim().toUpperCase();
-      var destino   = (document.getElementById('bod-carga-destino').value||'').trim().toUpperCase();
-      var obs       = (document.getElementById('bod-carga-obs').value||'').trim();
-      var msgEl     = document.getElementById('bod-carga-msg');
-      var sel       = vistaEl.querySelectorAll('.bod-tarima-chk:checked');
-      var tarimasSel = Array.prototype.slice.call(sel).map(function(c){ return c.dataset.tarima; });
-
-      if(!furgon)          { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
-      if(!licHija)         { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
-      if(!destino)         { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
-      if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino)){
-        msgEl.innerHTML='<span style="color:#c0392b">El destino debe tener formato TR999.xxx.xx, ejemplo TR999.001.01</span>'; return;
-      }
-      if(!tarimasSel.length){ msgEl.innerHTML='<span style="color:#c0392b">Seleccioná al menos una tarima.</span>'; return; }
-
-      msgEl.innerHTML='<span style="color:#888">Creando carga…</span>';
-      bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', {
-        tarimas: tarimasSel, furgon: furgon, placa: placa, marchamo: marchamo,
-        licencia_hija: licHija, destino_tr999: destino, observacion: obs,
-        usuario: usuario, auditor: isBodAuditor(), supervisor: isBodAuditor()
-      }).then(function(d){
-        if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-        msgEl.innerHTML='<span style="color:#1e7e34">✅ Carga logística creada. Furgón: '+escH(d.furgon)+' · '+d.unidades_total+' unidades.</span>';
-        bodFurgonDraft = '';
-        bodTarimasSeleccionadasDraft = {};
-        bodUltimaInteraccionTarimas = 0;
-        // Refrescar
-        fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-          .then(function(r){ return r.json(); })
-          .then(function(f){
-            bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-            // Guardar cargas en el data para el render
-            if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-            bodRenderTarimasAuditoria();
-          });
-      }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-    });
-  }
-
-  // Wire: botón 🔍 Auditar tarima → navegar a Detalle con filtro por tarima
-  vistaEl.querySelectorAll('.bod-btn-auditar-tarima').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tarima = btn.dataset.tarima;
-      bodAudVista = 'detalle';
-      if(bodAuditoriaData) bodRenderAuditoria(bodAuditoriaData);
-      setTimeout(function(){
-        var fTar = document.getElementById('filtro-det-tarima');
-        if(fTar){ fTar.value = tarima; fTar.dispatchEvent(new Event('input')); }
-      }, 80);
-    });
-  });
-}
-
-// ── Vista Detalle (lógica original de auditoría por línea) ────────────────
-function bodRenderDetalleAuditoria(data) {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !data) return;
-  var lineas    = data.lineas || [];
-  var usuario   = window.currentUser ? window.currentUser.name : '';
-  var esAuditor = isBodAuditor();
-
-  // tarima → licencia_hija desde cargas logísticas
-  var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-  var tarimaLicHija = {};
-  cargas.forEach(function(cg){
-    var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
-    ts.forEach(function(t){ tarimaLicHija[t] = cg.licencia_hija || ''; });
-  });
-
-  // leer filtros actuales (persisten entre re-renders)
-  var prevSel = (document.getElementById('filtro-det-lichija')||{}).value || '';
-  var filtLicHija = prevSel.trim().toUpperCase();
-  var filtSku     = (document.getElementById('filtro-det-sku')    ||{value:''}).value.trim().toUpperCase();
-  var filtTarima  = (document.getElementById('filtro-det-tarima') ||{value:''}).value.trim().toUpperCase();
-
-  // Construir opciones dropdown de lic.hija desde cargas existentes
-  var licHijaSet = {};
-  cargas.forEach(function(cg){ if(cg.licencia_hija) licHijaSet[cg.licencia_hija.toUpperCase()] = cg.licencia_hija; });
-  var licHijaOpts = '<option value="">Todas</option>'
-    + Object.values(licHijaSet).sort().map(function(lh){
-        var sel = filtLicHija === lh.toUpperCase() ? ' selected' : '';
-        return '<option value="'+escH(lh.toUpperCase())+'"'+sel+'>'+escH(lh)+'</option>';
-      }).join('');
-
-  // barra de filtros — lichija como select dropdown
-  var barraFiltros = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;font-size:.78rem">'
-    +'<label>Filtrar:</label>'
-    +'<select id="filtro-det-lichija" class="field-inp" style="padding:3px 6px;font-size:.76rem;max-width:130px">'+licHijaOpts+'</select>'
-    +'<input type="text" id="filtro-det-sku" class="field-inp" placeholder="SKU"'
-    +' style="width:80px;padding:3px 7px;font-size:.76rem" value="'+escH(filtSku)+'" inputmode="numeric" autocomplete="off">'
-    +'<input type="text" id="filtro-det-tarima" class="field-inp" placeholder="Tarima"'
-    +' style="width:70px;padding:3px 7px;font-size:.76rem" value="'+escH(filtTarima)+'">'
-    +'<button class="btn btn-xs" id="btn-det-filtrar"'
-    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
-    +'<button class="btn btn-xs" id="btn-det-limpiar" style="font-size:.73rem">Limpiar</button>'
-    +'</div>';
-
-  // filtrar y ordenar por tarima
-  var lineasFilt = lineas.filter(function(l){
-    if(filtLicHija && !(tarimaLicHija[l.tarima||'']||'').toUpperCase().includes(filtLicHija)) return false;
-    if(filtSku     && !(l.sku||'').toUpperCase().includes(filtSku)) return false;
-    if(filtTarima  && !(l.tarima||'').toUpperCase().includes(filtTarima)) return false;
-    return true;
-  });
-  // ordenar por tarima
-  lineasFilt = lineasFilt.slice().sort(function(a,b){
-    return (a.tarima||'').localeCompare(b.tarima||'', undefined, {numeric:true});
-  });
-
-  var html = barraFiltros;
-  if(!lineasFilt.length){
-    html += '<div style="color:#aaa;font-size:.82rem;padding:.5rem 0">Sin resultados.</div>';
-  } else {
-    html += '<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>Tarima</th><th>Lic. hija</th><th>SKU</th><th>Descripción</th>'
-      +'<th class="tc">Cant. captura</th>'
-      +'<th class="tc">Cant. auditoría</th>'
-      +'<th class="tc">Dif.</th>'
-      +'<th>Estado</th>'
-      +'<th>Operador</th>'
-      +'<th>Auditado</th>'
-      +(esAuditor ? '<th class="tc">Acción</th>' : '')
-      +'</tr></thead><tbody>';
-
-    lineasFilt.forEach(function(l){
-      var cantCap   = Number(l.cantidad);
-      var licHijaTar = tarimaLicHija[l.tarima||''] || '—';
-      var audBadge  = l.auditado
-        ? '<span style="color:#1e7e34;font-size:.75rem">✅ '+escH(l.auditado_por||'')+'</span>'
-        : '<span style="color:#aaa;font-size:.75rem">Pendiente</span>';
-      var cantAuditCell, difCell, estadoCell, accionCell;
-
-      if(l.auditado){
-        var cantAud   = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
-          ? Number(l.cantidad_audit) : cantCap;
-        var dif       = cantAud - cantCap;
-        var difStr    = (dif > 0 ? '+' : '') + dif;
-        var difColor  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
-        var estadoStr = dif === 0 ? 'OK' : dif < 0 ? 'Faltante' : 'Sobrante';
-        var estadoBg  = dif === 0 ? '#e8f5e9' : dif < 0 ? '#fdecea' : '#e3f2fd';
-        var estadoFg  = dif === 0 ? '#1e7e34' : dif < 0 ? '#c0392b' : '#1565c0';
-        cantAuditCell = '<td class="tc" style="font-weight:600">'+cantAud+'</td>';
-        difCell       = '<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>';
-        estadoCell    = '<td><span style="background:'+estadoBg+';color:'+estadoFg
-          +';font-size:.72rem;padding:2px 7px;border-radius:8px">'+estadoStr+'</span></td>';
-        accionCell    = esAuditor
-          ? '<td class="tc"><button class="btn btn-xs bod-btn-unauditar" data-id="'+escH(l.id)+'"'
-            +' style="background:#fdecea;color:#c0392b;font-size:.72rem">Anular</button></td>'
-          : '';
-      } else {
-        cantAuditCell = '<td class="tc"><input type="number" class="field-inp bod-cant-audit-inp"'
-          +' data-id="'+escH(l.id)+'" value="'+cantCap+'" min="1" step="1"'
-          +' style="width:60px;padding:3px 6px;font-size:.82rem;text-align:center"></td>';
-        difCell    = '<td class="tc" style="color:#ccc">—</td>';
-        estadoCell = '<td><span style="color:#aaa;font-size:.72rem">—</span></td>';
-        accionCell = esAuditor
-          ? '<td class="tc"><button class="btn btn-xs bod-btn-auditar" data-id="'+escH(l.id)+'"'
-            +' style="background:#e8f5e9;color:#1b5e20">✓ Auditar</button></td>'
-          : '';
-      }
-
-      html += '<tr>'
-        +'<td style="font-size:.78rem;font-weight:700">'+escH(l.tarima||'—')+'</td>'
-        +'<td style="font-size:.73rem;color:#1565c0">'+escH(licHijaTar)+'</td>'
-        +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
-        +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
-        +'<td class="tc">'+cantCap+'</td>'
-        +cantAuditCell
-        +difCell
-        +estadoCell
-        +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
-        +'<td>'+audBadge+'</td>'
-        +(esAuditor ? accionCell : '')
-        +'</tr>';
-    });
-    html += '</tbody></table></div>';
-  }
-
-  vistaEl.innerHTML = html;
-
-  // Wire filtros + botones
-  function _rerenderDet(){
-    var aId  = document.activeElement ? document.activeElement.id  : null;
-    var aVal = document.activeElement ? document.activeElement.value : '';
-    bodRenderDetalleAuditoria(data);
-    if(aId){ var e2=document.getElementById(aId); if(e2){ e2.focus(); e2.value=aVal; e2.setSelectionRange(aVal.length,aVal.length); } }
-  }
-  ['filtro-det-lichija','filtro-det-sku','filtro-det-tarima'].forEach(function(id){
-    var el=document.getElementById(id);
-    if(el && !el._bodWired){ el._bodWired=true; el.addEventListener('input',_rerenderDet); }
-  });
-  var bF=document.getElementById('btn-det-filtrar');
-  if(bF&&!bF._bodWired){ bF._bodWired=true; bF.addEventListener('click',_rerenderDet); }
-  var bL=document.getElementById('btn-det-limpiar');
-  if(bL&&!bL._bodWired){ bL._bodWired=true; bL.addEventListener('click',function(){
-    ['filtro-det-lichija','filtro-det-sku','filtro-det-tarima'].forEach(function(id){
-      var e=document.getElementById(id); if(e) e.value='';
-    });
-    bodRenderDetalleAuditoria(data);
-  }); }
-
-  // Wire botones Auditar
-  vistaEl.querySelectorAll('.bod-btn-auditar').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var linId = btn.dataset.id;
-      var inp = vistaEl.querySelector('.bod-cant-audit-inp[data-id="'+linId+'"]');
-      var cantAud = inp ? Number(inp.value) : 0;
-      if(!(cantAud > 0)){ alert('Ingresá una cantidad de auditoría mayor a 0.'); return; }
-      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/auditar',
-        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor(), cantidad_audit:cantAud })
-        .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
-          else alert(d.error||'Error');
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-
-  // Wire botones Anular
-  vistaEl.querySelectorAll('.bod-btn-unauditar').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var linId = btn.dataset.id;
-      if(!confirm('¿Anular auditoría de esta línea?')) return;
-      bodFetch('POST','/api/bod/linea/'+encodeURIComponent(linId)+'/unauditar',
-        { usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor() })
-        .then(function(d){
-          if(d.ok) document.getElementById('btn-bod-cargar-auditoria').click();
-          else alert(d.error||'Error');
-        }).catch(function(){ alert('Sin conexión'); });
-    });
-  });
-}
-
-// ── Navegación ─────────────────────────────────────────────────────────────
-var smBodCaptura = document.getElementById('sm-bod-captura');
-if(smBodCaptura) smBodCaptura.addEventListener('click', function(){
-  if(typeof navTo==='function') navTo('pg-bod-captura','📦 Capturar tarima');
-  // Set fecha hoy por defecto
-  var fechaEl = document.getElementById('bod-fecha');
-  if(fechaEl && !fechaEl.value) {
-    try { fechaEl.value = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}); }
-    catch(e) { fechaEl.value = new Date().toISOString().slice(0,10); }
-  }
-});
-
-var smBodAuditoria = document.getElementById('sm-bod-auditoria');
-if(smBodAuditoria) smBodAuditoria.addEventListener('click', function(){
-  if(typeof navTo==='function') navTo('pg-bod-auditoria','🔍 Auditar sesión');
-});
-
-// ── Catálogo barra-SKU ────────────────────────────────────────────────────
-var _bodBarraSkuFile = null;
-var inpBarraSku  = document.getElementById('inp-bod-barra-sku');
-var btnBarraSku  = document.getElementById('btn-bod-barra-sku-upload');
-var msgBarraSku  = document.getElementById('bod-barra-sku-msg');
-var nomBarraSku  = document.getElementById('bod-barra-sku-nombre');
-
-if(inpBarraSku) inpBarraSku.addEventListener('change', function(){
-  _bodBarraSkuFile = this.files && this.files[0] ? this.files[0] : null;
-  if(nomBarraSku) nomBarraSku.textContent = _bodBarraSkuFile ? _bodBarraSkuFile.name : '';
-  if(btnBarraSku) btnBarraSku.disabled = !_bodBarraSkuFile;
-});
-
-if(btnBarraSku) btnBarraSku.addEventListener('click', function(){
-  if(!_bodBarraSkuFile) return;
-  if(!BOD_ENABLED_CLIENT){ alert('Módulo bodega no habilitado.'); return; }
-  btnBarraSku.disabled = true;
-  msgBarraSku.innerHTML = '<span style="color:#888">⏳ Subiendo catálogo…</span>';
-  var fd = new FormData();
-  fd.append('file', _bodBarraSkuFile);
-  fetch('/api/bod/barra-sku/upload', { method:'POST', body:fd })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      btnBarraSku.disabled = false;
-      if(!d.ok){
-        msgBarraSku.innerHTML = '<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>';
-        return;
-      }
-      var txt = '✅ Listo: '+d.procesadas+' filas procesadas'
-        +(d.omitidas ? ' · '+d.omitidas+' omitidas' : '')
-        +(d.errores && d.errores.length ? ' · ⚠️ '+d.errores.length+' con error' : '');
-      msgBarraSku.innerHTML = '<span style="color:#1e7e34">'+txt+'</span>';
-      _bodBarraSkuFile = null;
-      inpBarraSku.value = '';
-      if(nomBarraSku) nomBarraSku.textContent = '';
-      btnBarraSku.disabled = true;
-    })
-    .catch(function(){
-      btnBarraSku.disabled = false;
-      msgBarraSku.innerHTML = '<span style="color:#c0392b">❌ Sin conexión. Reintentá.</span>';
-    });
-});
-
-var smBodBarraSku = document.getElementById('sm-bod-barra-sku');
-if(smBodBarraSku) smBodBarraSku.addEventListener('click', function(){
-  if(typeof navTo==='function') navTo('pg-bod-barra-sku','📋 Catálogo barra-SKU');
-});
-
-// ── pg-bod-menu: mostrar páginas ──────────────────────────────────────────
-// Las páginas están en el DOM pero con display:none. Se muestran via navTo.
-// showPage ya maneja la visibilidad de pages.
-
-// ── Arrancar ──────────────────────────────────────────────────────────────
-// Inicializar después de que el DOM esté listo y el login funcione
-if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded', bodInit);
-} else {
-  bodInit();
-}
-
-// ── Vista Manifiesto ─────────────────────────────────────────────────────
-function bodRenderManifiestoAuditoria() {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var esAud = isBodAuditor();
-  var sesId = bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
-  if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
-  // Evitar fetch simultáneo si ya hay uno en curso
-  if(bodManifestLoading) return;
-  // Reconstruir shell si no existe #manif-body (ej: venimos de Detalle)
-  var tieneContenido = !!vistaEl.querySelector('#manif-body');
-  if(!tieneContenido) {
-    vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-      +'<label>Filtrar:</label>'
-      +(function(){
-        var cargasM=(bodAuditoriaData&&bodAuditoriaData._cargas)||[];
-        var licHijasM={}; cargasM.forEach(function(cg){if(cg.licencia_hija)licHijasM[cg.licencia_hija]=true;});
-        var optsM='<option value="">Todas</option>'+Object.keys(licHijasM).sort().map(function(lh){
-          return '<option value="'+escH(lh)+'">'+escH(lh)+'</option>';
-        }).join('');
-        return '<select id="filtro-man-lichija" class="field-inp" style="padding:3px 6px;font-size:.76rem;max-width:130px">'+optsM+'</select>';
-      })()
-      +'<input type="text" id="filtro-man-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
-      +'<button class="btn btn-xs" id="btn-manif-filtrar"'
-      +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
-      +'<button class="btn btn-xs" id="btn-manif-limpiar" style="font-size:.73rem">Limpiar</button>'
-      +'</div>'
-      +'<div id="manif-body"><div style="color:#888;font-size:.82rem">Cargando manifiesto…</div></div>';
-  }
-  bodManifestLoading = true;
-  // Aviso Fase 1: manifiesto aún desde Tarimas (no desde Papel de Trabajo)
-  var avisoFase1 = document.getElementById('bod-manif-aviso-fase1');
-  if(!avisoFase1) {
-    avisoFase1 = document.createElement('div');
-    avisoFase1.id = 'bod-manif-aviso-fase1';
-    avisoFase1.style.cssText = 'background:#fff8e1;border-left:3px solid #f9a825;padding:5px 8px;font-size:.73rem;color:#795548;margin-bottom:.5rem';
-    var tieneP = Object.keys(window._bodPapelPersistido || {}).length > 0;
-    var tieneT = Object.keys(window._bodTeorico952 || {}).length > 0;
-    if(tieneP && tieneT) {
-      avisoFase1.style.background = '#e8f5e9';
-      avisoFase1.style.borderColor = '#4caf50';
-      avisoFase1.innerHTML = '📋 <strong>Papel de Trabajo guardado</strong> — Manifiesto aún usa Tarimas hasta Fase 2B.';
-    } else {
-      avisoFase1.style.background = '#fff8e1';
-      avisoFase1.style.borderColor = '#f9a825';
-      avisoFase1.innerHTML = '📌 <strong>Fuente: Tarimas</strong> — Completá el Papel de Trabajo para activar Fase 2B.';
+      // Solo actualizar metadatos no-críticos del raw del primer item
+      // (status del WMS, etc.) — pero NO items
+      // Por simplicidad y seguridad: NO tocamos nada cuando está frozen.
+      // El supervisor puede sincronizar manualmente vía /api/wms/sincronizar.
+      return;
     }
-    vistaEl.insertBefore(avisoFase1, vistaEl.firstChild);
-  }
 
-  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiesto')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      bodManifestLoading = false;
-      if(!d.ok){
-        // Si ya hay contenido visible, mostrar error pequeño sin destruirlo
-        if(tieneContenido){
-          var errEl = document.getElementById('bod-manif-err');
-          if(!errEl){
-            errEl = document.createElement('div');
-            errEl.id = 'bod-manif-err';
-            errEl.style.cssText = 'font-size:.75rem;color:#c0392b;margin-bottom:.3rem';
-            vistaEl.insertBefore(errEl, vistaEl.firstChild);
-          }
-          errEl.textContent = '⚠ ' + (d.error||'Error al actualizar');
-        } else {
-          vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">'+escH(d.error||'Error')+'</div>';
-        }
-        return;
-      }
-
-      // Advertencia de tarimas sin asignar (fuera de manifBody para no borrarse al filtrar)
-      var htmlAdv = '';
-      if(d.tarimas_sin_asignar && d.tarimas_sin_asignar.length) {
-        htmlAdv = '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;font-size:.82rem">'
-          +'⚠️ <strong>Tarimas sin asignar a furgón:</strong> '
-          +d.tarimas_sin_asignar.map(function(t){ return escH(t); }).join(', ')
-          +'</div>';
-      }
-
-      if(!d.furgones || !d.furgones.length) {
-        vistaEl.innerHTML = htmlAdv + '<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin furgones asignados todavía.</div>';
-        return;
-      }
-
-      // Render filtrado — closure interna para re-usarse en listeners
-      function renderManifiestoFiltrado() {
-        var manifBody = document.getElementById('manif-body');
-        if(!manifBody) return;
-        var filtLicHija = (document.getElementById('filtro-man-lichija')||{value:''}).value.trim().toUpperCase();
-        var filtSku     = (document.getElementById('filtro-man-sku')    ||{value:''}).value.trim().toUpperCase();
-        var furgonesFilt = d.furgones.filter(function(f){
-          if(filtLicHija && !(f.licencia_hija||'').toUpperCase().includes(filtLicHija)) return false;
-          if(filtSku) {
-            var tieneSku = f.skus.some(function(s){ return (s.sku||'').toUpperCase().includes(filtSku); });
-            if(!tieneSku) return false;
-          }
-          return true;
-        });
-        var html = '';
-        furgonesFilt.forEach(function(f){
-          var skusFilt = filtSku
-            ? f.skus.filter(function(s){ return (s.sku||'').toUpperCase().includes(filtSku); })
-            : f.skus;
-          // Estado: Finalizado > Pendiente > Auditado
-          var estado;
-          if(f.finalizado){
-            estado = '<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:2px 7px;border-radius:8px">🔒 Finalizado</span>';
-          } else if(f.tiene_pendientes){
-            estado = '<span style="background:#fff3e0;color:#e65100;font-size:.72rem;padding:2px 7px;border-radius:8px">⏳ Pendiente</span>';
-          } else {
-            estado = '<span style="background:#e8f5e9;color:#1e7e34;font-size:.72rem;padding:2px 7px;border-radius:8px">✅ Auditado</span>';
-          }
-          var finInfo = f.finalizado
-            ? '<span style="font-size:.73rem;color:#1565c0;margin-left:2px">Lic. hija: <strong>'
-              +escH(f.licencia_hija||'—')+'</strong> · Destino: <strong>'+escH(f.destino_tr999||'—')+'</strong></span>'
-            : '';
-          var btnFinal = ''; // Finalizar furgón removido — usar 'Enviar a Hamilton' desde Tarimas
-          var tarimas = f.tarimas.join(', ');
-          html += '<div class="bod-furgon-bloque" style="margin-bottom:1.25rem">'
-            +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem;flex-wrap:wrap">'
-            +'<div style="font-weight:700;font-size:.92rem">Furgón '+escH(f.furgon)+'</div>'
-            +estado+finInfo
-            +'<span style="font-size:.78rem;color:#888">'+f.total_skus+' SKUs · '+f.total_unidades.toLocaleString('es-GT')+' unidades</span>'
-            +'<span style="font-size:.75rem;color:#aaa">Tarimas: '+escH(tarimas)+'</span>'
-            +btnFinal
-            +'<button class="btn btn-xs bod-btn-export-xlsx" data-furgon="'+escH(f.furgon)+'"'
-            +' style="margin-left:auto;background:#e8f5e9;color:#1b5e20;font-size:.73rem">📥 Exportar Excel</button>'
-            +' <button class="btn btn-xs bod-btn-export-word" data-furgon="'+escH(f.furgon)+'"'
-            +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">📄 Word</button>'
-            +' <button class="btn btn-xs bod-btn-export-pdf" data-furgon="'+escH(f.furgon)+'"'
-            +' style="background:#fce4ec;color:#b71c1c;font-size:.73rem">📕 PDF</button>'
-            +'</div>'
-            +'<div class="tbl-wrap"><table><thead><tr>'
-            +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
-            +'</tr></thead><tbody>';
-          skusFilt.forEach(function(s){
-            var skuEstado = s.pendientes === 0
-              ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
-              : '<span style="color:#e65100;font-size:.75rem">No auditado</span>';
-            html += '<tr>'
-              +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
-              +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
-              +'<td class="tc">'+s.unidades.toLocaleString('es-GT')+'</td>'
-              +'<td>'+skuEstado+'</td>'
-              +'</tr>';
-          });
-          html += '</tbody></table></div></div>';
-        });
-        if(!html) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-        manifBody.innerHTML = html;
-        // Re-wiredear botones dentro del manifBody
-        var _sesIdM   = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
-        var _usuarioM = window.currentUser ? window.currentUser.name : '';
-        // Wire Finalizar furgón removido — envío a Hamilton se hace desde Tarimas.
-        // Wire botones Exportar Excel
-        manifBody.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            var furgon = btn.dataset.furgon;
-            var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
-            if(!fData) return;
-
-            var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-            var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
-            var fechaRaw = bodAuditoriaData && bodAuditoriaData.sesion
-              ? (bodAuditoriaData.sesion.fecha_trabajo || '') : '';
-            var fechaDD = fechaRaw;
-            if(/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
-              var p = fechaRaw.split('-');
-              fechaDD = p[2]+'/'+p[1]+'/'+p[0];
-            }
-            // ── Mapeo obligatorio (misma fuente que Word) ──────────────────
-            var marchamo   = carga ? (carga.marchamo     || '') : '';
-            var ubicacion  = carga ? (carga.destino_tr999|| '') : '';
-            var licId      = carga ? (carga.licencia_hija|| '') : '';
-            var transporte = carga ? (carga.transporte || carga.placa || '') : '';
-            var furgonReal = carga ? (carga.furgon || fData.furgon || furgon) : furgon;
-            // Fecha: ts_cierre > created_at > fecha_creacion > sesion.fecha_trabajo
-            var fechaRaw2 = (carga && (carga.ts_cierre||carga.created_at||carga.fecha_creacion)) || fechaRaw;
-            var fechaFmt = fechaRaw2;
-            if(/^\d{4}-\d{2}-\d{2}T/.test(fechaRaw2)) fechaFmt = fechaRaw2.slice(0,10);
-            if(/^\d{4}-\d{2}-\d{2}$/.test(fechaFmt)) {
-              var _p = fechaFmt.split('-'); fechaFmt = _p[2]+'/'+_p[1]+'/'+_p[0];
-            }
-            // Carga No.: campo específico solamente, NO licencia_hija, NO carga.id
-            var cargaNo = carga ? (carga.carga_no||carga.numero_carga||carga.no_carga||carga.id_carga||'') : '';
-            // helper firstDefined para campos numéricos (respeta 0)
-            function _fd() {
-              for(var _i=0;_i<arguments.length;_i++){
-                var _v=arguments[_i];
-                if(_v!==null&&_v!==undefined&&_v!=='') return _v;
-              }
-              return '';
-            }
-            // Responsables
-            var autorizador = carga ? (carga.enviado_hamilton_por||carga.cerrado_por||'') : '';
-            var encargado   = carga ? (carga.encargado_pedido||carga.creado_por||'') : '';
-            var auditorVal  = carga ? (carga.auditado_por||carga.validado_por||(typeof currentUser!=='undefined'&&currentUser?currentUser.name:'')||'') : '';
-            var recibidoPor = carga ? (carga.recibido_por||'') : '';
-            // ID contenedor: solo campo explícito, NO licencia_hija, NO carga.id
-            var idCont = carga ? (carga.hamilton_contenedor||carga.id_contenedor||carga.contenedor||'') : '';
-            if(!carga) {
-              if(!confirm('No se encontró carga logística para el furgón '+furgon+'.\nEl Excel se exportará sin marchamo/licencia hija/destino.\n¿Continuar de todas formas?')) return;
-            }
-            var XLSX2 = (typeof XLSX !== 'undefined') ? XLSX : null;
-            if(!XLSX2){ alert('Librería Excel no disponible. Recargá la página.'); return; }
-            var wb2 = XLSX2.utils.book_new();
-            var ws2 = {};
-            function sc(row, col, v, t) {
-              var cell = { v: v };
-              cell.t = t || (typeof v === 'number' ? 'n' : 's');
-              ws2[XLSX2.utils.encode_cell({ r: row-1, c: col-1 })] = cell;
-            }
-            // Encabezado
-            sc(2, 4, 'CARGA ENVÍO A BODEGA');
-            sc(6, 2, 'Herramientas Poderosas');
-            sc(7, 3, 'DIRECCIÓN:');
-            sc(7, 4, '27 Calle Bodega C 41-55 Zona 5 Calzada la Paz');
-            sc(8, 3, 'DIRECCIÓN DESTINO:');
-            sc(8, 4, 'BODEGA NODUS (Hamiltón)');
-            sc(9, 3, 'TRANSPORTE:');
-            sc(9, 4, transporte);
-            sc(5, 6, 'Marchamo: ' + marchamo);
-            sc(6, 6, 'Licencia: ' + licId);
-            sc(7, 6, 'UBICACIÓN: ' + ubicacion);
-            sc(8, 6, 'Fecha: ' + fechaFmt);
-            sc(9, 6, 'Furgón: ' + furgonReal);
-            sc(10, 6, 'Carga No. ' + cargaNo);
-            // Tabla encabezado
-            sc(12, 2, 'CODIGO'); sc(12, 3, 'ESTATUS'); sc(12, 4, '% AUDITADO');
-            sc(12, 5, 'DESCRIPCION'); sc(12, 6, 'CANTIDAD'); sc(12, 7, 'VALIDADO'); sc(12, 8, 'DIFERENCIA');
-            // Filas SKU — usa cantidad_auditada del endpoint (misma fuente que Word/PDF/Pantalla)
-            var DATA_START = 13;
-            fData.skus.forEach(function(s, i) {
-              var row = DATA_START + i;
-              var cantVal = s.cantidad_auditada !== null && s.cantidad_auditada !== undefined
-                ? s.cantidad_auditada : '';
-              var tieneValidacion = cantVal !== '' && cantVal !== null && cantVal !== undefined;
-              var estatus = tieneValidacion ? 'Auditado' : 'No auditado';
-              var desc = s.descripcion_completa||s.descripcion_larga||s.descripcion||s.desc||s.nombre||s.sku_desc||'';
-              // Validado: firstDefined con respeto de 0 (cantVal ya calculado arriba)
-              var validado = cantVal; // vacío si no hay auditoría real
-              var dif = (validado !== '' && validado !== null && validado !== undefined)
-                ? (Number(validado) - Number(s.unidades)) : '';
-              // % AUDITADO (usa cantVal ya calculado)
-              var cantCargada = Number(s.unidades) || 0;
-              var pctAuditado;
-              if(!tieneValidacion || cantCargada <= 0) {
-                pctAuditado = '0%';
-              } else {
-                pctAuditado = Math.min(100, Math.round((Number(cantVal) / cantCargada) * 100)) + '%';
-              }
-              sc(row, 2, s.sku);
-              sc(row, 3, estatus);
-              sc(row, 4, pctAuditado);
-              sc(row, 5, desc);
-              sc(row, 6, s.unidades, 'n');
-              if(validado !== '' && validado !== null && validado !== undefined) {
-                sc(row, 7, typeof validado === 'number' ? validado : Number(validado), 'n');
-              }
-              if(dif !== '') sc(row, 8, Number(dif), 'n');
-            });
-            // Footer — posición dinámica tras los datos
-            var FOOTER = DATA_START + fData.skus.length + 2;
-            sc(FOOTER,   2, 'AUTORIZACIÓN DE ENVÍO'); sc(FOOTER,   6, 'NOMBRE Y FIRMA QUIEN RECIBE');
-            sc(FOOTER+1, 2, 'ASTRID DUARTE');
-            sc(FOOTER+2, 2, 'CINTYA RIVERA');
-            sc(FOOTER+3, 2, 'HUVALDO PEREZ');           sc(FOOTER+3, 6, recibidoPor);
-            sc(FOOTER+5, 2, 'ENCARGADO DE PEDIDO');            sc(FOOTER+5, 6, 'AUDITOR / VALIDADOR');
-            sc(FOOTER+6, 2, encargado);                        sc(FOOTER+6, 6, auditorVal);
-            sc(FOOTER+7, 5, 'ID DE CONTENEDOR: '+idCont);
-            var lastRow = FOOTER + 9; // +1 por las 3 filas de AUTORIZACIÓN
-            ws2['!ref'] = 'A1:H'+lastRow;
-            ws2['!cols'] = [{},{ wch:17 },{ wch:11 },{ wch:8 },{ wch:55 },{ wch:10 },{ wch:11 },{ wch:11 }];
-            ws2['!merges'] = [{ s:{r:1,c:3},e:{r:1,c:7} },{ s:{r:1,c:1},e:{r:4,c:1} }];
-            XLSX2.utils.book_append_sheet(wb2, ws2, 'Manifiesto');
-            var fechaFile = fechaRaw.replace(/-/g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
-            var licFile   = (licId || 'BOD').replace(/[^A-Z0-9]/gi,'_');
-            XLSX2.writeFile(wb2, 'Manifiesto_'+licFile+'_Furgón'+furgonReal+'_'+fechaFile+'.xlsx');
-          });
-        });
-      // Wire Exportar Word
-        manifBody.querySelectorAll('.bod-btn-export-word').forEach(function(btnW){
-          btnW.addEventListener('click', function(){
-            var furgon = btnW.dataset.furgon;
-            var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-            var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
-            if(!carga || !carga.id){
-              alert('No se encontró la carga logística para el furgón '+furgon+'. Verificá que la carga existe.');
-              return;
-            }
-            // Llamar al endpoint backend que genera el .docx real
-            var url = '/api/bod/sesion/'+encodeURIComponent(sesId)
-              +'/carga-logistica/'+encodeURIComponent(carga.id)
-              +'/manifiesto-word'
-              +(currentUser ? '?usuario='+encodeURIComponent(currentUser.name) : '');
-            btnW.disabled = true;
-            btnW.textContent = '⏳ Generando...';
-            fetch(url)
-              .then(function(r){
-                if(!r.ok) return r.json().then(function(d){ throw new Error(d.error||'Error '+r.status); });
-                return r.blob();
-              })
-              .then(function(blob){
-                var a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                // Construir nombre desde datos disponibles
-                var licF = (carga.licencia_hija||'BOD').replace(/[^A-Z0-9]/gi,'_');
-                var fec  = (bodAuditoriaData&&bodAuditoriaData.sesion&&bodAuditoriaData.sesion.fecha_trabajo||'').replace(/-/g,'');
-                a.download = 'Manifiesto_'+licF+'_Furgon'+furgon+'_'+(fec||'')+'.docx';
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
-              })
-              .catch(function(err){
-                alert('Error al generar el Word: '+err.message);
-              })
-              .finally(function(){
-                btnW.disabled = false;
-                btnW.textContent = '📄 Word';
-              });
-          });
-        });
-
-        // Wire Exportar PDF
-        manifBody.querySelectorAll('.bod-btn-export-pdf').forEach(function(btnP){
-          btnP.addEventListener('click', function(){
-            var furgon = btnP.dataset.furgon;
-            var cargas = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
-            var carga  = cargas.find(function(c){ return String(c.furgon) === String(furgon); });
-            if(!carga || !carga.id){
-              alert('No se encontró la carga logística para el furgón '+furgon+'.');
-              return;
-            }
-            var url = '/api/bod/sesion/'+encodeURIComponent(sesId)
-              +'/carga-logistica/'+encodeURIComponent(carga.id)
-              +'/manifiesto-pdf'
-              +(currentUser ? '?usuario='+encodeURIComponent(currentUser.name) : '');
-            btnP.disabled = true;
-            btnP.textContent = '⏳ PDF...';
-            fetch(url)
-              .then(function(r){
-                if(!r.ok) return r.json().then(function(d){ throw new Error(d.error||'Error '+r.status); });
-                return r.blob();
-              })
-              .then(function(blob){
-                var a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                var licF = (carga.licencia_hija||'BOD').replace(/[^A-Z0-9]/gi,'_');
-                var fec  = (bodAuditoriaData&&bodAuditoriaData.sesion&&bodAuditoriaData.sesion.fecha_trabajo||'').replace(/-/g,'');
-                a.download = 'Manifiesto_'+licF+'_Furgon'+furgon+'_'+(fec||'')+'.pdf';
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
-              })
-              .catch(function(err){
-                var msg = err.message||'';
-                if(msg.indexOf('WKHTMLTOPDF_NOT_FOUND')>=0 || msg.indexOf('wkhtmltopdf')>=0 ||
-                   msg.indexOf('no disponible')>=0) {
-                  alert('📕 PDF no disponible todavía.\n\nEl servidor no tiene wkhtmltopdf instalado.\nPodés descargar el mismo manifiesto en Word (📄) o Excel (📥).\n\nErick debe configurar wkhtmltopdf en Render para habilitarlo.');
-                } else {
-                  alert('Error al generar el PDF: '+msg);
-                }
-              })
-              .finally(function(){
-                btnP.disabled = false;
-                btnP.textContent = '📕 PDF';
-              });
-          });
-        });
-      } // fin renderManifiestoFiltrado
-
-      // Asegurar que manifBody existe y poner advertencias fuera de él
-      var manifBody2 = document.getElementById('manif-body');
-      if(manifBody2 && htmlAdv) {
-        var advNode = document.getElementById('bod-manif-adv');
-        if(!advNode){ advNode = document.createElement('div'); advNode.id='bod-manif-adv'; manifBody2.before(advNode); }
-        advNode.innerHTML = htmlAdv;
-      }
-
-      renderManifiestoFiltrado();
-
-      // Listeners de filtros + botones (idempotentes con _bodWired)
-      ['filtro-man-lichija','filtro-man-sku'].forEach(function(id){
-        var el = document.getElementById(id);
-        if(el && !el._bodWired){ el._bodWired = true; el.addEventListener('input', renderManifiestoFiltrado); }
-      });
-      var bMF=document.getElementById('btn-manif-filtrar');
-      if(bMF&&!bMF._bodWired){ bMF._bodWired=true; bMF.addEventListener('click',renderManifiestoFiltrado); }
-      var bML=document.getElementById('btn-manif-limpiar');
-      if(bML&&!bML._bodWired){ bML._bodWired=true; bML.addEventListener('click',function(){
-        var f1=document.getElementById('filtro-man-lichija'); if(f1) f1.value='';
-        var f2=document.getElementById('filtro-man-sku'); if(f2) f2.value='';
-        renderManifiestoFiltrado();
-      }); }
-    })
-    .catch(function(){
-      bodManifestLoading = false;
-      if(!tieneContenido) vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Sin conexión.</div>';
+    // Contenedor SIN físico contado: comportamiento normal (preservar auditoría)
+    state.teorico[cont] = Object.assign({}, prev, {
+      items: newConts[cont],
+      meta:  newMeta[cont] || prev.meta || {},   // FIX (server v16): meta a nivel contenedor
+      type,
+      fechaCarga: fechaCargaPrev || hoy
     });
+    // Si había una alerta vieja, limpiarla (el upload nuevo se aplicó OK)
+    if(state.alertasWMS && state.alertasWMS[cont]) delete state.alertasWMS[cont];
+    // Preserve existing fisico data — never overwrite conteo work
+    if(!state.fisico[cont]) state.fisico[cont] = null;
+  });
+
+  console.log('mergeSheet:', Object.keys(newConts).length, 'contenedores procesados,',
+              congeladosCount, 'congelados (' + congeladosConCambio + ' con cambios del WMS)');
+  return Object.keys(newConts).length;
 }
 
-// ── Vista Carga Teórico (antes WMS vs App) ────────────────────────────────
-var bodWmsUploading = false;
+// ═══════════════════════════════════════════════════════════════════════════
+// CDG v2 — Módulo colaborativo (server v19, 29-may-2026)
+// Adaptado sáb 30-may-2026: corregido comentario service_role→anon,
+// rutas sku-catalog/* movidas antes de /:id (bug de routing Express).
+//
+// Arquitectura:
+//   cdg_meta_{id}  → registro en app_state con metadata, usuarios, bitácora
+//   cdg_lineas     → tabla Supabase independiente, una fila por línea
+//
+// Esto evita reescribir el array completo de líneas en cada operación.
+// Dos usuarios agregando líneas simultáneamente hacen INSERTs independientes,
+// sin conflicto de versión.
+//
+// IMPORTANTE: estos endpoints NO tocan state (el monolito Hamilton).
+// NO aparecen en buildDailyStatePayload() ni en publicState().
+// La red de seguridad saveDirectToSupabase del cliente sigue operando
+// sobre daily_state como antes — no se ve afectada.
+//
+// Backup del módulo CDG v1 (legacy): los endpoints /api/cdg/* originales
+// se conservan sin cambios más abajo para rollback en caso necesario.
+// ═══════════════════════════════════════════════════════════════════════════
 
-function bodRenderWmsVsApp() {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var sesion  = bodAuditoriaData.sesion || {};
-  // Cargar teórico persistido si window._bodTeorico952 está vacío
-  var sesId952c = sesion.id || '';
-  if(sesId952c && !Object.keys(window._bodTeorico952).length) {
-    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId952c)+'/teorico-952')
-      .then(function(d){
-        if(d && d.ok && d.rows && d.rows.length) {
-          d.rows.forEach(function(r){
-            var teoKey = bodTeoKey(r.licencia_hija||'', r.sku);
-            window._bodTeorico952[teoKey] = {
-              nombre: r.nombre||'', cantidad: r.cantidad_952||0,
-              unidades: r.unidades||0, existencia: r.existencia||0, disponible: r.disponible||0
-            };
-          });
-          bodRenderWmsVsApp(); // re-render con datos cargados
-        }
-      }).catch(function(){});
+// ── Helpers CDG v2 ─────────────────────────────────────────────────────────
+
+// Genera un UUID v4 simple (sin dependencias externas)
+// FIX (lun 1-jun-2026, v19): lock en memoria por licencia para operaciones CDG v2.
+// Resuelve la race condition donde un POST /linea en vuelo puede insertar después
+// de que el cierre ya leyó las líneas para Hamilton.
+// Estructura: { [licenciaId]: { activeWrites: 0, closing: false } }
+var cdgLocks = {};
+function cdgLockAcquire(licenciaId) {
+  if(!cdgLocks[licenciaId]) cdgLocks[licenciaId] = { activeWrites: 0, closing: false };
+  if(cdgLocks[licenciaId].closing) return false; // rechazar — cierre en progreso
+  cdgLocks[licenciaId].activeWrites++;
+  return true;
+}
+function cdgLockRelease(licenciaId) {
+  var l = cdgLocks[licenciaId];
+  if(l && l.activeWrites > 0) l.activeWrites--;
+}
+function cdgLockStartClosing(licenciaId) {
+  if(!cdgLocks[licenciaId]) cdgLocks[licenciaId] = { activeWrites: 0, closing: false };
+  cdgLocks[licenciaId].closing = true;
+}
+function cdgLockClear(licenciaId) {
+  delete cdgLocks[licenciaId];
+}
+async function cdgLockWaitDrain(licenciaId, timeoutMs) {
+  var l = cdgLocks[licenciaId];
+  if(!l) return;
+  var start = Date.now();
+  while(l.activeWrites > 0 && Date.now() - start < timeoutMs) {
+    await new Promise(function(r){ setTimeout(r, 10); });
   }
-  var licId   = sesion.licencia_id || '';
-  var sesId   = sesion.id || '';
-  var usuario = window.currentUser ? window.currentUser.name : '';
+  if(l.activeWrites > 0) {
+    // FIX: lanzar error en lugar de proceder — el cierre no puede correr con
+    // writes activos. El caller limpia el lock y responde error al cliente.
+    throw new Error('Timeout esperando que terminen ' + l.activeWrites + ' escritura(s) activa(s). Reintentá en unos segundos.');
+  }
+}
 
-  // Mostrar resumen del teórico 952 si ya fue cargado
-  var teo952 = window._bodTeorico952 || {};
-  var teoCount = Object.keys(teo952).length;
-  var teo952Html = teoCount > 0
-    ? '<div style="background:#e8f5e9;border-radius:6px;padding:5px 10px;font-size:.76rem;color:#2e7d32;margin-bottom:.4rem">'
-      +'✅ Teórico 952 cargado: <strong>'+teoCount+'</strong> SKUs. '
-      +'<button class="btn btn-xs" id="btn-ver-teo952" style="font-size:.7rem;margin-left:6px">Ver tabla</button>'
-      +'<button class="btn btn-xs" id="btn-limpiar-teo952" style="font-size:.7rem;margin-left:4px;background:#fdecea;color:#c0392b">Limpiar</button>'
-      +'</div>'
-      // Tabla de teórico 952 (oculta por defecto)
-      +'<div id="bod-teo952-tabla" style="display:none;margin-bottom:.4rem">'
-      +'<div class="tbl-wrap"><table><thead><tr>'
-      +'<th>Lic. hija</th><th>SKU</th><th>Nombre</th><th class="tc">952</th><th class="tc">Unidades</th>'
-      +'<th class="tc">Exist.</th><th class="tc">Disp.</th>'
-      +'</tr></thead><tbody>'
-      + Object.entries(teo952).map(function(kv){
-          var parts = bodSplitTeoKey(kv[0]);
-          var s=kv[1];
-          return '<tr>'
-            +'<td style="font-size:.76rem;color:#888">'+escH(parts.licencia_hija||'—')+'</td>'
-            +'<td style="font-weight:600;font-size:.78rem">'+escH(parts.sku)+'</td>'
-            +'<td style="font-size:.76rem">'+escH(s.nombre||'—')+'</td>'
-            +'<td class="tc">'+escH(String(s.cantidad||0))+'</td>'
-            +'<td class="tc">'+escH(String(s.unidades||0))+'</td>'
-            +'<td class="tc">'+escH(String(s.existencia||0))+'</td>'
-            +'<td class="tc">'+escH(String(s.disponible||0))+'</td>'
-            +'</tr>';
-        }).join('')
-      +'</tbody></table></div></div>'
-    : '<div style="background:#fff8e1;border-radius:6px;padding:5px 10px;font-size:.76rem;color:#795548;margin-bottom:.4rem">'
-      +'📌 Sin teórico 952. Subí el archivo Excel de la ubicación 952.006.001.'
-      +'</div>';
-
-  vistaEl.innerHTML = teo952Html
-    +'<div style="margin-bottom:.4rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-    +'<label class="btn btn-sm" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.75rem">'
-    +'📂 Cargar WMS teórico'
-    +'<input type="file" id="bod-wms-teorico-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
-    +'</label>'
-    +'<label class="btn btn-sm" style="cursor:pointer;background:#f3e5f5;color:#6a1b9a;font-size:.75rem">'
-    +'📥 Subir teórico 952'
-    +'<input type="file" id="bod-teo952-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0">'
-    +'</label>'
-    +'<span id="bod-wms-teorico-msg" style="font-size:.78rem"></span>'
-    +'<span id="bod-teo952-msg" style="font-size:.78rem"></span>'
-    +'</div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-    +'<label>Filtrar:</label>'
-    +(function(){
-      var licHijasW={};
-      var cargasW=(bodAuditoriaData&&bodAuditoriaData._cargas)||[];
-      cargasW.forEach(function(cg){if(cg.licencia_hija)licHijasW[cg.licencia_hija]=true;});
-      var optsW='<option value="">Todas</option>'+Object.keys(licHijasW).sort().map(function(lh){
-        return '<option value="'+escH(lh)+'">'+escH(lh)+'</option>';
-      }).join('');
-      return '<select id="filtro-wms-lichija" class="field-inp" style="padding:3px 6px;font-size:.76rem;max-width:130px">'+optsW+'</select>';
-    })()
-    +'<input type="text" id="filtro-wms-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
-    +'<button class="btn btn-xs" id="btn-wms-filtrar"'
-    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
-    +'<button class="btn btn-xs" id="btn-wms-limpiar" style="font-size:.73rem">Limpiar</button>'
-    +'</div>'
-    +'<div id="bod-wms-app-tabla"><div style="color:#888;font-size:.82rem">Cargando Carga Teórico…</div></div>';
-
-  // Wire: ver/ocultar tabla de teórico 952
-  var btnVerT = document.getElementById('btn-ver-teo952');
-  if(btnVerT) btnVerT.addEventListener('click', function(){
-    var t=document.getElementById('bod-teo952-tabla');
-    if(t) t.style.display = t.style.display==='none' ? '' : 'none';
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
   });
-  var btnLimpT = document.getElementById('btn-limpiar-teo952');
-  if(btnLimpT) btnLimpT.addEventListener('click', function(){
-    window._bodTeorico952 = {}; bodRenderWmsVsApp();
-  });
+}
 
-  // Wire: upload teórico 952 (columnas: SKU, Nombre, 952, Unidades, Exist., Disp.)
-  var inp952 = document.getElementById('bod-teo952-inp');
-  if(inp952) inp952.addEventListener('change', function(){
-    if(!this.files||!this.files[0]) return;
-    var archivo = this.files[0];
-    var msgEl = document.getElementById('bod-teo952-msg');
-    if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Leyendo '+escH(archivo.name)+'…</span>';
-    this.value = '';
-    var reader = new FileReader();
-    // Fix 1: leer licHija952 ANTES de que reader.onload se ejecute
-    var licHija952 = (document.getElementById('filtro-wms-lichija')||{}).value || '';
-    reader.onload = function(ev){
+// Lee la metadata de una licencia CDG desde app_state
+async function cdgGetMeta(licenciaId) {
+  // FIX (lun 1-jun-2026, v19): normalizar id con trim().toUpperCase() para evitar
+  // claves duplicadas por espacios o mayúsculas (iPad autocapitaliza).
+  return await dbGet('cdg_meta_' + cdgNormId(licenciaId));
+}
+
+// Guarda la metadata de una licencia CDG en app_state
+async function cdgSaveMeta(licenciaId, meta) {
+  await dbSet('cdg_meta_' + cdgNormId(licenciaId), meta);
+}
+
+// FIX (lun 1-jun-2026, v19): helper central de normalización.
+// Todos los endpoints v2 usan cdgNormId() al extraer req.params.id y al
+// construir licencia_id en filas de cdg_lineas. Garantiza que meta y líneas
+// usen siempre la misma clave canónica (sin espacios, mayúsculas).
+function cdgNormId(id) {
+  return String(id || '').trim().toUpperCase();
+}
+
+// Lee las líneas de una licencia desde cdg_lineas (tabla Supabase).
+// Carga inicial (sin desde): solo líneas NO eliminadas.
+// Delta (con desde): todas las líneas modificadas después de ese momento,
+// INCLUYENDO las eliminadas — necesario para que el polling propague deletes
+// a otras tablets. El cliente descarta las que tengan eliminada=true.
+async function cdgGetLineas(licenciaId, desde) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return [];
+  var nId   = cdgNormId(licenciaId);
+  var query = '?licencia_id=eq.' + encodeURIComponent(nId)
+            + '&order=ts_creacion.asc';
+  if(desde) {
+    // Delta: incluir eliminadas para que las tablets las descarten localmente
+    // FIX (lun 1-jun-2026, v19): usar gte. (mayor o igual) en lugar de gt.
+    // Con gt. estricto, dos líneas con el mismo ts_modif pierden la del borde
+    // del cursor — nunca llega en el delta. gte. la reenvía, y el merge del
+    // cliente la descarta como duplicado (findIndex por id). Sin pérdida de datos.
+    query += '&ts_modif=gte.' + encodeURIComponent(desde);
+  } else {
+    // Carga completa: solo activas
+    query += '&eliminada=eq.false';
+  }
+  var rows = await supabase('GET', 'cdg_lineas', null, query);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Inserta una línea nueva en cdg_lineas
+async function cdgInsertLinea(linea) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var rows = await supabase('POST', 'cdg_lineas', linea, '');
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Actualiza una línea existente (solo campos permitidos)
+async function cdgUpdateLinea(lineaId, patch, autorEsperado) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  patch.ts_modif = new Date().toISOString();
+  var query = '?id=eq.' + encodeURIComponent(lineaId)
+            + '&autor=eq.' + encodeURIComponent(autorEsperado)
+            + '&eliminada=eq.false';
+  var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Soft-delete de una línea (solo el autor puede borrar la suya)
+async function cdgSoftDeleteLinea(lineaId, autorEsperado) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var patch = { eliminada: true, ts_modif: new Date().toISOString() };
+  var query = '?id=eq.' + encodeURIComponent(lineaId)
+            + '&autor=eq.' + encodeURIComponent(autorEsperado)
+            + '&eliminada=eq.false';
+  var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+// Actualiza tsUltimaModifLineas en la metadata cuando cambian las líneas
+// FIX (sáb 30-may-2026, server v19): re-leer meta fresco desde DB antes de bump.
+// SIN este fix: si usuario A leyó meta con estado='activo' y luego usuario B
+// cerró la licencia (estado='cerrado'), el write de A sobreescribe con su meta
+// stale y reabre la licencia — riesgo operativo real.
+// CON el fix: siempre escribimos sobre la base más reciente de Supabase,
+// preservando estado/finalizador/bitacora actuales. Solo propagamos lastActivity
+// del usuario local (campo seguro de pisar — a lo sumo queda unos segundos atrás).
+// deltaTotalLineas: +1 al insertar, -1 al eliminar, 0 o undefined al editar.
+// Sin deltaTotalLineas el contador no se actualiza (no lo podemos inferir).
+// Costo: 1 GET extra por operación de línea. Aceptable para equipos de 4-6.
+async function cdgBumpLineasTs(licenciaId, metaLocal, deltaTotalLineas) {
+  var metaFresh = await cdgGetMeta(licenciaId);
+  var base = metaFresh || metaLocal; // fallback si la licencia fue borrada
+  base.tsUltimaModifLineas = new Date().toISOString();
+  base.version = (base.version || 0) + 1;
+  // Aplicar delta de totalLineas sobre el valor FRESCO (no el stale de metaLocal)
+  if(deltaTotalLineas !== undefined && deltaTotalLineas !== 0) {
+    base.totalLineas = Math.max(0, (base.totalLineas || 0) + deltaTotalLineas);
+  }
+  // Propagar solo lastActivity del usuario que operó (nunca estado de licencia)
+  var usuarios = metaLocal.usuarios || {};
+  Object.keys(usuarios).forEach(function(u) {
+    if(!base.usuarios) base.usuarios = {};
+    if(!base.usuarios[u]) base.usuarios[u] = { estado: 'activo', lastActivity: null };
+    var localTs = (usuarios[u] || {}).lastActivity;
+    if(localTs && localTs > (base.usuarios[u].lastActivity || '')) {
+      base.usuarios[u].lastActivity = localTs;
+    }
+  });
+  await cdgSaveMeta(licenciaId, base);
+  // Retornar estadoActual para que el caller detecte si la licencia fue cerrada
+  // mientras la operación estaba en vuelo y pueda responder 409 al cliente.
+  return { estadoActual: base.estado };
+}
+
+// Agrega una entrada a la bitácora de la licencia
+function cdgBitacora(meta, usuario, accion, detalle) {
+  if(!meta.bitacora) meta.bitacora = [];
+  meta.bitacora.push({
+    ts:      new Date().toISOString(),
+    usuario: usuario || '—',
+    accion:  accion,
+    detalle: detalle || ''
+  });
+  // Límite defensivo: máx 200 entradas en bitácora
+  if(meta.bitacora.length > 200) meta.bitacora = meta.bitacora.slice(-200);
+}
+
+// Verifica si una licencia acepta nuevas líneas
+function cdgAceptaLineas(meta) {
+  return meta && meta.estado === 'activo';
+}
+
+// ── GET /api/cdg/v2/listar ─────────────────────────────────────────────────
+// Lista licencias CDG v2.
+// Sin parámetros: activas, pausadas y cerradas en últimas 48h (para captura/manifiesto).
+// ?historico=true: todas las licencias cerradas sin límite de fecha (para Reportes).
+//   En modo histórico, enriquece cada licencia con totalUnidades y costoTotal
+//   calculados desde cdg_lineas vigentes (eliminada=false).
+// FIX (lun 1-jun-2026, server v20): modo histórico para Reportes/Historial CDG.
+app.get('/api/cdg/v2/listar', async (req, res) => {
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, licencias: [] });
+    }
+
+    var historico = req.query.historico === 'true';
+
+    // Busca claves que empiecen con "cdg_meta_" en app_state
+    var query = '?key=like.cdg_meta_*&order=key.asc&select=key,value';
+    var rows = await supabase('GET', 'app_state', null, query);
+    if(!Array.isArray(rows)) return res.json({ ok: true, licencias: [] });
+
+    var licencias = [];
+    var hace48h = new Date(Date.now() - 48*60*60*1000).toISOString();
+
+    rows.forEach(function(row) {
       try {
-        var wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
-        var ws = wb.Sheets[wb.SheetNames[0]];
-        var rows = XLSX.utils.sheet_to_json(ws, {defval:''});
-        var teo = {};
-        rows.forEach(function(row){
-          var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
-          if(!sku) return;
-          // Columnas reales del archivo 952.006.001: SKU | Nombre | Cant. | Unidad | Exist. | Disp.
-          // Helper: primer valor no-vacío de los candidatos dados
-          function _fv() {
-            for(var _i=0;_i<arguments.length;_i++){
-              var _v=row[arguments[_i]];
-              if(_v!==undefined&&_v!==null&&String(_v).trim()!=='') return _v;
-            } return '';
+        var meta = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        if(!meta) return;
+        var incluir;
+        if(historico) {
+          // Modo histórico: incluir todas (activas, pausadas, cerradas sin límite de fecha)
+          incluir = true;
+        } else {
+          // Modo operativo: activas, pausadas, cerradas recientes (últimas 48h)
+          incluir = meta.estado === 'activo' || meta.estado === 'pausado' ||
+            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace48h);
+        }
+        if(incluir) {
+          licencias.push({
+            id:            meta.id,
+            tipo:          meta.tipo,
+            estado:        meta.estado,
+            creadoPor:     meta.creadoPor,
+            finalizador:   meta.finalizador,
+            fechaCreacion: meta.fechaCreacion,
+            fechaCierre:   meta.fechaCierre || null,
+            totalLineas:   meta.totalLineas || 0,
+            usuarios:      Object.keys(meta.usuarios || {}),
+            // Agregados: se llenan en modo histórico; null en modo operativo
+            totalUnidades: null,
+            costoTotal:    null
+          });
+        }
+      } catch(e) { /* skip malformed */ }
+    });
+
+    // Modo histórico: enriquecer con agregados desde cdg_lineas
+    if(historico && licencias.length > 0) {
+      try {
+        // Una sola query: todas las líneas vigentes de todas las licencias encontradas
+        var ids = licencias.map(function(l){ return encodeURIComponent(l.id); }).join(',');
+        var lineasQuery = '?licencia_id=in.(' + ids + ')&eliminada=eq.false&select=licencia_id,cantidad,costo_unit';
+        var lineasRows = await supabase('GET', 'cdg_lineas', null, lineasQuery);
+
+        if(Array.isArray(lineasRows)) {
+          // Acumular por licencia_id
+          var agregados = {};
+          lineasRows.forEach(function(l){
+            var lid = l.licencia_id;
+            if(!agregados[lid]) agregados[lid] = { unidades: 0, costo: 0 };
+            var qty  = Number(l.cantidad) || 0;
+            var cost = (l.costo_unit !== null && l.costo_unit !== undefined) ? Number(l.costo_unit) : 0;
+            agregados[lid].unidades += qty;
+            agregados[lid].costo    += qty * (isNaN(cost) ? 0 : cost);
+          });
+          // Pegar los agregados en cada licencia
+          licencias.forEach(function(l){
+            var ag = agregados[l.id];
+            if(ag) {
+              l.totalUnidades = ag.unidades;
+              l.costoTotal    = ag.costo;
+            } else {
+              l.totalUnidades = 0;
+              l.costoTotal    = 0;
+            }
+          });
+        }
+      } catch(aggErr) {
+        // Si falla el enriquecimiento, devolver licencias sin agregados (no bloqueante)
+        console.log('CDG v2 listar agregados WARN:', aggErr.message);
+      }
+    }
+
+    res.json({ ok: true, licencias: licencias });
+  } catch(e) {
+    console.log('CDG v2 listar error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/crear ─────────────────────────────────────────────────
+// Crea una nueva licencia CDG.
+// Body: { id, tipo, usuario }
+// id: correlativo U25-XXXX. Si no se pasa, se genera automáticamente.
+app.post('/api/cdg/v2/crear', async (req, res) => {
+  var { id, tipo, usuario } = req.body;
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+
+  // Generar ID si no se pasó
+  if(!id) {
+    var fecha = new Date();
+    var mm = String(fecha.getMonth() + 1).padStart(2, '0');
+    var dd = String(fecha.getDate()).padStart(2, '0');
+    var rand = Math.floor(Math.random() * 9000) + 1000;
+    id = 'U25-' + mm + dd + rand;
+  }
+  // FIX (lun 1-jun-2026, v19): normalizar id con trim().toUpperCase() para evitar
+  // duplicados por espacios o mayúsculas (iPad autocapitaliza la primera letra).
+  id = cdgNormId(id); // usar helper central
+
+  // Verificar que no exista ya
+  try {
+    var existing = await cdgGetMeta(id);
+    if(existing) {
+      return res.status(409).json({ ok: false, error: 'Ya existe una licencia con ese ID. Usá /api/cdg/v2/' + id + ' para unirte.' });
+    }
+  } catch(e) { /* no existe, continuar */ }
+
+  var now = new Date().toISOString();
+  var meta = {
+    id:                   id,
+    tipo:                 tipo || 'CDG',
+    estado:               'activo',
+    creadoPor:            usuario,
+    finalizador:          usuario,
+    fechaCreacion:        now,
+    fechaCierre:          null,
+    fotosEncabezado:      [],
+    usuarios: {},
+    totalLineas:          0,
+    tsUltimaModifLineas:  now,
+    bitacora:             [],
+    version:              1
+  };
+  meta.usuarios[usuario] = {
+    estado:       'activo',
+    lastActivity: now
+  };
+  cdgBitacora(meta, usuario, 'licencia_creada', tipo || 'CDG');
+
+  try {
+    await withTimeout(cdgSaveMeta(id, meta), 15000, 'CDG crear save');
+    console.log('CDG v2 crear: licencia', id, 'por', usuario);
+    res.json({ ok: true, licencia: meta });
+  } catch(e) {
+    console.log('CDG v2 crear FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo crear la licencia. Reintentá. (' + e.message + ')' });
+  }
+});
+
+// FIX (sáb 30-may-2026, server v19): rutas /sku-catalog/* ANTES de /:id.
+// Express hace match en orden de definición. Si /:id va primero, captura
+// "sku-catalog" como parámetro :id y las rutas de catálogo nunca se alcanzan.
+// ── GET /api/cdg/v2/sku-catalog/sugerir ───────────────────────────────────
+// Devuelve hasta 15 SKUs que matcheen el texto ingresado (sku o descripcion).
+// Usado para autocomplete en el form CDG v2. Sin cargar los 41k SKUs al cliente.
+// Query: ?q=texto (mínimo 2 chars para evitar queries demasiado amplias)
+// FIX (lun 1-jun-2026, server v19): endpoint nuevo para autocomplete.
+app.get('/api/cdg/v2/sku-catalog/sugerir', async (req, res) => {
+  var q = String(req.query.q || '').trim();
+  if(q.length < 2) return res.json({ ok: true, resultados: [] });
+
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, resultados: [] });
+    }
+    // Buscar por SKU exacto primero (si es numérico) O por descripción ilike
+    // PostgREST: or=(sku.eq.X,descripcion.ilike.*Y*)
+    var qEnc = encodeURIComponent('%' + q + '%');
+    var skuEnc = encodeURIComponent(q);
+    var query = '?or=(sku.eq.' + skuEnc + ',descripcion.ilike.' + qEnc + ')'
+              + '&select=sku,descripcion,costo&limit=15';
+    var rows = await supabase('GET', 'sku_catalog', null, query);
+    if(!Array.isArray(rows)) return res.json({ ok: true, resultados: [] });
+    var resultados = rows.map(function(r){
+      return {
+        sku:        r.sku,
+        descripcion: r.descripcion || '',
+        costo:      (r.costo != null && Number(r.costo) > 0) ? Math.round(Number(r.costo)) : null
+      };
+    });
+    res.json({ ok: true, resultados: resultados });
+  } catch(e) {
+    console.log('CDG v2 sku-catalog sugerir error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── GET /api/cdg/v2/sku-catalog/buscar ────────────────────────────────────
+// Busca la descripción y costo de un SKU en el catálogo.
+// Query: ?sku=XXXX
+// FIX (lun 1-jun-2026, server v19): incluir costo en select y respuesta.
+// Antes solo devolvía sku,descripcion — el cliente no podía autollenar el costo.
+app.get('/api/cdg/v2/sku-catalog/buscar', async (req, res) => {
+  var sku = req.query.sku;
+  if(!sku) return res.status(400).json({ ok: false, error: 'falta sku' });
+
+  try {
+    if(!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.json({ ok: true, encontrado: false });
+    }
+    var query = '?sku=eq.' + encodeURIComponent(String(sku).trim()) + '&select=sku,descripcion,costo';
+    var rows  = await supabase('GET', 'sku_catalog', null, query);
+    if(Array.isArray(rows) && rows.length > 0) {
+      var row = rows[0];
+      // costo: devolver como número o null (nunca como string con símbolo)
+      var costo = (row.costo != null && row.costo !== '' && Number(row.costo) > 0)
+        ? Number(row.costo)
+        : null;
+      res.json({ ok: true, encontrado: true, sku: row.sku, descripcion: row.descripcion, costo: costo });
+    } else {
+      res.json({ ok: true, encontrado: false });
+    }
+  } catch(e) {
+    console.log('CDG v2 sku-catalog buscar error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/sku-catalog/upload ───────────────────────────────────
+// Carga o actualiza el catálogo de SKUs desde un archivo Excel/CSV.
+// Hace UPSERT por SKU (actualiza si existe, inserta si no).
+// Multer field: 'file'. Columnas esperadas: SKU + Descripción (flexible).
+app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, res) => {
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
+
+  try {
+    var wb   = XLSX.read(req.file.buffer, { type: 'buffer', raw: false });
+    var sn   = wb.SheetNames[0];
+    var rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '', raw: false });
+
+    if(rows.length < 2) {
+      return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+    }
+
+    var hdr  = rows[0].map(function(h) { return norm(String(h)); });
+    var cSku  = findCol(hdr, ['sku', 'articulo', 'artículo', 'codigo', 'código']);
+    var cDesc = findCol(hdr, ['descripcion', 'descripción', 'desc', 'nombre', 'producto']);
+
+    if(cSku < 0 || cDesc < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No se encontraron columnas SKU y Descripción. Encabezados detectados: ' + rows[0].join(', ')
+      });
+    }
+
+    // Construir lote de upserts
+    var ahora   = new Date().toISOString();
+    var lote    = [];
+    var saltados = 0;
+    rows.slice(1).forEach(function(row) {
+      var sku  = String(row[cSku]  || '').trim();
+      var desc = String(row[cDesc] || '').trim();
+      if(!sku || !desc) { saltados++; return; }
+      lote.push({ sku: sku, descripcion: desc, ts_actualizacion: ahora });
+    });
+
+    if(lote.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No se encontraron filas válidas (SKU + Descripción requeridos).' });
+    }
+
+    // Upsert en lotes de 500 para no superar límites de Supabase
+    var insertados = 0;
+    var tamLote    = 500;
+    for(var i = 0; i < lote.length; i += tamLote) {
+      var chunk = lote.slice(i, i + tamLote);
+      await supabase('POST', 'sku_catalog', chunk, '?on_conflict=sku');
+      insertados += chunk.length;
+    }
+
+    console.log('CDG v2 sku-catalog upload:', insertados, 'SKUs, saltados:', saltados);
+    res.json({ ok: true, insertados: insertados, saltados: saltados });
+  } catch(e) {
+    console.log('CDG v2 sku-catalog upload error:', e.message);
+    res.status(500).json({ ok: false, error: 'Error procesando el archivo: ' + e.message });
+  }
+});
+
+// ── GET /api/cdg/v2/:id ────────────────────────────────────────────────────
+// Polling del estado de la licencia. El cliente pasa su último timestamp
+// conocido de líneas para recibir solo el delta.
+// Query params: lineasDesde (ISO timestamp, opcional)
+app.get('/api/cdg/v2/:id', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var lineasDesde = req.query.lineasDesde || null;
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+
+    // FIX (sáb 30-may-2026, server v19): siempre consultar cdg_lineas cuando
+    // el cliente manda lineasDesde. La optimización anterior (skip si
+    // tsUltimaModifLineas no cambió) ocultaba líneas cuando el bump de metadata
+    // fallaba — la línea existía en cdg_lineas pero ninguna tablet la veía
+    // hasta hacer un refresh completo.
+    // Sin la optimización: 1 query extra a Supabase por poll (aceptable).
+    var lineas = await cdgGetLineas(licenciaId, lineasDesde);
+    var respuesta = { ok: true, meta: meta, lineas: lineas };
+
+    res.json(respuesta);
+  } catch(e) {
+    console.log('CDG v2 GET', licenciaId, 'error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/linea ─────────────────────────────────────────────
+// Agrega una línea nueva a la licencia.
+// Body: { usuario, sku, descripcion, cantidad, costoUnit, fotos[] }
+// fotos[]: array de paths en Storage (ya subidos antes de llamar este endpoint)
+app.post('/api/cdg/v2/:id/linea', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!sku)     return res.status(400).json({ ok: false, error: 'falta sku' });
+  if(cantidad === undefined || cantidad === null) {
+    return res.status(400).json({ ok: false, error: 'falta cantidad' });
+  }
+
+  // Lock: registrar escritura activa. Si la licencia está cerrando → rechazar.
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando. Ya no se pueden agregar líneas.' });
+  }
+
+  var fotosArr = Array.isArray(fotos) ? fotos : [];
+  if(fotosArr.length > 3) {
+    cdgLockRelease(licenciaId);
+    return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(!cdgAceptaLineas(meta)) {
+      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado + '. No se pueden agregar líneas.' });
+    }
+
+    var now = new Date().toISOString();
+    var linea = {
+      licencia_id:  cdgNormId(licenciaId),
+      sku:          String(sku).trim(),
+      descripcion:  descripcion || '',
+      cantidad:     Number(cantidad),
+      costo_unit:   costoUnit !== undefined ? Number(costoUnit) : null,
+      autor:        usuario,
+      fotos:        fotosArr,
+      ts_creacion:  now,
+      ts_modif:     now,
+      eliminada:    false
+    };
+
+    var lineaCreada = await withTimeout(
+      cdgInsertLinea(linea),
+      15000,
+      'CDG insertar linea'
+    );
+
+    // Actualizar metadata: totalLineas y tsUltimaModifLineas
+    // Registrar al usuario como activo si es la primera vez
+    // FIX (sáb 30-may-2026, server v19): bump de metadata en try separado.
+    // Si cdgInsertLinea ya persistió la línea y cdgBumpLineasTs falla,
+    // el catch externo respondería 500 → el cliente reintentaría → línea duplicada.
+    // Separando el try: si el bump falla, la línea está guardada, loggeamos y
+    // respondemos 200 igual. El contador totalLineas se puede recalcular desde
+    // cdg_lineas; tsUltimaModifLineas se corrige en el próximo bump exitoso.
+    var licenciaCerradaMidFlight = false;
+    try {
+      if(!meta.usuarios[usuario]) {
+        meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+        cdgBitacora(meta, usuario, 'usuario_unido', '');
+      } else {
+        meta.usuarios[usuario].lastActivity = now;
+      }
+      meta.totalLineas = (meta.totalLineas || 0) + 1;
+      var bumpResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, +1), 15000, 'CDG bump ts');
+      // Detectar si la licencia se cerró mientras esta operación estaba en vuelo
+      if(bumpResult && bumpResult.estadoActual === 'cerrado') {
+        licenciaCerradaMidFlight = true;
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata FAILED (línea ya insertada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea agregada:', licenciaId, 'sku:', sku, 'por:', usuario);
+    if(licenciaCerradaMidFlight) {
+      // La línea quedó guardada en cdg_lineas, pero la licencia se cerró
+      // mientras operabas. ok:true porque el dato está seguro.
+      return res.status(409).json({
+        ok: true,
+        linea: lineaCreada,
+        aviso: 'La licencia fue cerrada mientras agregabas la línea. Tu línea quedó guardada en el sistema.'
+      });
+    }
+    res.json({ ok: true, linea: lineaCreada });
+  } catch(e) {
+    console.log('CDG v2 agregar linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId); // liberar escritura activa siempre
+  }
+});
+
+// ── PATCH /api/cdg/v2/:id/linea/:lineaId ──────────────────────────────────
+// Edita una línea propia (datos o fotos). Solo el autor puede editar su línea.
+// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos? }
+app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var lineaId    = req.params.lineaId;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(meta.estado === 'cerrado') {
+      return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede editar.' });
+    }
+
+    // Construir patch solo con campos enviados
+    var patch = {};
+    if(sku       !== undefined) patch.sku          = String(sku).trim();
+    if(descripcion !== undefined) patch.descripcion = descripcion;
+    if(cantidad  !== undefined) patch.cantidad      = Number(cantidad);
+    if(costoUnit !== undefined) patch.costo_unit    = Number(costoUnit);
+    if(fotos     !== undefined) {
+      var fotosArr = Array.isArray(fotos) ? fotos : [];
+      if(fotosArr.length > 3) {
+        return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
+      }
+      patch.fotos = fotosArr;
+    }
+
+    if(Object.keys(patch).length === 0) {
+      return res.status(400).json({ ok: false, error: 'nada que actualizar' });
+    }
+
+    var lineaActualizada = await withTimeout(
+      cdgUpdateLinea(lineaId, patch, usuario),
+      15000,
+      'CDG editar linea'
+    );
+
+    if(!lineaActualizada) {
+      return res.status(403).json({ ok: false, error: 'No se encontró la línea o no sos el autor.' });
+    }
+
+    // Actualizar tsUltimaModifLineas para que el próximo poll la incluya.
+    // FIX (sáb 30-may-2026, server v19): try separado — si la edición ya
+    // persistió y el bump falla, respondemos 200 igual (la línea está guardada).
+    try {
+      if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+      var bumpEditResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, 0), 15000, 'CDG bump ts edit');
+      if(bumpEditResult && bumpEditResult.estadoActual === 'cerrado') {
+        console.log('CDG v2 linea editada (licencia cerrada mid-flight):', lineaId);
+        return res.status(409).json({ ok: true, linea: lineaActualizada, aviso: 'La licencia fue cerrada mientras editabas. Tu cambio quedó guardado.' });
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata (edit) FAILED (línea ya editada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea editada:', lineaId, 'por:', usuario);
+    res.json({ ok: true, linea: lineaActualizada });
+  } catch(e) {
+    console.log('CDG v2 editar linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo editar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
+// ── DELETE /api/cdg/v2/:id/linea/:lineaId ─────────────────────────────────
+// Soft-delete de una línea. Solo el autor puede borrar su propia línea.
+// Body: { usuario }
+app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var lineaId    = req.params.lineaId;
+  var { usuario } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(meta.estado === 'cerrado') {
+      return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede eliminar.' });
+    }
+
+    var resultado = await withTimeout(
+      cdgSoftDeleteLinea(lineaId, usuario),
+      15000,
+      'CDG delete linea'
+    );
+
+    if(!resultado) {
+      return res.status(403).json({ ok: false, error: 'No se encontró la línea o no sos el autor.' });
+    }
+
+    // Actualizar metadata.
+    // FIX (sáb 30-may-2026, server v19): try separado — si el soft-delete ya
+    // persistió y el bump falla, respondemos 200 igual (la línea ya está eliminada).
+    try {
+      meta.totalLineas = Math.max(0, (meta.totalLineas || 1) - 1);
+      if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+      var bumpDelResult = await withTimeout(cdgBumpLineasTs(licenciaId, meta, -1), 15000, 'CDG bump ts delete');
+      if(bumpDelResult && bumpDelResult.estadoActual === 'cerrado') {
+        console.log('CDG v2 linea eliminada (licencia cerrada mid-flight):', lineaId);
+        return res.status(409).json({ ok: true, aviso: 'La licencia fue cerrada mientras eliminabas. Tu cambio quedó guardado.' });
+      }
+    } catch(metaErr) {
+      console.log('CDG v2 bump metadata (delete) FAILED (línea ya eliminada, no bloqueante):', metaErr.message);
+    }
+
+    console.log('CDG v2 linea eliminada:', lineaId, 'por:', usuario);
+    res.json({ ok: true });
+  } catch(e) {
+    console.log('CDG v2 delete linea FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo eliminar la línea. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
+// ── POST /api/cdg/v2/:id/fotos-encabezado ─────────────────────────────────
+// Agrega fotos de encabezado a la licencia (máx 5).
+// Body: { usuario, fotos[] } — fotos son paths en Storage ya subidos
+app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario, fotos } = req.body;
+
+  if(!usuario)               return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!Array.isArray(fotos) || fotos.length === 0) {
+    return res.status(400).json({ ok: false, error: 'falta fotos' });
+  }
+  // Lock: registrar write de metadata. Si cerrando → 423.
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(!cdgAceptaLineas(meta)) {
+      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado });
+    }
+
+    var actuales = meta.fotosEncabezado || [];
+    var total    = actuales.length + fotos.length;
+    if(total > 5) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Máximo 5 fotos de encabezado. Ya tenés ' + actuales.length + ', intentás agregar ' + fotos.length + '.'
+      });
+    }
+
+    meta.fotosEncabezado = actuales.concat(fotos);
+    meta.version = (meta.version || 0) + 1;
+    if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+
+    // FIX (lun 1-jun-2026, v19): re-leer meta fresco antes de guardar para
+    // detectar cierre concurrente — mismo patrón que /accion bloque compartido.
+    var metaFreshFotos = await cdgGetMeta(licenciaId);
+    if(metaFreshFotos && metaFreshFotos.estado === 'cerrado') {
+      return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras subías la foto. No se guardó.' });
+    }
+    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG fotos encabezado save');
+    console.log('CDG v2 fotos encabezado:', licenciaId, '+' + fotos.length + ' fotos');
+    res.json({ ok: true, fotosEncabezado: meta.fotosEncabezado });
+  } catch(e) {
+    console.log('CDG v2 fotos encabezado FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudieron guardar las fotos. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
+// ── POST /api/cdg/v2/:id/accion ────────────────────────────────────────────
+// Centraliza todas las operaciones de estado de licencia y usuarios.
+// Body: { usuario, tipo, ...params }
+//
+// Tipos soportados:
+//   unirse          → usuario se une a la licencia
+//   guardar_progreso → registra lastActivity del usuario (sin cerrar)
+//   pausar          → usuario pasa a estado pausado
+//   reanudar        → usuario vuelve a activo
+//   marcar_inactivo → cliente informa que el usuario llegó a 45 min sin actividad
+//   delegar         → finalizador delega el rol a otro usuario activo
+//                     params: { nuevoFinalizador }
+//   cerrar          → finalizador cierra la licencia definitivamente
+//   desbloquear     → supervisor reabre una licencia cerrada
+//                     params: { supervisor: true }
+app.post('/api/cdg/v2/:id/accion', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario, tipo, nuevoFinalizador, supervisor } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!tipo)    return res.status(400).json({ ok: false, error: 'falta tipo de acción' });
+
+  // Lock para acciones que escriben metadata (no-cerrar).
+  // 'cerrar' gestiona el lock internamente con cdgLockStartClosing/WaitDrain.
+  var lockAdquirido = false;
+  if(tipo !== 'cerrar') {
+    if(!cdgLockAcquire(licenciaId)) {
+      return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+    }
+    lockAdquirido = true;
+  }
+
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+
+    var now = new Date().toISOString();
+
+    // ── unirse ──────────────────────────────────────────────────────────────
+    if(tipo === 'unirse') {
+      if(meta.estado === 'cerrado') {
+        return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
+      }
+      if(!meta.usuarios[usuario]) {
+        meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+        cdgBitacora(meta, usuario, 'usuario_unido', '');
+      } else {
+        // Ya estaba registrado — reactivar
+        meta.usuarios[usuario].estado       = 'activo';
+        meta.usuarios[usuario].lastActivity = now;
+        cdgBitacora(meta, usuario, 'usuario_reingreso', '');
+      }
+    }
+
+    // ── guardar_progreso ────────────────────────────────────────────────────
+    else if(tipo === 'guardar_progreso') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].lastActivity = now;
+      meta.usuarios[usuario].estado       = 'activo';
+      cdgBitacora(meta, usuario, 'progreso_guardado', '');
+    }
+
+    // ── pausar ──────────────────────────────────────────────────────────────
+    else if(tipo === 'pausar') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado       = 'pausado';
+      meta.usuarios[usuario].lastActivity = now;
+      cdgBitacora(meta, usuario, 'usuario_pausado', '');
+    }
+
+    // ── reanudar ────────────────────────────────────────────────────────────
+    else if(tipo === 'reanudar') {
+      if(meta.estado === 'cerrado') {
+        return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
+      }
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado       = 'activo';
+      meta.usuarios[usuario].lastActivity = now;
+      cdgBitacora(meta, usuario, 'usuario_reanudo', '');
+    }
+
+    // ── marcar_inactivo ─────────────────────────────────────────────────────
+    else if(tipo === 'marcar_inactivo') {
+      if(!meta.usuarios[usuario]) meta.usuarios[usuario] = { estado: 'activo', lastActivity: now };
+      meta.usuarios[usuario].estado = 'inactivo';
+      cdgBitacora(meta, usuario, 'usuario_inactivo_auto', '45 min sin actividad');
+
+      // Reasignación automática lazy del finalizador si quedó inactivo
+      if(meta.finalizador === usuario) {
+        var candidatos = Object.keys(meta.usuarios).filter(function(u) {
+          return u !== usuario && meta.usuarios[u].estado === 'activo';
+        });
+        if(candidatos.length > 0) {
+          // Criterio: usuario con actividad más reciente
+          candidatos.sort(function(a, b) {
+            return (meta.usuarios[b].lastActivity || '') > (meta.usuarios[a].lastActivity || '') ? 1 : -1;
+          });
+          var nuevo = candidatos[0];
+          meta.finalizador = nuevo;
+          cdgBitacora(meta, 'sistema', 'finalizador_reasignado_auto',
+            'De ' + usuario + ' a ' + nuevo + ' (inactividad)');
+        }
+      }
+    }
+
+    // ── delegar ─────────────────────────────────────────────────────────────
+    else if(tipo === 'delegar') {
+      if(meta.finalizador !== usuario) {
+        return res.status(403).json({ ok: false, error: 'Solo el finalizador actual puede delegar.' });
+      }
+      if(!nuevoFinalizador) {
+        return res.status(400).json({ ok: false, error: 'falta nuevoFinalizador' });
+      }
+      if(!meta.usuarios[nuevoFinalizador]) {
+        return res.status(400).json({ ok: false, error: nuevoFinalizador + ' no está en esta licencia.' });
+      }
+      meta.finalizador = nuevoFinalizador;
+      cdgBitacora(meta, usuario, 'finalizador_delegado',
+        'De ' + usuario + ' a ' + nuevoFinalizador);
+    }
+
+    // ── cerrar ──────────────────────────────────────────────────────────────
+    else if(tipo === 'cerrar') {
+      if(meta.estado === 'cerrado') {
+        return res.status(400).json({ ok: false, error: 'La licencia ya está cerrada.' });
+      }
+      // FIX (lun 1-jun-2026, v19): permitir cierre a cualquier usuario activo
+      // unido a la licencia, no solo al finalizador.
+      // Razón operativa: en multiusuario el finalizador puede no estar disponible.
+      // Supervisor (isSup desde el cliente) siempre puede cerrar.
+      var esFinalizador   = meta.finalizador === usuario;
+      var esActivoEnLic   = meta.usuarios && meta.usuarios[usuario]
+                            && meta.usuarios[usuario].estado === 'activo';
+      var esSupervisorCDG = req.body.esSupervisor === true;
+      if(!esFinalizador && !esActivoEnLic && !esSupervisorCDG) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Solo usuarios activos de la licencia o el finalizador pueden cerrar.'
+        });
+      }
+      // FIX (lun 1-jun-2026, v19): orden correcto — lock primero, re-leer fresco,
+      // luego aplicar TODOS los campos de cierre al meta fresco para no perderlos.
+      // 1. closing=true en memoria → nuevos writes reciben 423 de inmediato
+      // 2. drain → esperar writes activos (hasta 15s; lanza si no drena)
+      // 3. re-leer meta fresco → tiene fotos/bitácora de todos los writes anteriores
+      // 4. aplicar TODOS los campos de cierre al fresco
+      // 5. guardar en Supabase → lock distribuido
+      // 6. leer líneas con garantía
+      cdgLockStartClosing(licenciaId);
+      await cdgLockWaitDrain(licenciaId, 15000);
+
+      var metaFresco = await cdgGetMeta(licenciaId);
+      var base = metaFresco || meta;
+
+      // Aplicar TODOS los campos de cierre sobre el meta más reciente
+      base.estado             = 'cerrado';
+      base.fechaCierre        = now;
+      base.cerradoPor         = usuario;
+      base.finalizadorOriginal = base.finalizador;
+      base.version            = (base.version || 0) + 1;
+      cdgBitacora(base, usuario, 'licencia_cerrada',
+        esFinalizador ? 'por finalizador' : esSupervisorCDG ? 'por supervisor' : 'por usuario activo');
+      Object.keys(base.usuarios || {}).forEach(function(u){
+        base.usuarios[u].estado = 'inactivo';
+      });
+      meta = base;
+
+      await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG cerrar lock');
+
+      // Snapshot de state ANTES de mutar para rollback si falla Hamilton.
+      var snapCdg          = state.cdg     ? JSON.parse(JSON.stringify(state.cdg))     : {};
+      var snapTeorico      = state.teorico ? JSON.parse(JSON.stringify(state.teorico)) : {};
+      var snapFisico       = state.fisico  ? JSON.parse(JSON.stringify(state.fisico))  : {};
+      var snapVersion      = state.version;
+      var snapHistorialLen = (state.historial||[]).length;
+
+      var lineasV2 = await cdgGetLineas(licenciaId, null);
+      var itemsV2  = lineasV2.map(function(l) {
+        return {
+          sku:   l.sku,
+          desc:  l.descripcion || '',
+          qty:   l.cantidad,
+          costo: l.costo_unit != null ? l.costo_unit : null,
+          fotos: Array.isArray(l.fotos) ? l.fotos : [],
+          autor: l.autor
+        };
+      });
+      if(!state.cdg) state.cdg = {};
+      state.cdg[licenciaId] = {
+        items:      itemsV2,
+        status:     'locked',
+        autor:      meta.creadoPor,
+        fecha:      new Date().toLocaleDateString('es'),
+        tipo:       meta.tipo || 'CDG',
+        bloqueado:  true,
+        lastEditor: usuario,
+        fromCDGv2:  true
+      };
+      if(!state.teorico) state.teorico = {};
+      if(!state.teorico[licenciaId]) {
+        // FIX (lun 1-jun-2026, server v20): enriquecer items v2 con teoricoWMS.
+        var itemsV2base = itemsV2.map(function(s) {
+          return { sku: s.sku, desc: s.desc, qty: s.qty,
+            raw: { origen: 'CDG', status: 'CDG Validado', tipo: meta.tipo || 'CDG' } };
+        });
+        var itemsV2enc = await cdgEnriquecerItemsWMS(licenciaId, itemsV2base);
+        state.teorico[licenciaId] = {
+          items: itemsV2enc,
+          type:        meta.tipo || 'CDG',
+          fromCDG:     true,
+          cdgRef:      licenciaId,
+          cdgValidado: true,
+          cdgBloqueado: true
+        };
+        if(!state.fisico) state.fisico = {};
+        state.fisico[licenciaId] = null;
+      }
+      addHistorial(usuario, 'CDG v2 finalizado', licenciaId);
+      state.version++;
+      // Persistir de forma directa y estricta. Si falla → revertir y lanzar
+      // para que el catch del endpoint responda 500 (no ok:true mentiroso).
+      try {
+        await withTimeout(saveDailyStateStrict('CDG v2 cerrar Hamilton'), 20000, 'CDG v2 cerrar Hamilton save');
+      } catch(saveErr) {
+        // Rollback: restaurar state a como estaba antes de las mutaciones
+        state.cdg      = snapCdg;
+        state.teorico  = snapTeorico;
+        state.fisico   = snapFisico;
+        state.version  = snapVersion;
+        if(state.historial) state.historial.length = snapHistorialLen;
+        console.log('CDG v2 cerrar Hamilton ROLLBACK por fallo de persistencia:', saveErr.message);
+        // Best-effort: reabrir la licencia en Supabase restaurando estado + usuarios
+        meta.estado = 'activo'; meta.fechaCierre = null;
+        Object.keys(meta.usuarios || {}).forEach(function(u){
+          if(meta.usuarios[u]) meta.usuarios[u].estado = 'activo';
+        });
+        cdgLockClear(licenciaId); // limpiar lock para permitir nuevas escrituras
+        cdgSaveMeta(licenciaId, meta).catch(function(e2){
+          console.log('CDG v2 cerrar: no se pudo reabrir licencia tras rollback:', e2.message);
+        });
+        throw saveErr; // el catch externo responde 500
+      }
+      console.log('CDG v2 cerrar: entrada Hamilton creada para', licenciaId, '-', itemsV2.length, 'líneas');
+      cdgLockClear(licenciaId); // limpiar lock — licencia cerrada, ya no necesita rastreo
+    }
+
+    // ── desbloquear ─────────────────────────────────────────────────────────
+    else if(tipo === 'desbloquear') {
+      if(!supervisor) {
+        return res.status(403).json({ ok: false, error: 'Solo un supervisor puede desbloquear.' });
+      }
+      if(meta.estado !== 'cerrado') {
+        return res.status(400).json({ ok: false, error: 'La licencia no está cerrada.' });
+      }
+      meta.estado      = 'activo';
+      meta.fechaCierre = null;
+      cdgBitacora(meta, usuario, 'licencia_desbloqueada', 'supervisor');
+    }
+
+    else {
+      return res.status(400).json({ ok: false, error: 'Tipo de acción desconocido: ' + tipo });
+    }
+
+    // Para 'cerrar': meta ya fue guardado con lock early (meta.version ya incrementado).
+    // El bloque compartido haría un segundo increment y save redundante — lo saltamos.
+    if(tipo !== 'cerrar') {
+      // FIX (lun 1-jun-2026, v19): re-leer meta fresco antes de guardar.
+      // Escenario sin este fix: guardar_progreso lee meta (activo), cierre guarda
+      // meta cerrado + crea Hamilton, guardar_progreso termina y pisa con meta stale
+      // → licencia reabierta en Supabase con Hamilton ya creado.
+      // EXCEPCIÓN: 'desbloquear' tiene que guardar estado='activo' sobre una licencia
+      // cerrada — es exactamente su propósito, no debe ser bloqueado por esta guardia.
+      var metaFresh = await cdgGetMeta(licenciaId);
+      if(metaFresh && metaFresh.estado === 'cerrado' && tipo !== 'desbloquear') {
+        return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras procesabas esta acción. No se guardaron cambios.' });
+      }
+      meta.version = (meta.version || 0) + 1;
+      await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG accion save');
+    }
+    console.log('CDG v2 accion:', tipo, licenciaId, 'por:', usuario);
+    res.json({ ok: true, meta: meta });
+
+  } catch(e) {
+    console.log('CDG v2 accion FAILED:', tipo, licenciaId, e.message);
+    if(tipo === 'cerrar') cdgLockClear(licenciaId);
+    res.status(500).json({ ok: false, error: 'No se pudo ejecutar la acción. Reintentá. (' + e.message + ')' });
+  } finally {
+    if(lockAdquirido) cdgLockRelease(licenciaId);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FIN CDG v2 — Los endpoints /api/cdg/* originales (v1 legacy) se conservan
+// sin modificación arriba de este bloque para rollback si fuera necesario.
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Start ─────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+// Always start server — even if Supabase fails
+app.listen(PORT, () => console.log('Conteo app on port ' + PORT));
+// Load state after server is up
+loadState().catch(e => console.log('State load failed (non-fatal):', e.message));
+
+// ══════════════════════════════════════════════════════════════════════════
+// CDG v2 — MANIFIESTO / VALIDACIÓN WMS
+// FIX (lun 1-jun-2026, server v20): endpoints WMS para comparación CDG vs WMS.
+// Tabla: cdg_wms (una fila por licencia, UPSERT al recargar).
+// Routing: declarados ANTES de /:id para evitar captura por Express.
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers WMS ────────────────────────────────────────────────────────────
+
+async function cdgGetWms(licenciaId) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var rows = await supabase('GET', 'cdg_wms', null,
+    '?licencia_id=eq.' + encodeURIComponent(cdgNormId(licenciaId)) + '&limit=1');
+  return (Array.isArray(rows) && rows.length > 0) ? rows[0] : null;
+}
+
+async function cdgUpsertWms(licenciaId, data) {
+  // UPSERT por licencia_id. Reemplaza completamente si ya existe.
+  await supabase('POST', 'cdg_wms', data, '?on_conflict=licencia_id');
+}
+
+
+// Helper: normalizar valor de columna Número del WMS.
+// El Excel puede traer "U25-161959 · CDG" o "U25-161959 - CDG".
+// Se extrae solo la parte izquierda del separador para comparar con licenciaId.
+function cdgNormLicWMS(v) {
+  var s = String(v || '').trim().toUpperCase();
+  // Separador "·" (U+00B7, punto medio) con o sin espacios
+  var dotIdx = s.indexOf('·');
+  if(dotIdx >= 0) s = s.substring(0, dotIdx);
+  // Separador " - " con espacios
+  var dashIdx = s.indexOf(' - ');
+  if(dashIdx >= 0) s = s.substring(0, dashIdx);
+  return s.trim();
+}
+
+// Parseo robusto de cantidad: soporta 1234, "1,234", "1,234.00", espacios.
+// Retorna null si no es numérico o <= 0.
+function cdgParseQty(val) {
+  if(val === null || val === undefined || val === '') return null;
+  var s = String(val).trim().replace(/,/g, '');
+  var n = Number(s);
+  if(isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+// Normaliza un encabezado de columna para detección flexible:
+// "Cant." → "cant", "# Ingreso" → "ingreso", "Número" → "numero"
+function cdgNormHdr(h) {
+  return String(h || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar tildes
+    .replace(/[^a-z0-9]/g, '');                        // solo alfanumérico
+}
+
+// FIX (mar 2-jun-2026, server v20): rutas fijas /bulk y /sincronizar-hamilton
+// DEBEN ir ANTES de la ruta paramétrica /:id. Express hace match en orden.
+// Si /:id va primero, captura "bulk" como parámetro :id.
+
+// ══════════════════════════════════════════════════════════════════════════
+// CDG WMS BULK — POST /api/cdg/wms/bulk
+// FIX (lun 1-jun-2026, server v20): carga masiva de WMS para licencias antiguas.
+// Recibe el mismo Excel WMS (hoja Traslados) y procesa TODAS las licencias.
+// No requiere que la licencia exista como cdg_meta_* v2; sirve para CDG clásico.
+// No crea conteos, no modifica cdg_lineas, no toca Hamilton.
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/cdg/wms/bulk', upload.single('file'), async (req, res) => {
+  var usuario = String(req.body && req.body.usuario ? req.body.usuario : '').trim();
+  if(!usuario)  return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
+
+  try {
+    // ── 1. Parsear Excel ─────────────────────────────────────────────────
+    var wb;
+    try {
+      wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false, cellDates: true });
+    } catch(e) {
+      return res.status(400).json({ ok: false, error: 'El archivo no es un Excel válido. (' + e.message + ')' });
+    }
+
+    var advertencias = [];
+    var sheetName = wb.SheetNames.find(function(n){ return n.trim().toLowerCase() === 'traslados'; });
+    if(!sheetName) {
+      sheetName = wb.SheetNames[0];
+      advertencias.push('Hoja "Traslados" no encontrada; se usó la primera hoja: "' + sheetName + '".');
+    }
+    var ws   = wb.Sheets[sheetName];
+    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    if(rows.length < 2) return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+
+    // ── 2. Detectar columnas (reutiliza la misma lógica del endpoint individual) ─
+    var hdr    = rows[0].map(cdgNormHdr);
+    var cNum   = hdr.indexOf('numero');
+    var cSku   = hdr.indexOf('sku');
+    var cNombre = hdr.indexOf('nombre');
+    if(cNombre < 0) cNombre = hdr.indexOf('descripcion');
+    var cCant  = hdr.indexOf('cant');
+    var cUnis  = hdr.indexOf('unidades');
+    var cFecha = hdr.indexOf('fecha');
+    var cOrig  = hdr.indexOf('origen');
+    var cDest  = hdr.indexOf('destino');
+    var cTipo  = hdr.indexOf('tipo');
+    var cStatus = hdr.indexOf('status');
+    var cLineas = hdr.indexOf('lineas');
+
+    var faltantes = [];
+    if(cNum  < 0) faltantes.push('"Número"');
+    if(cSku  < 0) faltantes.push('"SKU"');
+    if(cCant < 0 && cUnis < 0) faltantes.push('"Cant." o "Unidades"');
+    if(faltantes.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Columnas requeridas no encontradas: ' + faltantes.join(', ') + '. Encabezados: ' + rows[0].join(', ')
+      });
+    }
+
+    // ── 3. Agrupar filas por licencia ─────────────────────────────────────
+    var porLicencia = {};  // licNorm → { skuMap:{}, encabezado, filaCount }
+    rows.slice(1).forEach(function(r) {
+      var licNorm = cdgNormLicWMS(r[cNum]);
+      if(!licNorm) return;
+      var sku  = String(r[cSku]  || '').trim();
+      if(!sku) return;
+      var qty  = cdgParseQty(cCant >= 0 ? r[cCant] : null);
+      if(qty === null) qty = cdgParseQty(cUnis >= 0 ? r[cUnis] : null);
+      if(qty === null) return;
+      var desc = String(cNombre >= 0 ? (r[cNombre] || '') : '').trim();
+
+      if(!porLicencia[licNorm]) {
+        porLicencia[licNorm] = {
+          skuMap: {},
+          skuOrder: [],
+          encabezado: {
+            fecha:     cFecha  >= 0 ? (r[cFecha]  || null) : null,
+            origen:    cOrig   >= 0 ? (r[cOrig]   || null) : null,
+            destino:   cDest   >= 0 ? (r[cDest]   || null) : null,
+            tipo:      cTipo   >= 0 ? (r[cTipo]   || null) : null,
+            status:    cStatus >= 0 ? (r[cStatus] || null) : null,
+            lineasWMS: cLineas >= 0 ? Number(r[cLineas] || 0) : 0
           }
-          var cantRaw  = _fv('Cant.','Cant','Cantidad','952','Cantidad 952','CANTIDAD','cantidad');
-          var existRaw = _fv('Exist.','Exist','Existencia','EXISTENCIA','existencia');
-          var dispRaw  = _fv('Disp.','Disp','Disponible','DISPONIBLE','disponible');
-          var teoParseKey = bodTeoKey(licHija952, sku);
-          teo[teoParseKey] = {
-            nombre:     String(_fv('Nombre','NOMBRE','Descripción','DESCRIPCION','nombre','descripcion')||''),
-            cantidad:   isNaN(Number(cantRaw))  ? 0 : Number(cantRaw),
-            unidades:   0,  // 'Unidad' en el archivo real es texto ('U') — no convertir a número
-            existencia: isNaN(Number(existRaw)) ? 0 : Number(existRaw),
-            disponible: isNaN(Number(dispRaw))  ? 0 : Number(dispRaw)
+        };
+      }
+      var sm = porLicencia[licNorm].skuMap;
+      if(sm[sku]) {
+        sm[sku].cantidad += qty;
+        if(!sm[sku].descripcion && desc) sm[sku].descripcion = desc;
+      } else {
+        sm[sku] = { descripcion: desc, cantidad: qty };
+        porLicencia[licNorm].skuOrder.push(sku);
+      }
+    });
+
+    var licencias = Object.keys(porLicencia);
+    if(!licencias.length) {
+      return res.status(400).json({ ok: false, error: 'No se encontraron filas válidas en el archivo.' });
+    }
+
+    // ── 4. Enriquecer descripciones vacías con sku_catalog (batch por licencia) ──
+    // Recopilar todos los SKUs sin descripción en un solo set
+    var skusSinDesc = [];
+    licencias.forEach(function(lic) {
+      var sm = porLicencia[lic].skuMap;
+      Object.keys(sm).forEach(function(sku){ if(!sm[sku].descripcion) skusSinDesc.push(sku); });
+    });
+    var descMap = {};
+    if(skusSinDesc.length > 0 && SUPABASE_URL && SUPABASE_KEY) {
+      var unique = skusSinDesc.filter(function(v, i, a){ return a.indexOf(v) === i; });
+      var chunkSize = 200;
+      for(var ci = 0; ci < unique.length; ci += chunkSize) {
+        try {
+          var chunk = unique.slice(ci, ci + chunkSize);
+          var cat = await supabase('GET', 'sku_catalog', null,
+            '?sku=in.(' + chunk.map(function(s){ return encodeURIComponent(s); }).join(',') + ')&select=sku,descripcion');
+          if(Array.isArray(cat)) cat.forEach(function(row){ if(row.descripcion) descMap[row.sku] = row.descripcion; });
+        } catch(e) { advertencias.push('Enriquecimiento parcial sku_catalog: ' + e.message); }
+      }
+    }
+
+    // ── 5. Upsert por licencia ─────────────────────────────────────────────
+    var now = new Date().toISOString();
+    var nombreArchivo = req.file.originalname || 'bulk.xlsx';
+    var licenciasActualizadas = [];
+    var licenciasSinConteoCDG = [];
+    var errores = [];
+    var totalSkus = 0;
+
+    for(var li = 0; li < licencias.length; li++) {
+      var lic = licencias[li];
+      var data = porLicencia[lic];
+      var skusArray = data.skuOrder.map(function(sku) {
+        var entry = data.skuMap[sku];
+        var desc  = entry.descripcion || descMap[sku] || '';
+        return { sku: sku, descripcion: desc, cantidad: entry.cantidad };
+      });
+      totalSkus += skusArray.length;
+
+      // Verificar si existe como v2 (meta) — solo informativo, no bloquea
+      var metaV2 = null;
+      try { metaV2 = await cdgGetMeta(lic); } catch(e) { /* no existe como v2 */ }
+      if(!metaV2 && !state.cdg[lic] && !state.teorico[lic]) {
+        licenciasSinConteoCDG.push(lic);
+      }
+
+      try {
+        await cdgUpsertWms(lic, {
+          licencia_id:    lic,
+          skus:           JSON.stringify(skusArray),
+          encabezado:     JSON.stringify(data.encabezado),
+          cargado_por:    usuario,
+          ts_carga:       now,
+          nombre_archivo: nombreArchivo,
+          total_skus:     skusArray.length,
+          total_unidades: skusArray.reduce(function(a, s){ return a + s.cantidad; }, 0)
+        });
+        licenciasActualizadas.push(lic);
+      } catch(upsertErr) {
+        errores.push({ licencia: lic, error: upsertErr.message });
+      }
+    }
+
+    console.log('CDG WMS bulk:', usuario, '—', licenciasActualizadas.length, 'licencias,', totalSkus, 'SKUs');
+    res.json({
+      ok:                      true,
+      totalLicenciasProcesadas: licencias.length,
+      totalSkus:               totalSkus,
+      licenciasActualizadas:   licenciasActualizadas,
+      licenciasSinConteoCDG:  licenciasSinConteoCDG,
+      errores:                 errores,
+      advertencias:            advertencias.length ? advertencias : undefined
+    });
+
+  } catch(e) {
+    console.log('CDG WMS bulk FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'Error en bulk WMS: ' + e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// CDG WMS SINCRONIZAR HAMILTON — POST /api/cdg/wms/sincronizar-hamilton
+// FIX (mar 2-jun-2026, server v20 rev2):
+//   - Consolida por SKU antes de cruzar con WMS (fix bug líneas repetidas).
+//     CDG clásico puede tener N filas del mismo SKU; Hamilton necesita una sola.
+//   - Fuente de consolidación: (1) cdg_lineas v2, (2) state.cdg[lic].items v1,
+//     (3) teo.items existente como fallback.
+//   - Remapea fisico existente al nuevo alineamiento por SKU consolidado.
+//   - snapshot/rollback de teorico+fisico+version+historial.
+//   - Busca por licId directo y por fallback cdgRef.
+//   - Recalcula siempre con el WMS vigente.
+//   - No crea conteos nuevos. No toca cdg_lineas. No toca Hamilton general.
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/cdg/wms/sincronizar-hamilton', async (req, res) => {
+  var usuario = String((req.body && req.body.usuario) || '').trim();
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+
+  try {
+    // FIX (mar 2-jun-2026, server v20 rev): procesar cdg_wms página por página.
+    // NO acumular en wmsAllRows — cada página se procesa y descarta para no
+    // retener skus jsonb completos de 200 licencias en memoria simultáneamente.
+    var PAGE = 200;
+    var totalProcesadas = 0;
+    var huboWms = false;
+
+    // ── Snapshot ANTES de mutar — para rollback si el save falla ──────────
+    var snapTeorico   = state.teorico ? JSON.parse(JSON.stringify(state.teorico)) : {};
+    var snapFisico    = state.fisico   ? JSON.parse(JSON.stringify(state.fisico))  : {};
+    var snapVersion   = state.version;
+    var snapHistorial = state.historial ? state.historial.length : 0;
+
+    var actualizadas   = [];
+    var sinConteo      = [];
+    var advertencias   = [];
+
+    for(var pg = 0; pg < 10; pg++) {   // máx 10 páginas = 2000 licencias
+      var pageRows = await supabase('GET', 'cdg_wms', null,
+        '?select=licencia_id,skus&limit='+PAGE+'&offset='+(pg*PAGE));
+      if(!Array.isArray(pageRows) || !pageRows.length) break;
+      huboWms = true;
+      totalProcesadas += pageRows.length;
+
+      for(var wi = 0; wi < pageRows.length; wi++) {
+      var wmsRow = pageRows[wi];
+      var lic    = String(wmsRow.licencia_id || '').trim().toUpperCase();
+      if(!lic) continue;
+
+      // Buscar entrada Hamilton: (a) directo, (b) fallback por cdgRef
+      var teoKey = null;
+      if(state.teorico && state.teorico[lic] &&
+         (state.teorico[lic].fromCDG || state.teorico[lic].cdgValidado)) {
+        teoKey = lic;
+      } else {
+        var keys = state.teorico ? Object.keys(state.teorico) : [];
+        for(var ki = 0; ki < keys.length; ki++) {
+          var k = keys[ki];
+          var t = state.teorico[k];
+          if(t && (t.fromCDG || t.cdgValidado) && String(t.cdgRef || '').trim().toUpperCase() === lic) {
+            teoKey = k; break;
+          }
+        }
+      }
+      if(!teoKey) { sinConteo.push(lic); continue; }
+
+      var teo = state.teorico[teoKey];
+
+      // ── Capturar items y fisico ANTES de cualquier mutación ──────────────
+      // CRÍTICO: viejoItems debe leerse ANTES de modificar teo.items.
+      // Si se lee después de la consolidación, ya no tiene las N filas originales
+      // del mismo SKU y el remap de fisico queda incorrecto (suma solo la primera fila).
+      // FIX (mar 2-jun-2026, server v20 rev3): mover captura aquí, antes del consolidado.
+      var viejoFisico = state.fisico && state.fisico[teoKey]
+        ? (Array.isArray(state.fisico[teoKey]) ? state.fisico[teoKey].slice() : null)
+        : null;
+      var viejoItems = (Array.isArray(teo.items) ? teo.items : [])
+        .filter(function(it){ return !it._soloWMS; });
+      try {
+        skusWMS = typeof wmsRow.skus === 'string' ? JSON.parse(wmsRow.skus) : (wmsRow.skus || []);
+      } catch(e) { skusWMS = []; }
+      if(!skusWMS.length) continue;
+
+      // Mapa WMS: SKU_UPPER → { cantidad, descripcion }
+      var wmsMap = {};
+      var wmsDescMap = {};
+      skusWMS.forEach(function(s){
+        var sk = String(s.sku || '').trim().toUpperCase();
+        wmsMap[sk] = (wmsMap[sk] || 0) + (Number(s.cantidad) || 0);
+        if(!wmsDescMap[sk] && s.descripcion) wmsDescMap[sk] = s.descripcion;
+      });
+
+      // ── Construir base consolidada por SKU ─────────────────────────────
+      // Prioridad:
+      //   1. CDG v2: leer cdg_lineas vigentes y agrupar por SKU.
+      //   2. CDG v1: leer state.cdg[lic].items y agrupar por SKU.
+      //   3. Fallback: items existentes en teo (también agrupar — puede tener dupes).
+      // En todos los casos: UNA fila por SKU en la base consolidada.
+      // { skUpper: { sku, desc, qty, costo, orden } }
+      var cdgConsolidado = {};  // SK_UPPER → { sku, desc, qty, costo, orden }
+      var ordenSku = [];        // orden de primera aparición
+
+      // Intento 1: CDG v2 desde cdg_lineas
+      var metaV2 = null;
+      try { metaV2 = await cdgGetMeta(lic); } catch(e) {}
+      if(metaV2) {
+        var lineasV2 = await cdgGetLineas(lic, null); // carga completa, solo activas
+        if(Array.isArray(lineasV2) && lineasV2.length) {
+          lineasV2.forEach(function(l){
+            var sk = String(l.sku || '').trim().toUpperCase();
+            if(!sk) return;
+            var qty = Number(l.cantidad) || 0;
+            if(cdgConsolidado[sk]) {
+              cdgConsolidado[sk].qty += qty;
+              if(!cdgConsolidado[sk].desc && l.descripcion) cdgConsolidado[sk].desc = l.descripcion;
+              if(cdgConsolidado[sk].costo == null && l.costo_unit != null) cdgConsolidado[sk].costo = l.costo_unit;
+            } else {
+              cdgConsolidado[sk] = { sku: l.sku, desc: l.descripcion||'', qty: qty, costo: l.costo_unit||null, orden: ordenSku.length };
+              ordenSku.push(sk);
+            }
+          });
+        }
+      }
+
+      // Intento 2: CDG v1 desde state.cdg
+      if(!ordenSku.length && state.cdg && state.cdg[lic]) {
+        var itemsV1 = state.cdg[lic].items || [];
+        itemsV1.forEach(function(it){
+          var sk = String(it.sku || '').trim().toUpperCase();
+          if(!sk) return;
+          var qty = Number(it.qty) || Number(it.cantidad) || 0;
+          if(cdgConsolidado[sk]) {
+            cdgConsolidado[sk].qty += qty;
+            if(!cdgConsolidado[sk].desc && it.desc) cdgConsolidado[sk].desc = it.desc;
+            if(cdgConsolidado[sk].costo == null && it.costo != null) cdgConsolidado[sk].costo = it.costo;
+          } else {
+            cdgConsolidado[sk] = { sku: it.sku, desc: it.desc||'', qty: qty, costo: it.costo||null, orden: ordenSku.length };
+            ordenSku.push(sk);
+          }
+        });
+      }
+
+      // Fallback 3: items existentes en teo (sin _soloWMS), también consolidando
+      if(!ordenSku.length) {
+        var itemsFallback = (Array.isArray(teo.items) ? teo.items : [])
+          .filter(function(it){ return !it._soloWMS; });
+        itemsFallback.forEach(function(it){
+          var sk = String(it.sku || '').trim().toUpperCase();
+          if(!sk) return;
+          var qty = Number(it.qty) || Number(it.cantidad) || 0;
+          if(cdgConsolidado[sk]) {
+            cdgConsolidado[sk].qty += qty;
+            if(!cdgConsolidado[sk].desc && it.desc) cdgConsolidado[sk].desc = it.desc;
+          } else {
+            cdgConsolidado[sk] = { sku: it.sku, desc: it.desc||'', qty: qty, costo: null, orden: ordenSku.length };
+            ordenSku.push(sk);
+          }
+        });
+      }
+
+      // ── Remap fisico existente al nuevo índice consolidado por SKU ────────
+      // fisMapeado usa viejoItems (capturado antes de mutar) y viejoFisico.
+      // fisMapeado: SK_UPPER → { fisico, daniado, quien, ts, cobertura }
+      var fisMapeado = {};
+      if(Array.isArray(viejoFisico) && viejoFisico.length && viejoItems.length) {
+        viejoItems.forEach(function(it, idx){
+          var sv = viejoFisico[idx];
+          if(!sv || sv.fisico === null || sv.fisico === undefined) return;
+          var sk = String(it.sku || '').trim().toUpperCase();
+          var fv = Number(sv.fisico);
+          var dv = Number(sv.daniado || 0);
+          if(fisMapeado[sk]) {
+            fisMapeado[sk].fisico  += fv;
+            fisMapeado[sk].daniado += dv;
+            // Conservar último quien/ts no vacío
+            if(sv.quien) fisMapeado[sk].quien = sv.quien;
+            if(sv.ts)    fisMapeado[sk].ts    = sv.ts;
+          } else {
+            fisMapeado[sk] = {
+              fisico:   fv,
+              daniado:  dv,
+              quien:    sv.quien    || '',
+              ts:       sv.ts       || '',
+              cobertura: sv.cobertura || 'En revisión',
+              calcExpr: sv.calcExpr || null
+            };
+          }
+        });
+      }
+
+      // ── Cruzar consolidado con WMS ────────────────────────────────────────
+      var skusCDG = {};
+      var nuevosItems = ordenSku.map(function(sk){
+        skusCDG[sk] = true;
+        var base = cdgConsolidado[sk];
+        var desc = base.desc || wmsDescMap[sk] || '';
+        var item = {
+          sku:  base.sku,
+          desc: desc,
+          qty:  base.qty   // Validado CDG consolidado
+        };
+        if(base.costo != null) item.costo = base.costo;
+        if(wmsMap[sk] !== undefined) {
+          item.teoricoWMS = wmsMap[sk];
+        }
+        if(base.sku && base.sku.trim().toUpperCase() !== sk) {
+          // Normalizar sku al original del CDG
+        }
+        item.raw = { origen: 'CDG', status: 'CDG Validado' };
+        return item;
+      });
+
+      // SKUs solo-WMS (en WMS pero no en CDG)
+      Object.keys(wmsMap).forEach(function(sk){
+        if(skusCDG[sk]) return;
+        nuevosItems.push({
+          sku: sk, desc: wmsDescMap[sk] || '', qty: 0,
+          teoricoWMS: wmsMap[sk],
+          raw: { origen: 'CDG', status: 'CDG Validado' },
+          _soloWMS: true
+        });
+      });
+
+      // ── Actualizar teorico ────────────────────────────────────────────────
+      teo.items = nuevosItems;
+
+      // ── Actualizar fisico si hay remap disponible ─────────────────────────
+      var tieneFisicoRemap = Object.keys(fisMapeado).length > 0;
+      if(tieneFisicoRemap) {
+        // Construir nuevo array fisico alineado a nuevosItems (excluye _soloWMS)
+        var nuevoFisico = nuevosItems.map(function(item){
+          if(item._soloWMS) return null; // SKU solo-WMS: sin físico
+          var sk = String(item.sku || '').trim().toUpperCase();
+          var fm = fisMapeado[sk];
+          if(!fm) return null; // sin físico registrado para este SKU
+          return {
+            fisico:    fm.fisico,
+            daniado:   fm.daniado,
+            quien:     fm.quien,
+            ts:        fm.ts,
+            cobertura: fm.cobertura,
+            calcExpr:  fm.calcExpr,
+            lastAt:    Date.now()
           };
         });
-        // Confirmar reemplazo si ya hay datos para esta lic.hija
-        var prefixCheck = licHija952 ? (licHija952+':') : ':';
-        var tienePrevio = Object.keys(window._bodTeorico952).some(function(k){
-          return k.slice(0, prefixCheck.length) === prefixCheck;
-        });
-        if(tienePrevio) {
-          var licLabel = licHija952 || '(global)';
-          if(!confirm('Ya existe teórico 952 para la licencia "'+licLabel+'".\n\n'
-            +'¿Reemplazar con el nuevo archivo?\n'
-            +'(Las validaciones del Papel de Trabajo se conservan)')) {
-            if(msgEl) msgEl.innerHTML='';
-            return;
-          }
-        }
-        // Merge selectivo: borrar solo las claves de la licencia hija que se está subiendo,
-        // conservar claves de otras licencias hijas intactas.
-        // Clave con lic.hija: "LICENCIA:SKU" — prefijo = "LICENCIA:"
-        // Clave global (sin lic.hija): ":SKU" — prefijo = ":"
-        var prefixTeo = licHija952 ? (licHija952+':') : ':';
-        Object.keys(window._bodTeorico952).forEach(function(k){
-          if(k.slice(0, prefixTeo.length) === prefixTeo) delete window._bodTeorico952[k];
-        });
-        Object.assign(window._bodTeorico952, teo);
-        if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Guardando en servidor…</span>';
-        // Guardar en Supabase
-        var sesId952 = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
-        // licHija952 ya está declarada fuera del onload (Fix 1)
-        if(sesId952) {
-          bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952)+'/teorico-952', {
-            licencia_hija: licHija952,
-            skus: Object.entries(teo).map(function(kv){
-              // Fix: extraer sku limpio de la clave compuesta usando bodSplitTeoKey
-              var parts = bodSplitTeoKey(kv[0]);
-              return Object.assign({ sku: parts.sku }, kv[1]);
-            }),
-            creado_por: window.currentUser ? window.currentUser.name : ''
-          }).then(function(d){
-            if(msgEl) msgEl.innerHTML = d.ok
-              ? '<span style="color:#1e7e34">✅ '+Object.keys(teo).length+' SKUs guardados</span>'
-              : '<span style="color:#c0392b">Error guardando: '+escH(d.error||'')+'</span>';
-            setTimeout(function(){ if(msgEl) msgEl.innerHTML=''; }, 3000);
-          }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión</span>'; });
-        } else {
-          if(msgEl) msgEl.innerHTML = '';
-        }
-        bodRenderWmsVsApp();
-        // También refrescar Papel de Trabajo si está activo
-      } catch(err) {
-        if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">Error leyendo archivo: '+escH(err.message)+'</span>';
+        state.fisico[teoKey] = nuevoFisico;
       }
-    };
-    reader.readAsArrayBuffer(archivo);
-  });
+      // Si no hay fisico previo con datos: no tocar state.fisico[teoKey]
 
-  // Wire upload WMS teórico (licencia bolsón/padre, sin tipo hija)
-  var inpTeorico = document.getElementById('bod-wms-teorico-inp');
-  if(inpTeorico) inpTeorico.addEventListener('change', function(){
-    if(!this.files||!this.files[0]) return;
-    var archivo = this.files[0];
-    var msgT = document.getElementById('bod-wms-teorico-msg');
-    if(msgT) msgT.innerHTML = '<span style="color:#888">⏳ Subiendo '+escH(archivo.name)+'…</span>';
-    this.value = '';
-    var fd = new FormData();
-    fd.append('file', archivo);
-    fd.append('usuario', usuario);
-    fd.append('licencia_id', licId);
-    // No enviar tipo_licencia hija_salida ni licencia_padre — es el WMS teórico del bolsón
-    fetch('/api/bod/wms/upload', { method:'POST', body:fd })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!msgT) return;
-        if(!d.ok){ msgT.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>'; return; }
-        var col = d.advertencia ? '#e65100' : '#1e7e34';
-        var txt = '✅ '+d.procesadas+' filas · Entradas 952: '+((d.entradas_bolson)||0);
-        if(d.advertencia) txt += ' ⚠';
-        msgT.innerHTML = '<span style="color:'+col+'">'+txt+'</span>';
-        bodCargarWmsVsApp(licId, sesId);
-      }).catch(function(){ if(msgT) msgT.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>'; });
-  });
+      actualizadas.push(lic + (teoKey !== lic ? '→'+teoKey : '')
+        + ' (' + nuevosItems.filter(function(i){ return !i._soloWMS; }).length + ' SKUs consolidados)');
+      } // fin for wi (pageRows)
 
-  if(licId) bodCargarWmsVsApp(licId, sesId);
-}
+      if(pageRows.length < PAGE) break; // última página
+    } // fin for pg (páginas)
 
-function _bodRenderWmsTbl() {
-  var tbl = document.getElementById('bod-wms-app-tabla');
-  if(!tbl || !_bodDatosWms) return;
-  var colores = {
-    'Cuadrado':'#1e7e34', 'Pendiente de entarimar':'#e65100',
-    'Diferencia: faltante APP':'#c0392b', 'Diferencia: excedente APP':'#1565c0',
-    'Entarimado sin WMS':'#7b1fa2', 'Sin datos':'#aaa'
-  };
-  var filtLicHija = (document.getElementById('filtro-wms-lichija')||{value:''}).value.trim().toUpperCase();
-  var filtSku     = (document.getElementById('filtro-wms-sku')    ||{value:''}).value.trim().toUpperCase();
-  var skusFilt = _bodDatosWms.filter(function(s){
-    if(filtLicHija && !(s.licencia_hija||'').toUpperCase().includes(filtLicHija)) return false;
-    if(filtSku     && !(s.sku||'').toUpperCase().includes(filtSku)) return false;
-    return true;
-  });
-  if(!skusFilt.length){ tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>'; return; }
-  var html = '<div class="tbl-wrap"><table><thead><tr>'
-    +'<th>Licencia</th><th>SKU</th><th>Descripción</th><th class="tc">WMS</th><th class="tc">App</th><th class="tc">Dif.</th>'
-    +'<th>Estado</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
-    +'</tr></thead><tbody>';
-  skusFilt.forEach(function(s){
-    var col = colores[s.estado]||'#555';
-    html += '<tr><td style="font-size:.73rem;color:#888">'+escH(s.licencia_id||'—')+'</td>'
-      +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
-      +'<td style="font-size:.8rem">'+escH(s.descripcion||'—')+'</td>'
-      +'<td class="tc">'+s.cantidad_teorica_wms+'</td>'
-      +'<td class="tc">'+s.cantidad_app+'</td>'
-      +'<td class="tc" style="color:'+col+';font-weight:600">'+(s.diferencia>0?'+':'')+s.diferencia+'</td>'
-      +'<td><span style="font-size:.72rem;color:'+col+'">'+escH(s.estado)+'</span></td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(s.tarimas||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(s.furgon||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(s.licencia_hija||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(s.destino_tr999||'—')+'</td>'
-      +'</tr>';
-  });
-  html += '</tbody></table></div>';
-  tbl.innerHTML = html;
-}
-
-function bodCargarWmsVsApp(licId, sesId) {
-  var tbl = document.getElementById('bod-wms-app-tabla');
-  if(!tbl) return;
-  fetch('/api/bod/reportes/wms-vs-app'+bodLicQuery(licId))
-    .then(function(r){
-      return r.json().then(function(d){ return {httpOk:r.ok, status:r.status, d:d}; });
-    })
-    .then(function(res){
-      var d = res.d;
-      if(!res.httpOk || !d.ok || !d.skus || !d.skus.length){
-        _bodDatosWms = [];
-        var msg = !res.httpOk
-          ? 'Carga Teórico: HTTP '+res.status+' — '+(d&&d.error||'sin detalle')
-          : 'Sin movimientos WMS para esta licencia.';
-        tbl.innerHTML='<div style="color:#aaa;font-size:.82rem">'+escH(msg)+'</div>';
-        return;
-      }
-      _bodDatosWms = d.skus;
-      _bodRenderWmsTbl();
-      ['filtro-wms-lichija','filtro-wms-sku'].forEach(function(id){
-        var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderWmsTbl);}
-      });
-      var bWF=document.getElementById('btn-wms-filtrar');
-      if(bWF&&!bWF._bodWired){ bWF._bodWired=true; bWF.addEventListener('click',_bodRenderWmsTbl); }
-      var bWL=document.getElementById('btn-wms-limpiar');
-      if(bWL&&!bWL._bodWired){ bWL._bodWired=true; bWL.addEventListener('click',function(){
-        var f1=document.getElementById('filtro-wms-lichija'); if(f1) f1.value='';
-        var f2=document.getElementById('filtro-wms-sku'); if(f2) f2.value='';
-        _bodRenderWmsTbl();
-      }); }
-    }).catch(function(e){ tbl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error Carga Teórico: '+escH(e.message||'sin conexión')+'</div>'; });
-}
-
-// ── Vista Papel de Trabajo (antes Flujo Bolsón) ──────────────────────────
-// Estado de validación en memoria: { [sku]: bool }
-var _bodPapelValidaciones = {};
-
-function bodRenderFlujoBolson() {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var cargas  = (bodAuditoriaData._cargas) || [];
-  var lineas  = bodAuditoriaData.lineas || [];
-  var esAud   = isBodAuditor();
-  var sesIdPapel = (bodAuditoriaData.sesion||{}).id||'';
-  var filtPapelPrev = (document.getElementById('filtro-papel-lichija')||{}).value||'';
-  // Cargar papel de trabajo persistido si no lo tenemos aún
-  if(sesIdPapel && !Object.keys(window._bodPapelPersistido).length) {
-    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo')
-      .then(function(d){
-        if(d && d.ok && d.rows && d.rows.length) {
-          d.rows.forEach(function(r){
-            var k = (r.licencia_hija||'')+':'+r.sku;
-            window._bodPapelPersistido[k] = {
-              validado: !!r.validado, validado_por: r.validado_por||'',
-              validado_en: r.validado_en||'',
-              cantidad_manifiesto: Number(r.cantidad_manifiesto)||0
-            };
-            // Sincronizar con validaciones en memoria (clave compuesta)
-            var papelKey = (r.licencia_hija||'')+':'+r.sku;
-            _bodPapelValidaciones[papelKey] = !!r.validado;
-          });
-          bodRenderFlujoBolson(); // re-render con datos cargados
-        }
-      }).catch(function(){});
-  }
-
-  // Construir opciones de lic.hija para el dropdown
-  var licHijasSet = {};
-  cargas.forEach(function(cg){ if(cg.licencia_hija) licHijasSet[cg.licencia_hija] = true; });
-  var licOpts = '<option value="">Todas</option>'
-    + Object.keys(licHijasSet).sort().map(function(lh){
-        return '<option value="'+escH(lh)+'">'+escH(lh)+'</option>';
-      }).join('');
-
-  // Filtro Lic. hija activo
-  var filtPapelLic = (document.getElementById('filtro-papel-lichija')||{}).value || '';
-
-  // Usar helpers — misma lógica en render y guardado
-  var fisicoSku  = bodGetFisicoSkuPorLicHija(filtPapelLic);
-  var teorico952 = bodGetTeoricoSkuPorLicHija(filtPapelLic);
-
-  // Pre-calcular tarimas por SKU + datos logísticos desde cargas
-  var tarimasPorSku  = {};  // sku → [tarimas]
-  var furgonPorSku   = {};  // sku → furgon
-  var licHijaPorSku  = {};  // sku → licencia_hija
-  var destinoPorSku  = {};  // sku → destino_tr999
-  // Mapas desde tarimas de bodega → cargas logísticas
-  var tarimaCargaMapPapel = {};
-  cargas.forEach(function(cg){
-    (Array.isArray(cg.tarimas)?cg.tarimas:[]).forEach(function(t){ tarimaCargaMapPapel[t]=cg; });
-  });
-  // Filtro: tarimas de la lic.hija activa (o todas si no hay filtro)
-  var tarimasFiltroP = filtPapelLic ? bodGetTarimasPorLicHija(filtPapelLic) : null;
-  lineas.forEach(function(l){
-    if(tarimasFiltroP && !tarimasFiltroP[l.tarima||'']) return;
-    var sku = l.sku||'?';
-    if(!tarimasPorSku[sku]) tarimasPorSku[sku] = {};
-    tarimasPorSku[sku][l.tarima||'?'] = true;
-    // Datos logísticos de la carga de esta tarima
-    var cg = tarimaCargaMapPapel[l.tarima||''];
-    if(cg) {
-      if(!furgonPorSku[sku])  furgonPorSku[sku]  = cg.furgon || '';
-      if(!licHijaPorSku[sku]) licHijaPorSku[sku]  = cg.licencia_hija || '';
-      if(!destinoPorSku[sku]) destinoPorSku[sku]  = cg.destino_tr999 || '';
+    if(!huboWms) {
+      return res.json({ ok: true, actualizadas: [], sinConteo: [], msg: 'No hay WMS cargados.' });
     }
-  });
 
-  // Asignar Tarima AI — número correlativo global por SKU ordenado
-  var skusOrdenados = Object.keys(
-    Object.assign({}, fisicoSku, teorico952)
-  ).sort();
-  var tarimarAiMap = {};
-  skusOrdenados.forEach(function(s,i){ tarimarAiMap[s] = 'AI-'+(i+1); });
-
-  // Unión de SKUs
-  var todosSkus = {};
-  Object.keys(fisicoSku).forEach(function(s){ todosSkus[s]=true; });
-  Object.keys(teorico952).forEach(function(s){ todosSkus[s]=true; });
-
-  var filas = Object.keys(todosSkus).sort().map(function(sku){
-    var fis  = fisicoSku[sku]  || { cantidad:0, desc:'' };
-    var teo  = teorico952[sku] || { nombre:'', cantidad:0 };
-    var nombre  = teo.nombre || fis.desc || '—';
-    var cant952 = Number(teo.cantidad) || 0;
-    var fisico  = Number(fis.cantidad) || 0;
-    var diff    = cant952 - fisico;
-    var seguimiento = diff > 0 ? 'Se queda en Bolsón' : diff === 0 ? 'OK' : 'Solicitar traslado a la 952';
-    var segColor = diff > 0 ? '#e65100' : diff === 0 ? '#1e7e34' : '#c0392b';
-    var papelRenderKey = (filtPapelLic||'')+':'+sku;
-    var validado  = !!_bodPapelValidaciones[papelRenderKey];
-    var cantManif = validado ? fisico : cant952;
-    var difDespues = validado ? 0 : diff;
-    var difDespColor = difDespues < 0 ? '#c0392b' : difDespues > 0 ? '#e65100' : '#1e7e34';
-    var chk = validado ? ' checked' : '';
-    var nota = diff < 0 ? '<span style="font-size:.7rem;color:#c0392b"> ⚠</span>' : '';
-    // Columnas nuevas
-    var tarimAI   = escH(tarimarAiMap[sku]||'—');
-    var tarimasLista = tarimasPorSku[sku] ? Object.keys(tarimasPorSku[sku]).sort().join(', ') : '—';
-    var furgon    = escH(furgonPorSku[sku]  || '—');
-    var licHija   = escH(licHijaPorSku[sku] || '—');
-    var destino   = escH(destinoPorSku[sku] || '—');
-    return '<tr>'
-      +'<td style="font-weight:600;font-size:.8rem">'+escH(sku)+'</td>'
-      +'<td style="font-size:.78rem">'+escH(nombre)+'</td>'
-      +'<td class="tc" style="font-size:.73rem;color:#888">'+tarimAI+'</td>'
-      +'<td class="tc">'+cant952+'</td>'
-      +'<td class="tc">'+fisico+'</td>'
-      +'<td class="tc" style="font-weight:600;color:'+segColor+'">'+diff+'</td>'
-      +'<td style="font-size:.76rem;color:'+segColor+'">'+escH(seguimiento)+nota+'</td>'
-      +(esAud
-        ? '<td class="tc"><input type="checkbox" class="bod-papel-chk" data-sku="'+escH(sku)+'"'+chk+'></td>'
-        : '<td class="tc">'+(validado?'✅':'—')+'</td>')
-      +'<td class="tc" style="font-weight:600;color:'+difDespColor+'">'+(validado?0:diff)+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+escH(tarimasLista)+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+furgon+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+licHija+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+destino+'</td>'
-      +'<td class="tc" style="font-weight:600">'+cantManif+'</td>'
-      +'</tr>';
-  }).join('');
-
-  if(!filas) filas = '<tr><td colspan="14" style="color:#aaa;font-size:.82rem;padding:12px">Sin datos. Capturá tarimas primero o cargá el teórico 952.</td></tr>';
-
-  var prevPapelLic = filtPapelLic; // guardar para restaurar tras re-render
-  vistaEl.innerHTML = ''
-    // Nota futura
-    +'<div style="background:#fff8e1;border-left:3px solid #f9a825;padding:5px 8px;font-size:.73rem;color:#795548;margin-bottom:.5rem">'
-    +'📌 <strong>Fase 1:</strong> Manifiesto aún usa Tarimas. En la próxima fase, esta tabla alimentará el Manifiesto directamente.'
-    +'</div>'
-    // Filtro lic.hija
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-    +'<label>Lic. hija:</label>'
-    +'<select id="filtro-papel-lichija" class="field-inp" style="padding:3px 6px;font-size:.76rem">'+licOpts+'</select>'
-    +'</div>'
-    // Tabla
-    +'<div class="tbl-wrap"><table>'
-    +'<thead><tr>'
-    +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">952</th>'
-    +'<th class="tc">Físico s/Aud.</th><th class="tc">Diferencia</th>'
-    +'<th>Seguimiento</th>'
-    +'<th class="tc" title="El auditor confirma traslado y valida la cantidad física">Validación</th>'
-    +'<th class="tc">Dif. post-valid.</th>'
-    +'<th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
-    +'<th class="tc">Cant. Manifiesto</th>'
-    +'</tr></thead>'
-    +'<tbody>'+filas+'</tbody>'
-    +'</table></div>'
-    // Leyenda
-    +(esAud ? '<div style="font-size:.72rem;color:#888;margin-top:.4rem">✅ Marcar Validación confirma que se investigó y autorizó el traslado. Cant. Manifiesto pasa a usar cantidad Física.</div>' : '');
-
-  // Restaurar selección del dropdown tras re-render
-  var selPapelEl = document.getElementById('filtro-papel-lichija');
-  if(selPapelEl && prevPapelLic) selPapelEl.value = prevPapelLic;
-
-  // Wire: select lic.hija re-renderiza Papel de Trabajo
-  var selPapel = document.getElementById('filtro-papel-lichija');
-  if(selPapel && !selPapel._bodWired) {
-    selPapel._bodWired = true;
-    selPapel.addEventListener('change', function(){ bodRenderFlujoBolson(); });
-  }
-
-  // Wire checkboxes de validación — guarda en Supabase
-  vistaEl.querySelectorAll('.bod-papel-chk').forEach(function(chk){
-    chk.addEventListener('change', function(){
-      var sku        = chk.dataset.sku;
-      var validado   = chk.checked;
-      var licHijaVal = (document.getElementById('filtro-papel-lichija')||{}).value || '';
-      var papelChkKey = licHijaVal+':'+sku;
-      _bodPapelValidaciones[papelChkKey] = validado;
-      // Misma lógica que el render — helpers garantizan consistencia
-      var fisicoChk = bodGetFisicoSkuPorLicHija(licHijaVal);
-      var teorChk   = bodGetTeoricoSkuPorLicHija(licHijaVal);
-      var fisico952    = (fisicoChk[sku]||{cantidad:0}).cantidad;
-      var teo952v      = (teorChk[sku]||{cantidad:0}).cantidad;
-      var diff952      = teo952v - fisico952;
-      var seg952       = diff952>0?'Se queda en Bolsón':diff952===0?'OK':'Solicitar traslado a la 952';
-      var cantManif952 = validado ? fisico952 : teo952v;
-      var usuarioPapel = window.currentUser ? window.currentUser.name : '';
-      var sesIdPapelSave = (bodAuditoriaData&&bodAuditoriaData.sesion)||{};
-      var sesId952s = sesIdPapelSave.id||'';
-      if(sesId952s && !_bodPapelGuardando) {
-        _bodPapelGuardando = true;
-        bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952s)+'/papel-trabajo', {
-          licencia_hija: licHijaVal,
-          skus: [{ sku:sku, fisico_auditoria:fisico952, diferencia:diff952,
-                   seguimiento:seg952, validado:validado,
-                   cantidad_manifiesto:cantManif952,
-                   validado_por: validado ? usuarioPapel : '' }]
-        }).then(function(d){
-          _bodPapelGuardando = false;
-          if(d && d.ok) {
-            var k = licHijaVal+':'+sku;
-            window._bodPapelPersistido[k] = { validado:validado, validado_por:usuarioPapel,
-              validado_en: new Date().toISOString(), cantidad_manifiesto:cantManif952 };
-          }
-        }).catch(function(){ _bodPapelGuardando = false; });
+    // ── Persistir ────────────────────────────────────────────────────────
+    if(actualizadas.length > 0) {
+      state.version++;
+      try {
+        await withTimeout(
+          dbSet('daily_state', buildDailyStatePayload()),
+          15000, 'CDG WMS sincronizar-hamilton save'
+        );
+        console.log('CDG WMS sincronizar-hamilton OK:', actualizadas.length, 'licencias,', usuario);
+      } catch(saveErr) {
+        // Rollback completo: restaurar teorico, fisico, version e historial
+        state.teorico = snapTeorico;
+        state.fisico  = snapFisico;
+        state.version = snapVersion;
+        if(state.historial) state.historial.length = snapHistorial;
+        console.log('CDG WMS sincronizar-hamilton ROLLBACK:', saveErr.message);
+        return res.status(500).json({
+          ok: false,
+          error: 'No se guardó. Los datos en memoria fueron restaurados. Reintentá. (' + saveErr.message + ')'
+        });
       }
-      // Re-render sin perder el filtro activo
-      bodRenderFlujoBolson();
-    });
-  });
-}
-// _bodRenderFlujoTbl: helper de tabla legacy (usada por reportes internos, no por Papel de Trabajo)
-function _bodRenderFlujoTbl() {
-  var cont = document.getElementById('flujo-tabla-cont') || document.getElementById('bod-aud-vista');
-  if(!cont || !_bodDatosFlujo) return;
-  var filtLicHijaF = (document.getElementById('filtro-flujo-lichija')||{value:''}).value.trim().toUpperCase();
-  var filtSkuF     = (document.getElementById('filtro-flujo-sku')    ||{value:''}).value.trim().toUpperCase();
-  var movFilt = _bodDatosFlujo.filter(function(m){
-    if(filtLicHijaF && !(m.licencia_hija||'').toUpperCase().includes(filtLicHijaF)) return false;
-    if(filtSkuF     && !(m.sku||'').toUpperCase().includes(filtSkuF)) return false;
-    return true;
-  });
-  var html = '<div class="tbl-wrap"><table><thead><tr>'
-    +'<th>SKU</th><th>Descripción</th><th class="tc">Entradas 952</th><th class="tc">Salidas TR999</th>'
-    +'<th class="tc">Remanente</th><th>Lic. origen</th><th>Lic. hija</th><th>Furgón</th>'
-    +'<th>Tarimas</th><th>Placa</th><th>Marchamo</th><th>Destino TR999</th>'
-    +'</tr></thead><tbody>';
-  movFilt.forEach(function(m){
-    var col = m.remanente > 0 ? '#e65100' : m.remanente < 0 ? '#c0392b' : '#1e7e34';
-    html += '<tr><td style="font-weight:600">'+escH(m.sku)+'</td>'
-      +'<td style="font-size:.8rem">'+escH(m.descripcion||'—')+'</td>'
-      +'<td class="tc">'+m.entradas_952+'</td>'
-      +'<td class="tc">'+m.salidas_tr999+'</td>'
-      +'<td class="tc" style="font-weight:600;color:'+col+'">'+m.remanente+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_origen||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.licencia_hija||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.furgon||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.tarimas||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.placa||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.marchamo||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(m.destino_tr999||'—')+'</td>'
-      +'</tr>';
-  });
-  html += '</tbody></table></div>';
-  if(!movFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-  cont.innerHTML = html;
-}
-
-// ── Vista Remanentes ─────────────────────────────────────────────────────
-function bodRenderRemanentes() {
-  var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var licId = (bodAuditoriaData.sesion||{}).licencia_id || '';
-  vistaEl.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-    +'<label>Filtrar:</label>'
-    +'<input type="text" id="filtro-rem-lichija" class="field-inp" placeholder="Lic. hija" style="width:110px;padding:3px 7px;font-size:.76rem">'
-    +'<input type="text" id="filtro-rem-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
-    +'<button class="btn btn-xs" id="btn-rem-filtrar"'
-    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
-    +'<button class="btn btn-xs" id="btn-rem-limpiar" style="font-size:.73rem">Limpiar</button>'
-    +'</div>'
-    +'<div id="rem-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando remanentes…</div></div>';
-  fetch('/api/bod/reportes/remanentes'+bodLicQuery(licId))
-    .then(function(r){
-      return r.json().then(function(d){ return {httpOk:r.ok, status:r.status, d:d}; });
-    })
-    .then(function(res){
-      var d = res.d;
-      if(!res.httpOk || !d.ok || !d.remanentes || !d.remanentes.length){
-        var rc2=document.getElementById('rem-tabla-cont')||vistaEl;
-        var msg = !res.httpOk
-          ? 'Remanentes: HTTP '+res.status+' — '+(d&&d.error||'sin detalle')
-          : 'Sin remanentes.';
-        rc2.innerHTML='<div style="color:#aaa;font-size:.82rem">'+escH(msg)+'</div>'; return;
-      }
-      _bodDatosRem = d.remanentes;
-      _bodRenderRemTbl();
-      ['filtro-rem-lichija','filtro-rem-sku'].forEach(function(id){
-        var el=document.getElementById(id); if(el&&!el._bodWired){el._bodWired=true;el.addEventListener('input',_bodRenderRemTbl);}
-      });
-      var bRF=document.getElementById('btn-rem-filtrar');
-      if(bRF&&!bRF._bodWired){ bRF._bodWired=true; bRF.addEventListener('click',_bodRenderRemTbl); }
-      var bRL=document.getElementById('btn-rem-limpiar');
-      if(bRL&&!bRL._bodWired){ bRL._bodWired=true; bRL.addEventListener('click',function(){
-        var f1=document.getElementById('filtro-rem-lichija'); if(f1) f1.value='';
-        var f2=document.getElementById('filtro-rem-sku'); if(f2) f2.value='';
-        _bodRenderRemTbl();
-      }); }
-    }).catch(function(e){ var rc2=document.getElementById('rem-tabla-cont')||vistaEl; rc2.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error Remanentes: '+escH(e.message||'sin conexión')+'</div>'; });
-}
-function _bodRenderRemTbl() {
-  var cont = document.getElementById('rem-tabla-cont') || document.getElementById('bod-aud-vista');
-  if(!cont || !_bodDatosRem) return;
-  var estadoCol = {
-    'Pendiente de entarimar':'#e65100', 'Pendiente de asignación de furgón':'#6a1b9a',
-    'Pendiente de licencia hija':'#ad1457', 'Pendiente de movimiento WMS salida':'#1565c0',
-    'Pendiente por ubicación distinta a 952':'#f57c00', 'Remanente operativo':'#c0392b',
-    'Entarimado sin WMS':'#7b1fa2', 'Pendiente de traslado':'#1565c0',
-    'Pendiente normal':'#e65100', 'Atrasado':'#c0392b', 'Sin fecha':'#888'
-  };
-  var filtLicHijaR = (document.getElementById('filtro-rem-lichija')||{value:''}).value.trim().toUpperCase();
-  var filtSkuR     = (document.getElementById('filtro-rem-sku')    ||{value:''}).value.trim().toUpperCase();
-  var remFilt = _bodDatosRem.filter(function(r){
-    if(filtLicHijaR && !(r.licencia_hija||'').toUpperCase().includes(filtLicHijaR)) return false;
-    if(filtSkuR     && !(r.sku||'').toUpperCase().includes(filtSkuR)) return false;
-    return true;
-  });
-  var html = '<div class="tbl-wrap"><table><thead><tr>'
-    +'<th>SKU</th><th>Descripción</th>'
-    +'<th class="tc">Entrada 952</th><th class="tc">App</th><th class="tc">Salida TR999</th><th class="tc">Remanente</th>'
-    +'<th>Causa</th><th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Placa</th><th>Marchamo</th><th>Destino</th>'
-    +'</tr></thead><tbody>';
-  remFilt.forEach(function(r){
-    var col = estadoCol[r.estado_remanente]||'#555';
-    html += '<tr><td style="font-weight:600">'+escH(r.sku)+'</td>'
-      +'<td style="font-size:.8rem">'+escH(r.descripcion||'—')+'</td>'
-      +'<td class="tc">'+Number(r.entrada_952||0)+'</td>'
-      +'<td class="tc">'+Number(r.app_entarimada||0)+'</td>'
-      +'<td class="tc">'+Number(r.salida_tr999||0)+'</td>'
-      +'<td class="tc" style="font-weight:600">'+r.cantidad_remanente+'</td>'
-      +'<td><span style="font-size:.71rem;color:'+col+'">'+escH(r.estado_remanente)+'</span></td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.tarimas||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.furgon||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.licencia_hija||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.placa||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.marchamo||'—')+'</td>'
-      +'<td style="font-size:.73rem;color:#888">'+escH(r.destino_tr999||'—')+'</td>'
-      +'</tr>';
-  });
-  html += '</tbody></table></div>';
-  if(!remFilt.length) html = '<div style="color:#aaa;font-size:.82rem">Sin resultados con los filtros aplicados.</div>';
-  cont.innerHTML = html;
-}
-
-// ── Reporte Consolidado Excel ─────────────────────────────────────────────
-function bodDescargarConsolidado() {
-  var sesion = bodAuditoriaData && bodAuditoriaData.sesion;
-  if(!sesion){ alert('Cargá una sesión primero.'); return; }
-  var licId  = sesion.licencia_id || '';
-  var sesId  = sesion.id          || '';
-  var fecha  = sesion.fecha_trabajo || '';
-  var XLSX2  = (typeof XLSX !== 'undefined') ? XLSX : null;
-  if(!XLSX2){ alert('Librería Excel no disponible.'); return; }
-
-  var q      = bodLicQuery(licId);
-  var msgEl  = document.getElementById('bod-aud-msg');
-  if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Generando consolidado…</span>';
-
-  function fallback(data) {
-    return (data && data.length > 1) ? data : data.concat([['Sin datos']]);
-  }
-
-  // ── Helper: datos logísticos de tarima desde una respuesta de furgones ──
-  function buildCgMaps(furgRes) {
-    var asigMap = {}, cargaByFurgon = {}, cargaByTarima = {};
-    if(furgRes && furgRes.ok) {
-      (furgRes.asignaciones||[]).forEach(function(a){ asigMap[String(a.tarima||'')] = String(a.furgon||''); });
-      (furgRes.cargas||[]).forEach(function(c){
-        if(c.furgon) cargaByFurgon[String(c.furgon)] = c;
-        (Array.isArray(c.tarimas)?c.tarimas:[]).forEach(function(t){ cargaByTarima[String(t||'')] = c; });
-      });
     }
-    return {
-      cgForTarima: function(t) {
-        return cargaByTarima[t] || (asigMap[t] ? cargaByFurgon[asigMap[t]] : null) || {};
-      },
-      asigMap: asigMap,
-      cargaByFurgon: cargaByFurgon
-    };
+
+    res.json({
+      ok:              true,
+      actualizadas:    actualizadas,
+      sinConteo:       sinConteo,
+      advertencias:    advertencias.length ? advertencias : undefined,
+      totalProcesadas: totalProcesadas
+    });
+
+  } catch(e) {
+    console.log('CDG WMS sincronizar-hamilton FAILED:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
-
-  // ── Construir filas para una licencia concreta ──────────────────────────
-  function buildRowsForLic(licLabel, sesRes, furgRes, manifRes) {
-    var maps   = buildCgMaps(furgRes);
-    var lineas = (sesRes && sesRes.ok && sesRes.lineas) ? sesRes.lineas : [];
-    var tRows  = [], dRows = [], mRows = [];
-
-    // Tarimas
-    var porTarima = {};
-    lineas.forEach(function(l){
-      var t = l.tarima||'?';
-      if(!porTarima[t]) porTarima[t] = { lineas:0, unidades:0 };
-      porTarima[t].lineas++;
-      porTarima[t].unidades += Number(l.cantidad||0);
-    });
-    bodSortTarimas(Object.keys(porTarima)).forEach(function(t){
-      var r    = porTarima[t];
-      var cg   = maps.cgForTarima(t);
-      var furg = maps.asigMap[t] || (cg.furgon||'');
-      tRows.push([licLabel, t, r.lineas, r.unidades,
-        furg ? 'Furgón '+furg : 'Sin asignar',
-        furg, cg.placa||'', cg.marchamo||'', cg.licencia_hija||'', cg.destino_tr999||'']);
-    });
-
-    // Detalle
-    lineas.forEach(function(l){
-      var cg      = maps.cgForTarima(l.tarima||'');
-      var cantCap = Number(l.cantidad||0);
-      var cantAud = (l.cantidad_audit !== null && l.cantidad_audit !== undefined)
-        ? Number(l.cantidad_audit) : (l.auditado ? cantCap : '');
-      var dif     = (l.auditado && cantAud !== '') ? (cantAud - cantCap) : '';
-      dRows.push([licLabel, l.tarima||'', cg.licencia_hija||'',
-        l.sku||'', l.descripcion||'', cantCap, cantAud, dif,
-        l.auditado ? 'Auditado' : 'Pendiente', l.operador||'', l.auditado_por||'']);
-    });
-
-    // Manifiesto
-    if(manifRes && manifRes.ok && manifRes.furgones) {
-      manifRes.furgones.forEach(function(f){
-        var cg = maps.cargaByFurgon[String(f.furgon||'')] || {};
-        f.skus.forEach(function(s){
-          mRows.push([licLabel, f.furgon,
-            f.licencia_hija || cg.licencia_hija || '',
-            f.destino_tr999 || cg.destino_tr999 || '',
-            f.tarimas.join(', '), s.sku, s.descripcion||'', s.unidades,
-            s.pendientes === 0 ? 'Auditado' : 'No auditado']);
-        });
-      });
-    }
-    return { tRows:tRows, dRows:dRows, mRows:mRows };
-  }
-
-  // ── Cargar datos de una licencia por ID de sesión conocido ──────────────
-  function fetchLicData(sid) {
-    return Promise.all([
-      fetch('/api/bod/sesion/'+encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-      fetch('/api/bod/sesion/'+encodeURIComponent(sid)+'/furgones').then(function(r){ return r.json(); }),
-      fetch('/api/bod/sesion/'+encodeURIComponent(sid)+'/manifiesto').then(function(r){ return r.json(); })
-    ]);
-  }
-
-  // ── Lista completa de licencias a procesar ──────────────────────────────
-  var licencias = [licId].concat((bodLicenciasAdicionales||[]).filter(Boolean));
-
-  // Para la licencia base ya tenemos sesId; para las adicionales hay que buscarlo
-  function resolveSessionId(lic) {
-    if(lic === licId) return Promise.resolve(sesId);
-    return fetch('/api/bod/sesion?licencia_id='+encodeURIComponent(lic)+'&fecha='+encodeURIComponent(fecha))
-      .then(function(r){ return r.json(); })
-      .then(function(d){ return (d.ok && d.sesion) ? d.sesion.id : null; });
-  }
-
-  // Fetch en paralelo: sesiones de cada licencia + reportes
-  Promise.all([
-    // Licencias para Tarimas/Detalle/Manifiesto
-    Promise.all(licencias.map(function(lic){
-      return resolveSessionId(lic)
-        .then(function(sid){
-          if(!sid) return { lic:lic, noSesion:true };
-          return fetchLicData(sid).then(function(sub){
-            return { lic:lic, sesRes:sub[0], furgRes:sub[1], manifRes:sub[2] };
-          });
-        }).catch(function(){ return { lic:lic, noSesion:true }; });
-    })),
-    // Reportes que ya usan bodLicQuery
-    fetch('/api/bod/reportes/wms-vs-app'+q).then(function(r){ return r.json(); }),
-    fetch('/api/bod/reportes/flujo-bolson'+q).then(function(r){ return r.json(); }),
-    fetch('/api/bod/reportes/remanentes'+q).then(function(r){ return r.json(); })
-  ]).then(function(top){
-    var licDataArr = top[0];
-    var wmsApp     = top[1];
-    var flujo      = top[2];
-    var rems       = top[3];
-    var wb = XLSX2.utils.book_new();
-
-    // Encabezados
-    var tData = [['Licencia bolsón','Tarima','Líneas','Unidades','Estado',
-      'Furgón','Placa','Marchamo','Licencia hija','Destino TR999']];
-    var dData = [['Licencia bolsón','Tarima','Licencia hija','SKU','Descripción',
-      'Cantidad captura','Cantidad auditoría','Diferencia','Estado','Operador','Auditado por']];
-    var mData = [['Licencia bolsón','Furgón','Licencia hija','Destino TR999',
-      'Tarimas','SKU','Descripción','Unidades','Estado']];
-
-    // Agregar filas por licencia
-    licDataArr.forEach(function(item){
-      if(item.noSesion) {
-        tData.push([item.lic, 'Sin sesión encontrada','','','','','','','','']);
-        dData.push([item.lic, 'Sin sesión encontrada','','','','','','','','','']);
-        mData.push([item.lic, 'Sin sesión encontrada','','','','','','','']);
-        return;
-      }
-      var rows = buildRowsForLic(item.lic, item.sesRes, item.furgRes, item.manifRes);
-      tData = tData.concat(rows.tRows);
-      dData = dData.concat(rows.dRows);
-      mData = mData.concat(rows.mRows);
-    });
-
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(tData)), 'Tarimas');
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(dData)), 'Detalle');
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(mData)), 'Manifiesto');
-
-    // ── Hoja 4: WMS_vs_APP ───────────────────────────────────────────────
-    var wData = [['Licencia bolsón','SKU','Descripción','WMS','App','Diferencia',
-      'Estado','Tarimas','Furgón','Licencia hija','Destino TR999']];
-    if(wmsApp.ok && wmsApp.skus) wmsApp.skus.forEach(function(s){
-      wData.push([s.licencia_id||'', s.sku, s.descripcion||'',
-        s.cantidad_teorica_wms, s.cantidad_app, s.diferencia, s.estado,
-        s.tarimas||'', s.furgon||'', s.licencia_hija||'', s.destino_tr999||'']);
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(wData)), 'WMS_vs_APP');
-
-    // ── Hoja 5: Flujo_Bolson ─────────────────────────────────────────────
-    var fData = [['SKU','Descripción','Entradas 952','Salidas TR999','Remanente',
-      'Licencia origen','Licencia hija','Furgón','Tarimas','Placa','Marchamo','Destino TR999']];
-    if(flujo.ok && flujo.movimientos) flujo.movimientos.forEach(function(m){
-      fData.push([m.sku, m.descripcion||'', m.entradas_952, m.salidas_tr999, m.remanente,
-        m.licencia_origen||'', m.licencia_hija||'', m.furgon||'',
-        m.tarimas||'', m.placa||'', m.marchamo||'', m.destino_tr999||'']);
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(fData)), 'Flujo_Bolson');
-
-    // ── Hoja 6: Remanentes ───────────────────────────────────────────────
-    var rData = [['SKU','Descripción','Entrada 952','App entarimada','Salida TR999','Remanente',
-      'Causa','Tarimas','Furgón','Licencia hija','Placa','Marchamo','Destino']];
-    if(rems.ok && rems.remanentes) rems.remanentes.forEach(function(r){
-      rData.push([r.sku, r.descripcion||'',
-        Number(r.entrada_952||0), Number(r.app_entarimada||0),
-        Number(r.salida_tr999||0), r.cantidad_remanente,
-        r.estado_remanente||'',
-        r.tarimas||'', r.furgon||'', r.licencia_hija||r.licencia_salida||'',
-        r.placa||'', r.marchamo||'', r.destino_tr999||'']);
-    });
-    XLSX2.utils.book_append_sheet(wb, XLSX2.utils.aoa_to_sheet(fallback(rData)), 'Remanentes');
-
-    var fechaFile = fecha.replace(/-/g,'')||new Date().toISOString().slice(0,10).replace(/-/g,'');
-    var licFile   = licId.replace(/[^A-Z0-9]/gi,'_');
-    var sufExtra  = bodLicenciasAdicionales.length ? '_+'+bodLicenciasAdicionales.length+'mas' : '';
-    XLSX2.writeFile(wb, 'Consolidado_'+licFile+sufExtra+'_'+fechaFile+'.xlsx');
-    if(msgEl) msgEl.innerHTML = '<span style="color:#1e7e34">✅ Consolidado con 6 hojas descargado.</span>';
-
-  }).catch(function(err){
-    console.error('bodDescargarConsolidado error:', err);
-    if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">❌ Error al generar consolidado: '+escH(err.message||'')+'</span>';
-  });
-}
-
-// Actualizar badge/lista de licencias adicionales en el header
-function bodActualizarListaAdicionales() {
-  var el = document.getElementById('bod-adic-lista');
-  if(!el) return;
-  if(!bodLicenciasAdicionales.length){ el.textContent = ''; return; }
-  el.innerHTML = bodLicenciasAdicionales.map(function(l, i){
-    return '<span style="background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px;margin-right:3px">'
-      +escH(l)
-      +'<span class="bod-btn-rm-adic" data-idx="'+i+'" style="cursor:pointer;margin-left:3px;color:#c0392b;font-weight:700">×</span>'
-      +'</span>';
-  }).join('');
-  el.querySelectorAll('.bod-btn-rm-adic').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      bodLicenciasAdicionales.splice(Number(btn.dataset.idx), 1);
-      bodActualizarListaAdicionales();
-      // Refrescar vista activa al quitar licencia
-      var licBase = (bodAuditoriaData && bodAuditoriaData.sesion && bodAuditoriaData.sesion.licencia_id) || '';
-      if(bodAudVista==='wms-app')    bodCargarWmsVsApp(licBase, bodAuditoriaData&&bodAuditoriaData.sesion?bodAuditoriaData.sesion.id:'');
-      else if(bodAudVista==='flujo') bodRenderFlujoBolson();
-      /* remanentes oculto en Fase 1 */
-    });
-  });
-}
-
-// Construir query string para endpoints de reportes incluyendo licencias adicionales
-function bodLicQuery(licBase) {
-  var todas = [licBase].concat(bodLicenciasAdicionales).filter(Boolean);
-  if(todas.length === 1) return '?licencia_id='+encodeURIComponent(todas[0]);
-  return '?licencias='+encodeURIComponent(todas.join(','));
-}
-
-
-// bodExportarManifiestoWord eliminada — reemplazada por endpoint /manifiesto-word en server.js
-
-// ── Vista: Licencias bolsón activas ────────────────────────────────────────
-function bodCargarSesionesActivas() {
-  var listEl = document.getElementById('bod-sesiones-activas-list');
-  if(!listEl) return;
-  listEl.innerHTML = '<span style="color:#888">Cargando…</span>';
-  fetch('/api/bod/sesiones-activas')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok || !d.sesiones || !d.sesiones.length) {
-        listEl.innerHTML = '<span style="color:#aaa;font-style:italic">No hay licencias bolsón activas en este momento.</span>';
-        return;
-      }
-      var html = '<table style="width:100%;border-collapse:collapse;font-size:.76rem">'
-        +'<thead><tr style="background:#e8ecf0">'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Licencia</th>'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Fecha</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Estado</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">SKUs</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Audit.</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Furgones</th>'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Creado por</th>'
-        +'</tr></thead><tbody>';
-      d.sesiones.forEach(function(s){
-        var esAbierta = s.estado === 'abierta';
-        var estadoBadge = esAbierta
-          ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px">Abierta</span>'
-          : '<span style="background:#eeeeee;color:#555;padding:1px 6px;border-radius:8px">Cerrada</span>';
-        var rowBg = esAbierta ? '' : 'background:#fafafa;opacity:.7';
-        var licLink = esAbierta
-          ? '<button class="bod-btn-abrir-sesion-activa" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
-            +' style="background:none;border:none;color:#1565c0;cursor:pointer;font-size:.76rem;font-weight:600;padding:0;text-decoration:underline">'
-            +escH(s.licencia_id)+'</button>'
-          : '<span>'+escH(s.licencia_id)+'</span>';
-        var esErick = window.currentUser && window.currentUser.name === 'Erick Vela';
-        var btnBorrar = esErick
-          ? ' <button class="bod-btn-borrar-sesion" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'"'
-            +' style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:.72rem;padding:0;margin-left:4px" title="Eliminar sesión">🗑</button>'
-          : '';
-        html += '<tr style="border-top:1px solid #e8e8e8;'+rowBg+'">'
-          +'<td style="padding:3px 6px">'+licLink+btnBorrar+'</td>'
-          +'<td style="padding:3px 6px">'+escH(s.fecha_trabajo||'—')+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+estadoBadge+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.total_skus+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.total_furgones+'</td>'
-          +'<td style="padding:3px 6px;color:#666">'+escH(s.creado_por||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table>';
-      listEl.innerHTML = html;
-      // Wire: clic en licencia abre la sesión directamente sin pasar por el buscador
-      listEl.querySelectorAll('.bod-btn-abrir-sesion-activa').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          var fecha = btn.dataset.fecha;
-          // Rellenar el buscador (para contexto visual)
-          var licInp = document.getElementById('bod-licencia');
-          var fecInp = document.getElementById('bod-fecha');
-          if(licInp) licInp.value = lic;
-          if(fecInp) fecInp.value = fecha;
-          // Navegar a captura y cargar la sesión por ID
-          navTo('pg-bod-captura');
-          var msgEl = document.getElementById('bod-sesion-msg');
-          if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-              if(!d.ok || !d.sesion){
-                if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error al cargar sesión')+'</span>';
-                return;
-              }
-              bodSesionActual = d.sesion;
-              if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(d.sesion.licencia_id)+'</span>';
-              var infoEl = document.getElementById('bod-sesion-info');
-              if(infoEl) infoEl.textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
-              var formEl = document.getElementById('bod-form-captura');
-              if(formEl) formEl.style.display = '';
-              bodPoblarTarimas();
-              bodCargarLineas(d.sesion.id);
-              var barraEl = document.getElementById('bod-barra');
-              if(barraEl) barraEl.focus();
-            })
-            .catch(function(){
-              if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
-            });
-        });
-      });
-      // Wire borrar sesión — solo Erick Vela (validado también en backend)
-      listEl.querySelectorAll('.bod-btn-borrar-sesion').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          if(window.currentUser && window.currentUser.name !== 'Erick Vela') {
-            alert('Solo Erick Vela puede eliminar sesiones.'); return;
-          }
-          if(!confirm('⚠️ BORRAR SESIÓN BOLSÓN\n\nLicencia: '+lic+'\n\nEsto eliminará:\n• Todas las líneas capturadas\n• Asignaciones de tarimas\n• Cargas logísticas del manifiesto\n\n¿Estás seguro?')) return;
-          if(!confirm('Segunda confirmación.\n¿Borrar definitivamente la sesión '+lic+'?')) return;
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId), {
-            method:'DELETE',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ usuario: window.currentUser ? window.currentUser.name : '' })
-          })
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-              if(!d.ok){ alert('Error al borrar: '+(d.error||'Error desconocido')); return; }
-              alert('✅ Sesión '+lic+' eliminada.');
-              bodCargarSesionesActivas();
-            })
-            .catch(function(){ alert('Sin conexión al intentar borrar.'); });
-        });
-      });
-    })
-    .catch(function(){
-      listEl.innerHTML = '<span style="color:#c0392b;font-size:.75rem">No se pudo cargar la lista.</span>';
-    });
-}
-
-// Cargar al entrar a pg-bod-menu y al presionar el botón ↻
-var _bodRefreshBtn = document.getElementById('btn-bod-refresh-activas');
-if(_bodRefreshBtn) _bodRefreshBtn.addEventListener('click', bodCargarSesionesActivas);
-
-var _bodNuevaLicBtn = document.getElementById('btn-bod-nueva-licencia');
-if(_bodNuevaLicBtn) _bodNuevaLicBtn.addEventListener('click', function(){
-  // Limpiar licencia, poner fecha de hoy, navegar a captura y enfocar
-  var licInp = document.getElementById('bod-licencia');
-  var fecInp = document.getElementById('bod-fecha');
-  if(licInp) { licInp.value = ''; }
-  if(fecInp) {
-    var hoy = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
-    fecInp.value = hoy;
-  }
-  var msgEl = document.getElementById('bod-sesion-msg');
-  if(msgEl) msgEl.innerHTML = '';
-  navTo('pg-bod-captura');
-  setTimeout(function(){ if(licInp) licInp.focus(); }, 80);
 });
 
-// Cargar automáticamente cuando se navega al menú BOD
-(function(){
-  var _origNav = window.navTo;
-  window.navTo = function(page, title) {
-    _origNav.apply(this, arguments);
-    if(page === 'pg-bod-menu') bodCargarSesionesActivas();
-  };
-})();
+// ── cdgCargarWmsDesdeExcel ────────────────────────────────────────────────
+// Helper que encapsula todo el parseo y guardado del WMS desde Excel.
+// FIX (mar 2-jun-2026, server v20): extraído para reutilizar en el endpoint
+// general POST /api/cdg/wms/:id (sin cdg_meta) y en POST /api/cdg/v2/:id/wms.
+// Parámetros:
+//   licenciaId: ya normalizado con cdgNormId
+//   req: request de Express (req.file, req.body.usuario)
+//   meta: cdg_meta ya cargado (o null si no existe)
+//   res: response de Express
+async function cdgCargarWmsDesdeExcel(licenciaId, req, meta, res) {
+  var usuario = String(req.body && req.body.usuario ? req.body.usuario : '').trim();
+  if(!usuario)  return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!req.file) return res.status(400).json({ ok: false, error: 'falta archivo' });
 
-})(); // FIN IIFE BOD MODULE
-</script>
+  try {
+    // ── Parsear Excel ────────────────────────────────────────────────────
+    var wb;
+    try {
+      wb = XLSX.read(req.file.buffer, { type: 'buffer', raw: false, cellDates: true });
+    } catch(e) {
+      return res.status(400).json({ ok: false, error: 'El archivo no es un Excel válido. (' + e.message + ')' });
+    }
 
-</body>
-</html>
+    var advertencia = null;
+    var sheetName = wb.SheetNames.find(function(n) { return n.trim().toLowerCase() === 'traslados'; });
+    if(!sheetName) {
+      sheetName = wb.SheetNames[0];
+      advertencia = 'Hoja "Traslados" no encontrada. Se usó la primera hoja: "' + sheetName + '". Verificá que estás cargando el archivo WMS correcto.';
+    }
+    var ws   = wb.Sheets[sheetName];
+    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    if(rows.length < 2) return res.status(400).json({ ok: false, error: 'El archivo está vacío o solo tiene encabezado.' });
+
+    // ── Detectar columnas ────────────────────────────────────────────────
+    var hdr     = rows[0].map(cdgNormHdr);
+    var cNum    = hdr.indexOf('numero');
+    var cSku    = hdr.indexOf('sku');
+    var cNombre = hdr.indexOf('nombre');
+    if(cNombre < 0) cNombre = hdr.indexOf('descripcion');
+    var cCant   = hdr.indexOf('cant');
+    var cUnis   = hdr.indexOf('unidades');
+    var cFecha  = hdr.indexOf('fecha');
+    var cOrigen = hdr.indexOf('origen');
+    var cDest   = hdr.indexOf('destino');
+    var cTipo   = hdr.indexOf('tipo');
+    var cStatus = hdr.indexOf('status');
+    var cLineas = hdr.indexOf('lineas');
+
+    var faltantes = [];
+    if(cNum  < 0) faltantes.push('"Número"');
+    if(cSku  < 0) faltantes.push('"SKU"');
+    if(cCant < 0 && cUnis < 0) faltantes.push('"Cant." o "Unidades"');
+    if(faltantes.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Columnas requeridas no encontradas: ' + faltantes.join(', ') + '. '
+             + 'Encabezados detectados: ' + rows[0].join(', ') + '. '
+             + 'Verificá que estás cargando el archivo WMS correcto (hoja "Traslados" del export WMS).'
+      });
+    }
+
+    // ── Filtrar por licencia ─────────────────────────────────────────────
+    var licNorm = cdgNormLicWMS(licenciaId);
+    var filasFiltradas = rows.slice(1).filter(function(r) {
+      return cdgNormLicWMS(r[cNum]) === licNorm;
+    });
+    if(filasFiltradas.length === 0) {
+      var licEncontradas = [];
+      var vistas = {};
+      for(var i = 1; i < rows.length && licEncontradas.length < 10; i++) {
+        var v = cdgNormLicWMS(rows[i][cNum]);
+        if(v && !vistas[v]) { licEncontradas.push(v); vistas[v] = true; }
+      }
+      return res.status(400).json({
+        ok: false,
+        error: 'El archivo no contiene filas para la licencia "' + licenciaId + '". '
+             + 'Licencias encontradas: ' + licEncontradas.join(', ')
+             + (licEncontradas.length === 10 ? ' (y más…)' : '') + '.'
+      });
+    }
+
+    // ── Extraer encabezado ───────────────────────────────────────────────
+    var f0 = filasFiltradas[0];
+    var encabezado = {
+      fecha:     f0[cFecha]  || null,
+      origen:    cOrigen  >= 0 ? (f0[cOrigen]  || null) : null,
+      destino:   cDest    >= 0 ? (f0[cDest]    || null) : null,
+      tipo:      cTipo    >= 0 ? (f0[cTipo]    || null) : null,
+      status:    cStatus  >= 0 ? (f0[cStatus]  || null) : null,
+      lineasWMS: cLineas  >= 0 ? Number(f0[cLineas] || 0) : 0
+    };
+
+    // ── Procesar filas: parsear + deduplicar ─────────────────────────────
+    var skuMap = {}, skuOrder = [];
+    filasFiltradas.forEach(function(r) {
+      var sku = String(r[cSku] || '').trim();
+      if(!sku) return;
+      var qty = cdgParseQty(cCant >= 0 ? r[cCant] : null);
+      if(qty === null) qty = cdgParseQty(cUnis >= 0 ? r[cUnis] : null);
+      if(qty === null) return;
+      var desc = String(cNombre >= 0 ? (r[cNombre] || '') : '').trim();
+      if(skuMap[sku]) {
+        skuMap[sku].cantidad += qty;
+        if(!skuMap[sku].descripcion && desc) skuMap[sku].descripcion = desc;
+      } else {
+        skuMap[sku] = { descripcion: desc, cantidad: qty };
+        skuOrder.push(sku);
+      }
+    });
+
+    // ── Enriquecer descripciones vacías desde sku_catalog ────────────────
+    var skusSinDesc = skuOrder.filter(function(s) { return !skuMap[s].descripcion; });
+    if(skusSinDesc.length > 0 && SUPABASE_URL && SUPABASE_KEY) {
+      var enrichWarnings = [];
+      for(var ci = 0; ci < skusSinDesc.length; ci += 200) {
+        var chunk = skusSinDesc.slice(ci, ci + 200);
+        try {
+          var catalogRows = await supabase('GET', 'sku_catalog', null,
+            '?sku=in.(' + chunk.map(function(s){ return encodeURIComponent(s); }).join(',') + ')&select=sku,descripcion');
+          if(Array.isArray(catalogRows)) {
+            catalogRows.forEach(function(row) {
+              if(skuMap[row.sku] && !skuMap[row.sku].descripcion && row.descripcion)
+                skuMap[row.sku].descripcion = row.descripcion;
+            });
+          }
+        } catch(enrichErr) {
+          enrichWarnings.push('sku_catalog chunk ' + ci + ': ' + enrichErr.message);
+        }
+      }
+      if(enrichWarnings.length) advertencia = (advertencia ? advertencia + ' | ' : '') + enrichWarnings.join(' | ');
+    }
+
+    // ── Construir array final + UPSERT ───────────────────────────────────
+    var skusArray = skuOrder.map(function(sku) {
+      return { sku: sku, descripcion: skuMap[sku].descripcion || '', cantidad: skuMap[sku].cantidad };
+    });
+    var totalSkus     = skusArray.length;
+    var totalUnidades = skusArray.reduce(function(a, s){ return a + s.cantidad; }, 0);
+    var now           = new Date().toISOString();
+    var nombreArchivo = req.file.originalname || 'archivo.xlsx';
+
+    await withTimeout(cdgUpsertWms(licenciaId, {
+      licencia_id:    licenciaId,
+      skus:           JSON.stringify(skusArray),
+      encabezado:     JSON.stringify(encabezado),
+      cargado_por:    usuario,
+      ts_carga:       now,
+      nombre_archivo: nombreArchivo,
+      total_skus:     totalSkus,
+      total_unidades: totalUnidades
+    }), 15000, 'CDG WMS upsert');
+
+    // ── Actualizar meta.wms si existe cdg_meta ────────────────────────────
+    // Si meta es null (v1 o solo-WMS), no intentar cdgSaveMeta.
+    var metaWarning = null;
+    if(meta) {
+      meta.wms = { cargadoPor: usuario, tsCarga: now, nombreArchivo, totalSkus, totalUnidades };
+      cdgBitacora(meta, usuario, 'wms_cargado', nombreArchivo + ' — ' + totalSkus + ' SKUs, ' + totalUnidades + ' unidades');
+      try {
+        await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG WMS meta save');
+      } catch(metaErr) {
+        try {
+          await withTimeout(cdgSaveMeta(licenciaId, meta), 10000, 'CDG WMS meta save retry');
+        } catch(retryErr) {
+          metaWarning = 'WMS guardado. No se pudo actualizar caché de metadata (' + retryErr.message + '). El WMS estará disponible igual.';
+          console.log('CDG WMS meta save FAILED after retry:', retryErr.message);
+        }
+      }
+    }
+
+    var respAdvertencia = [advertencia, metaWarning].filter(Boolean).join(' | ') || undefined;
+    console.log('CDG WMS cargado:', licenciaId, 'por', usuario, '—', totalSkus, 'SKUs,', totalUnidades, 'unidades');
+    res.json({
+      ok: true, totalSkus, totalUnidades, tsCarga: now,
+      ...(respAdvertencia ? { advertencia: respAdvertencia } : {})
+    });
+
+  } catch(e) {
+    console.log('CDG WMS upload FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'Error al procesar WMS: ' + e.message });
+  }
+}
+
+// ── POST /api/cdg/wms/:id ─────────────────────────────────────────────────
+// Endpoint general WMS: NO exige cdg_meta v2.
+// FIX (mar 2-jun-2026, server v20): permite cargar WMS para v1, v2 y solo-WMS.
+// Si existe cdg_meta y estado === 'cerrado' → rechaza.
+// Si existe cdg_meta abierta → guarda WMS + actualiza meta.wms.
+// Si NO existe cdg_meta → guarda solo en cdg_wms (sin meta).
+app.post('/api/cdg/wms/:id', upload.single('file'), async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    var meta = null;
+    try { meta = await cdgGetMeta(licenciaId); } catch(e) { /* no existe como v2 */ }
+    if(meta && meta.estado === 'cerrado') {
+      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
+    }
+    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
+  } catch(e) {
+    console.log('CDG WMS POST general FAILED:', e.message);
+    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── POST /api/cdg/v2/:id/wms ─────────────────────────────────────────────
+// Mantiene compatibilidad con el cliente existente de captura v2.
+// Ahora delega a cdgCargarWmsDesdeExcel (misma lógica, sin código duplicado).
+// FIX (mar 2-jun-2026, server v20): ya no duplica la lógica de parseo.
+app.post('/api/cdg/v2/:id/wms', upload.single('file'), async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia v2 no encontrada: ' + licenciaId });
+    if(meta.estado === 'cerrado') {
+      return res.status(400).json({ ok: false, error: 'La licencia está cerrada. No se puede cargar WMS.' });
+    }
+    await cdgCargarWmsDesdeExcel(licenciaId, req, meta, res);
+  } catch(e) {
+    console.log('CDG v2 WMS upload FAILED:', e.message);
+    if(!res.headersSent) res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── cdgResponderWms: helper compartido para devolver WMS de cdg_wms ─────────
+// No exige cdg_meta v2. Funciona para v1, v2 y licencias solo-WMS.
+async function cdgResponderWms(licenciaId, res) {
+  var wms = await cdgGetWms(licenciaId);
+  if(!wms) return res.json({ ok: true, skus: [], wmsMeta: null, encabezado: null });
+  var skus      = typeof wms.skus       === 'string' ? JSON.parse(wms.skus)       : (wms.skus       || []);
+  var encabezado = typeof wms.encabezado === 'string' ? JSON.parse(wms.encabezado) : (wms.encabezado || null);
+  res.json({
+    ok: true, skus: skus, encabezado: encabezado,
+    wmsMeta: {
+      cargadoPor:    wms.cargado_por,
+      tsCarga:       wms.ts_carga,
+      nombreArchivo: wms.nombre_archivo,
+      totalSkus:     wms.total_skus,
+      totalUnidades: wms.total_unidades
+    }
+  });
+}
+
+// ── GET /api/cdg/wms/:id ───────────────────────────────────────────────────
+// Endpoint general WMS: no exige cdg_meta v2.
+// Sirve para v1 clásico, v2 colaborativo y licencias "solo WMS".
+// FIX (mar 2-jun-2026, server v20): nuevo endpoint sin restricción de v2.
+app.get('/api/cdg/wms/:id', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    await cdgResponderWms(licenciaId, res);
+  } catch(e) {
+    console.log('CDG WMS GET FAILED:', licenciaId, e.message);
+    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
+  }
+});
+
+// ── GET /api/cdg/v2/:id/wms ────────────────────────────────────────────────
+// Mantiene compatibilidad con el cliente existente de captura v2.
+// Delega a cdgResponderWms (ya no exige cdg_meta).
+// FIX (mar 2-jun-2026, server v20): eliminada la guardia de cdg_meta para
+// no bloquear v1/solo-WMS. Si el caller lo necesita solo para v2, funciona igual.
+app.get('/api/cdg/v2/:id/wms', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  try {
+    await cdgResponderWms(licenciaId, res);
+  } catch(e) {
+    console.log('CDG v2 WMS GET FAILED:', licenciaId, e.message);
+    res.status(500).json({ ok: false, error: 'Error al obtener WMS: ' + e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD MODULE START — Bodega CDG / Armado de Tarimas — Fase 1
+// FIX (mar 2-jun-2026, server v20): módulo completamente aislado.
+// Flag: BOD_ENABLED=true en variables de entorno de Render para activar.
+// Con BOD_ENABLED=false (default), todos los endpoints responden 503.
+// No toca: Hamilton, CDG, app_state, cdg_lineas, cdg_wms, sku_catalog,
+//          teorico, fisico, endpoints /api/cdg/*, /api/state.
+// ══════════════════════════════════════════════════════════════════════════
+
+var BOD_ENABLED = process.env.BOD_ENABLED === 'true';
+
+// Middleware guard — aplica a todos los endpoints /api/bod/*
+function bodGuard(req, res, next) {
+  if(!BOD_ENABLED) return res.status(503).json({ ok: false, error: 'Módulo bodega no habilitado.' });
+  next();
+}
+
+// Helper: normalizar nombre de tarima → "A1", "B12", etc.
+// "a 1" → "A1", "A-1" → "A1", "a1" → "A1"
+function bodNormTarima(v) {
+  if(!v) return '';
+  return String(v).trim().toUpperCase().replace(/[\s\-_]+/g, '');
+}
+
+// Helper: leer bdg_barra_sku desde Supabase
+async function bodGetBarra(barra) {
+  if(!SUPABASE_URL || !SUPABASE_KEY) return null;
+  var rows = await supabase('GET', 'bod_barra_sku', null,
+    '?barra=eq.' + encodeURIComponent(String(barra).trim()) + '&limit=1');
+  return (Array.isArray(rows) && rows.length) ? rows[0] : null;
+}
+
+// ── GET /api/bod/status ────────────────────────────────────────────────────
+// Permite al cliente saber si el módulo está habilitado.
+app.get('/api/bod/status', function(req, res) {
+  var cached = cacheGet('bod:status');
+  if(cached) return res.json(cached);
+  var statusResp = { ok: true, enabled: BOD_ENABLED };
+  cacheSet('bod:status', statusResp, 60000);
+  res.json(statusResp);
+});
+
+// ── GET /api/bod/sesiones ─────────────────────────────────────────────────
+// Lista de sesiones con filtros: fecha_desde, fecha_hasta, licencia_id, estado.
+// Devuelve abiertas Y cerradas (a diferencia de /sesiones-activas).
+// FIX (jue 10-jun-2026): endpoint para entrada global a Auditar sesión
+app.get('/api/bod/sesiones', bodGuard, async (req, res) => {
+  try {
+    var fechaDesde = String(req.query.fecha_desde||'').trim();
+    var fechaHasta = String(req.query.fecha_hasta||'').trim();
+    var licenciaId = String(req.query.licencia_id||'').trim().toUpperCase();
+    var estado     = String(req.query.estado||'').trim().toLowerCase();
+
+    var query = '?tipo=eq.recoleccion&order=fecha_trabajo.desc,ts_creacion.desc&limit=100';
+    if(fechaDesde) query += '&fecha_trabajo=gte.'+encodeURIComponent(fechaDesde);
+    if(fechaHasta) query += '&fecha_trabajo=lte.'+encodeURIComponent(fechaHasta);
+    if(licenciaId) query += '&licencia_id=eq.'+encodeURIComponent(licenciaId);
+    if(estado)     query += '&estado=eq.'+encodeURIComponent(estado);
+
+    var sesiones = await supabase('GET', 'bod_sesiones', null, query);
+    if(!Array.isArray(sesiones)) sesiones = [];
+
+    // Resumen bulk: UNA sola consulta a bod_lineas para todas las sesiones
+    var resumenPorSesion = {};
+    if(sesiones.length) {
+      var sesIds = sesiones.map(function(s){ return s.id; });
+      // Supabase: in() filter con lista de IDs
+      var lineasBulk = await supabase('GET', 'bod_lineas', null,
+        '?sesion_id=in.('+sesIds.map(encodeURIComponent).join(',')+')'
+        +'&eliminada=eq.false&select=sesion_id,sku,auditado&limit=50000'
+      ).catch(function(){ return []; });
+      if(!Array.isArray(lineasBulk)) lineasBulk = [];
+      lineasBulk.forEach(function(l){
+        var sid = l.sesion_id;
+        if(!resumenPorSesion[sid]) resumenPorSesion[sid] = { skus:{}, total:0, auditadas:0 };
+        if(l.sku) resumenPorSesion[sid].skus[l.sku] = true;
+        resumenPorSesion[sid].total++;
+        if(l.auditado) resumenPorSesion[sid].auditadas++;
+      });
+    }
+
+    var result = sesiones.map(function(s){
+      var r = resumenPorSesion[s.id] || { skus:{}, total:0, auditadas:0 };
+      return {
+        id:               s.id,
+        licencia_id:      s.licencia_id,
+        fecha_trabajo:    s.fecha_trabajo,
+        estado:           s.estado || 'abierta',
+        creado_por:       s.creado_por || '',
+        ts_creacion:      s.ts_creacion || '',
+        ts_actualizacion: s.ts_actualizacion || s.ts_creacion || '',
+        total_skus:       Object.keys(r.skus).length,
+        total_lineas:     r.total,
+        lineas_auditadas: r.auditadas
+      };
+    });
+
+    res.json({ ok:true, sesiones:result });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── GET /api/bod/sesiones-activas ─────────────────────────────────────────
+// Lista de sesiones bolsón activas + resumen de líneas y furgones.
+// Ordenadas: abiertas primero, luego por fecha desc.
+// FIX (vie 06-jun-2026): endpoint sesiones activas para vista de licencias bolsón
+app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
+  try {
+    var cachedSes = cacheGet('bod:sesiones-activas');
+    if(cachedSes) return res.json(cachedSes);
+    var sesiones = await supabase('GET', 'bod_sesiones', null,
+      '?tipo=eq.recoleccion&order=fecha_trabajo.desc,ts_creacion.desc&limit=50');
+    if(!Array.isArray(sesiones) || !sesiones.length)
+      return res.json({ ok:true, sesiones:[] });
+
+    // Para cada sesión: contar líneas y furgones (en paralelo, máximo 8 a la vez)
+    var results = await Promise.all(sesiones.map(async function(ses){
+      var [lineas, cierres] = await Promise.all([
+        supabase('GET', 'bod_lineas', null,
+          // RIESGO: limit=5000 — si una sesión supera 5000 líneas, los totales se truncarán.
+          // En uso normal (bodega Guatemala) una sesión tiene 100-500 líneas por sesión.
+          // Aumentar o paginar si se detecta truncamiento (sesión con exactamente 5000 lineas).
+          '?sesion_id=eq.'+encodeURIComponent(ses.id)
+          +'&eliminada=eq.false&select=sku,auditado&limit=5000'
+        ).catch(function(){ return []; }),
+        supabase('GET', 'bod_furgon_cierres', null,
+          '?sesion_id=eq.'+encodeURIComponent(ses.id)+'&select=furgon,estado,licencia_hija'
+        ).catch(function(){ return []; }),
+      ]);
+      lineas  = Array.isArray(lineas)  ? lineas  : [];
+      cierres = Array.isArray(cierres) ? cierres : [];
+
+      var skusUnicos = {};
+      lineas.forEach(function(l){ if(l.sku) skusUnicos[l.sku]=true; });
+
+      return {
+        id:              ses.id,
+        licencia_id:     ses.licencia_id,
+        fecha_trabajo:   ses.fecha_trabajo,
+        estado:          ses.estado || 'abierta',
+        creado_por:      ses.creado_por || '',
+        ts_creacion:     ses.ts_creacion || '',
+        ts_actualizacion: ses.ts_actualizacion || ses.ts_creacion || '',
+        total_lineas:    lineas.length,
+        total_skus:      Object.keys(skusUnicos).length,
+        lineas_auditadas: lineas.filter(function(l){ return l.auditado; }).length,
+        total_furgones:  cierres.length,
+        furgones:        cierres.map(function(c){ return { furgon:c.furgon, estado:c.estado, licencia_hija:c.licencia_hija }; })
+      };
+    }));
+
+    // Ordenar: abiertas primero
+    results.sort(function(a,b){
+      if(a.estado==='abierta' && b.estado!=='abierta') return -1;
+      if(a.estado!=='abierta' && b.estado==='abierta') return  1;
+      return 0;
+    });
+
+    var sesResp = { ok:true, sesiones:results };
+    cacheSet('bod:sesiones-activas', sesResp, 30000); // 30s TTL
+    res.json(sesResp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+
+// ── POST /api/bod/sesion ───────────────────────────────────────────────────
+// Crear o devolver sesión existente (idempotente por licencia_id+fecha+tipo).
+app.post('/api/bod/sesion', bodGuard, async (req, res) => {
+  try {
+    var { licencia_id, fecha_trabajo, tipo, creado_por, notas } = req.body || {};
+    licencia_id  = String(licencia_id  || '').trim().toUpperCase();
+    fecha_trabajo = String(fecha_trabajo || '').trim();
+    tipo          = String(tipo          || 'recoleccion').trim();
+    creado_por    = String(creado_por    || '').trim();
+    if(!licencia_id)   return res.status(400).json({ ok:false, error:'falta licencia_id' });
+    if(!fecha_trabajo) return res.status(400).json({ ok:false, error:'falta fecha_trabajo (YYYY-MM-DD)' });
+    if(!creado_por)    return res.status(400).json({ ok:false, error:'falta creado_por' });
+
+    // Buscar existente
+    var existing = await supabase('GET', 'bod_sesiones', null,
+      '?licencia_id=eq.' + encodeURIComponent(licencia_id)
+      + '&fecha_trabajo=eq.' + encodeURIComponent(fecha_trabajo)
+      + '&tipo=eq.'          + encodeURIComponent(tipo)
+      + '&limit=1');
+    if(Array.isArray(existing) && existing.length) {
+      cacheInvalidate('bod:sesiones-activas');
+      return res.json({ ok:true, sesion: existing[0], created: false });
+    }
+
+    // Crear nueva
+    var newId = 'bod-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    var sesion = {
+      id: newId, licencia_id, tipo, estado: 'abierta',
+      creado_por, modificado_por: creado_por,
+      fecha_trabajo, ts_creacion: new Date().toISOString(),
+      notas: notas || null
+    };
+    var created = await supabase('POST', 'bod_sesiones', sesion, '');
+    var row = Array.isArray(created) ? created[0] : sesion;
+    cacheInvalidate('bod:sesiones-activas');
+    res.json({ ok:true, sesion: row, created: true });
+  } catch(e) {
+    console.log('BOD sesion POST FAILED:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion?licencia_id=X&fecha=Y ─────────────────────────────
+// Buscar sesión por licencia + fecha en lugar del ID interno.
+// Devuelve el mismo formato que GET /api/bod/sesion/:id.
+app.get('/api/bod/sesion', bodGuard, async (req, res) => {
+  try {
+    var lic   = String(req.query.licencia_id || '').trim().toUpperCase();
+    var fecha = String(req.query.fecha       || '').trim();
+    var tipo  = String(req.query.tipo        || 'recoleccion').trim();
+    if(!lic || !fecha) return res.status(400).json({ ok:false, error:'falta licencia_id o fecha' });
+
+    var buscarKey = 'bod:sesion-buscar:'+lic+':'+fecha+':'+tipo;
+    var cachedBuscar = cacheGet(buscarKey);
+    if(cachedBuscar) return res.json(cachedBuscar);
+
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?licencia_id=eq.' + encodeURIComponent(lic)
+      + '&fecha_trabajo=eq.' + encodeURIComponent(fecha)
+      + '&tipo=eq.' + encodeURIComponent(tipo)
+      + '&order=ts_creacion.desc&limit=1');
+    if(!Array.isArray(sesRows) || !sesRows.length) {
+      return res.status(404).json({ ok:false, error:'No se encontró sesión para la licencia "'+lic+'" en la fecha '+fecha+'.' });
+    }
+    var sesion = sesRows[0];
+    var lineas = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.' + encodeURIComponent(sesion.id) + '&eliminada=eq.false&order=ts_captura.asc');
+    var lineArr = Array.isArray(lineas) ? lineas : [];
+    var porTarima = {};
+    lineArr.forEach(function(l) {
+      var t = l.tarima || '?';
+      if(!porTarima[t]) porTarima[t] = { tarima:t, lineas:0, unidades:0 };
+      porTarima[t].lineas++;
+      porTarima[t].unidades += Number(l.cantidad)||0;
+    });
+    var respBuscar = { ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) };
+    cacheSet(buscarKey, respBuscar, 30000); // 30s — invalida en mutaciones Bodega
+    res.json(respBuscar);
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id ────────────────────────────────────────────────
+// Devolver sesión + líneas vigentes + resumen por tarima.
+app.get('/api/bod/sesion/:id', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var sesKey = 'bod:sesion:'+sesId;
+    var cachedSes = cacheGet(sesKey);
+    if(cachedSes) return res.json(cachedSes);
+
+    var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(rows) || !rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = rows[0];
+    var lineas = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.' + encodeURIComponent(sesId) + '&eliminada=eq.false&order=ts_captura.asc');
+    var lineArr = Array.isArray(lineas) ? lineas : [];
+    // Resumen por tarima
+    var porTarima = {};
+    lineArr.forEach(function(l) {
+      var t = l.tarima || '?';
+      if(!porTarima[t]) porTarima[t] = { tarima:t, lineas:0, unidades:0 };
+      porTarima[t].lineas++;
+      porTarima[t].unidades += Number(l.cantidad)||0;
+    });
+    var respSes = { ok:true, sesion, lineas: lineArr, resumenTarimas: Object.values(porTarima) };
+    cacheSet(sesKey, respSes, 30000); // 30s — invalida en POST linea y mutaciones Bodega
+    res.json(respSes);
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/linea ─────────────────────────────────────────
+app.post('/api/bod/sesion/:id/linea', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var { tarima, barra, sku, descripcion, cantidad, operador } = req.body || {};
+    tarima     = bodNormTarima(tarima);
+    barra      = String(barra      || '').trim() || null;
+    sku        = String(sku        || '').trim();
+    descripcion = String(descripcion || '').trim();
+    cantidad   = Number(cantidad);
+    operador   = String(operador   || '').trim();
+    if(!tarima)   return res.status(400).json({ ok:false, error:'falta tarima' });
+    if(!sku)      return res.status(400).json({ ok:false, error:'falta sku' });
+    if(!operador) return res.status(400).json({ ok:false, error:'falta operador' });
+    if(!(cantidad > 0)) return res.status(400).json({ ok:false, error:'cantidad debe ser mayor a 0' });
+
+    // Verificar sesión existe y está abierta
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    if(sesRows[0].estado === 'cerrada') return res.status(400).json({ ok:false, error:'La sesión está cerrada.' });
+
+    // Completar descripción desde sku_catalog si vacía
+    var advertencia = null;
+    if(!descripcion && SUPABASE_URL && SUPABASE_KEY) {
+      try {
+        var catRows = await supabase('GET', 'sku_catalog', null,
+          '?sku=eq.' + encodeURIComponent(sku) + '&select=sku,descripcion&limit=1');
+        if(Array.isArray(catRows) && catRows.length && catRows[0].descripcion)
+          descripcion = catRows[0].descripcion;
+      } catch(e) { advertencia = 'No se pudo completar descripción desde catálogo.'; }
+    }
+
+    var now   = new Date().toISOString();
+    var linId = 'bl-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    var linea = {
+      id: linId, sesion_id: sesId, licencia_id: sesRows[0].licencia_id,
+      tarima, barra, sku, descripcion, cantidad, operador,
+      ts_captura: now, ts_modif: now, eliminada: false,
+      auditado: false, auditado_por: null, ts_auditado: null, cantidad_audit: null
+    };
+    var created = await supabase('POST', 'bod_lineas', linea, '');
+    var row = Array.isArray(created) ? created[0] : linea;
+    invalidarCacheSesion(sesId); // invalida bod:sesion/:id y bod:sesion-buscar:*
+    res.json({ ok:true, linea: row, ...(advertencia ? { advertencia } : {}) });
+  } catch(e) {
+    console.log('BOD linea POST FAILED:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── PATCH /api/bod/linea/:lineaId ─────────────────────────────────────────
+app.patch('/api/bod/linea/:lineaId', bodGuard, async (req, res) => {
+  try {
+    var linId   = String(req.params.lineaId).trim();
+    var { cantidad, sku, descripcion, tarima, usuario } = req.body || {};
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var lin = rows[0];
+    // Permisos: mismo operador o supervisor (caller indica con supervisor:true)
+    var esSup = req.body && req.body.supervisor === true;
+    if(lin.operador !== usuario && !esSup)
+      return res.status(403).json({ ok:false, error:'Solo el operador original o supervisor puede editar.' });
+    var patch = { ts_modif: new Date().toISOString() };
+    if(cantidad !== undefined) {
+      if(!(Number(cantidad) > 0)) return res.status(400).json({ ok:false, error:'cantidad debe ser mayor a 0' });
+      patch.cantidad = Number(cantidad);
+    }
+    if(sku         !== undefined) patch.sku         = String(sku).trim();
+    if(descripcion !== undefined) patch.descripcion = String(descripcion).trim();
+    if(tarima      !== undefined) patch.tarima      = bodNormTarima(tarima);
+    await supabase('PATCH', 'bod_lineas', patch, '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true, patch });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── DELETE /api/bod/linea/:lineaId ────────────────────────────────────────
+app.delete('/api/bod/linea/:lineaId', bodGuard, async (req, res) => {
+  try {
+    var linId   = String(req.params.lineaId).trim();
+    var { usuario, supervisor } = req.body || {};
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var lin = rows[0];
+    var esSup = supervisor === true;
+    if(lin.operador !== usuario && !esSup)
+      return res.status(403).json({ ok:false, error:'Solo el operador original o supervisor puede eliminar.' });
+    var now = new Date().toISOString();
+    var patch = { eliminada:true, ts_modif:now };
+    // Guardar eliminado_por y ts_eliminado si existen en la tabla
+    // SQL requerido si las columnas no existen:
+    //   ALTER TABLE bod_lineas ADD COLUMN IF NOT EXISTS eliminado_por TEXT DEFAULT '';
+    //   ALTER TABLE bod_lineas ADD COLUMN IF NOT EXISTS ts_eliminado TIMESTAMPTZ;
+    try {
+      var testRow = await supabase('GET', 'bod_lineas', null, '?id=eq.'+encodeURIComponent(linId)+'&select=eliminado_por&limit=1');
+      if(Array.isArray(testRow) && testRow.length && 'eliminado_por' in testRow[0]) {
+        patch.eliminado_por = usuario || '';
+        patch.ts_eliminado  = now;
+      }
+    } catch(e) { /* columnas aún no existen — ignorar */ }
+    await supabase('PATCH', 'bod_lineas', patch,
+      '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/lineas ────────────────────────────────────────
+app.get('/api/bod/sesion/:id/lineas', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var desde  = req.query.desde || null;
+    var inclEl = req.query.incluir_eliminadas === 'true';
+    var q = '?sesion_id=eq.' + encodeURIComponent(sesId) + '&order=ts_captura.asc';
+    if(!inclEl) q += '&eliminada=eq.false';
+    if(desde)   q += '&ts_modif=gte.' + encodeURIComponent(desde);
+    var lineas = await supabase('GET', 'bod_lineas', null, q);
+    res.json({ ok:true, lineas: Array.isArray(lineas) ? lineas : [] });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/barra/:barra ────────────────────────────────────────────
+app.get('/api/bod/barra/:barra', bodGuard, async (req, res) => {
+  try {
+    var barra = String(req.params.barra).trim();
+    var row   = await bodGetBarra(barra);
+    if(!row) return res.json({ ok:true, encontrado:false });
+    // Completar descripción desde sku_catalog si vacía
+    if(!row.descripcion && SUPABASE_URL && SUPABASE_KEY) {
+      try {
+        var cat = await supabase('GET', 'sku_catalog', null,
+          '?sku=eq.' + encodeURIComponent(row.sku) + '&select=sku,descripcion&limit=1');
+        if(Array.isArray(cat) && cat.length && cat[0].descripcion)
+          row = Object.assign({}, row, { descripcion: cat[0].descripcion });
+      } catch(e) { /* no bloquear */ }
+    }
+    res.json({ ok:true, encontrado:true, barra: row.barra, sku: row.sku, descripcion: row.descripcion || '' });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/barra-sku/upload ────────────────────────────────────────
+app.post('/api/bod/barra-sku/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
+
+    // ── Parsear CSV o XLSX con XLSX (maneja ambos formatos) ───────────────
+    var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'', raw:false });
+    if(rows.length < 2) return res.status(400).json({ ok:false, error:'Archivo vacío o solo encabezado.' });
+
+    // ── Detectar columnas ─────────────────────────────────────────────────
+    var hdr   = rows[0].map(function(h){ return String(h).trim().toLowerCase(); });
+    var cBarra = hdr.findIndex(function(h){ return h==='barra'||h.includes('barcode')||h.includes('codigo'); });
+    var cSku   = hdr.findIndex(function(h){ return h==='sku'||h.includes('articulo')||h.includes('artículo'); });
+    var cDesc  = hdr.findIndex(function(h){ return h.includes('desc')||h.includes('nombre'); });
+    if(cBarra < 0 || cSku < 0) {
+      return res.status(400).json({
+        ok:false,
+        error:'No se encontraron columnas Barra y SKU. Encabezados detectados: '+rows[0].join(', ')
+      });
+    }
+
+    // ── Deduplicar en memoria ─────────────────────────────────────────────
+    // Reglas: ignorar barra vacía, sku vacío, barra con < 6 caracteres.
+    // Si barra aparece duplicada, conservar la última fila.
+    var dedup = {};        // barra → { barra, sku, descripcion }
+    var omitidas = 0;
+    var now = new Date().toISOString();
+
+    for(var ri = 1; ri < rows.length; ri++) {
+      var r    = rows[ri];
+      var bar  = String(r[cBarra]||'').trim();
+      var sku  = String(r[cSku]  ||'').trim();
+      var desc = cDesc >= 0 ? String(r[cDesc]||'').trim() : '';
+      if(!bar || !sku || bar.length < 6) { omitidas++; continue; }
+      dedup[bar] = { barra:bar, sku:sku, descripcion:desc, ts_actualizacion:now };
+    }
+
+    var unicas  = Object.keys(dedup).length;
+    var registros = Object.values(dedup);
+
+    if(!unicas) {
+      return res.status(400).json({
+        ok:false,
+        error:'No se encontraron filas válidas. Revisá que las columnas barra y sku tengan datos.',
+        omitidas: omitidas
+      });
+    }
+
+    // ── Upsert por chunks de 500 ──────────────────────────────────────────
+    // PostgREST acepta arrays en el body + on_conflict=barra para upsert masivo.
+    var CHUNK = 500;
+    var procesadas = 0;
+    var errores    = [];
+    var chunks     = 0;
+    var startedAt    = Date.now();
+    var MAX_UPLOAD_MS = 22000;
+
+    for(var ci = 0; ci < registros.length; ci += CHUNK) {
+      if(Date.now() - startedAt > MAX_UPLOAD_MS) {
+        errores.push({
+          chunk: chunks + 1,
+          error: 'Upload detenido antes del timeout HTTP. Reintentar para completar chunks pendientes.'
+        });
+        break;
+      }
+      var batch = registros.slice(ci, ci + CHUNK);
+      chunks++;
+      try {
+        await withTimeout(
+          supabase('POST', 'bod_barra_sku', batch, '?on_conflict=barra'),
+          8000,
+          'barra-sku chunk '+chunks
+        );
+        procesadas += batch.length;
+      } catch(e) {
+        console.log('BOD barra-sku chunk', chunks, 'falló:', e.message);
+        errores.push({ chunk: chunks, error: e.message });
+      }
+    }
+
+    console.log('BOD barra-sku upload OK: unicas='+unicas+' procesadas='+procesadas+' chunks='+chunks);
+    res.json({
+      ok:        true,
+      procesadas: procesadas,
+      unicas:     unicas,
+      omitidas:   omitidas,
+      chunks:     chunks,
+      ...(errores.length ? { errores: errores } : {})
+    });
+
+  } catch(e) {
+    console.log('BOD barra-sku upload FAILED:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/linea/:lineaId/auditar ─────────────────────────────────
+app.post('/api/bod/linea/:lineaId/auditar', bodGuard, async (req, res) => {
+  try {
+    var linId = String(req.params.lineaId).trim();
+    var { usuario, supervisor, auditor, cantidad_audit } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden auditar.' });
+    if(cantidad_audit === undefined || cantidad_audit === null || !(Number(cantidad_audit) > 0))
+      return res.status(400).json({ ok:false, error:'cantidad_audit debe ser mayor a 0.' });
+    var rows = await supabase('GET', 'bod_lineas', null, '?id=eq.' + encodeURIComponent(linId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Línea no encontrada' });
+    var now = new Date().toISOString();
+    var patch = { auditado:true, auditado_por:usuario, ts_auditado:now, ts_modif:now,
+                  cantidad_audit: Number(cantidad_audit) };
+    await supabase('PATCH', 'bod_lineas', patch, '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/linea/:lineaId/unauditar ────────────────────────────────
+// Revierte una línea auditada a estado pendiente.
+app.post('/api/bod/linea/:lineaId/unauditar', bodGuard, async (req, res) => {
+  try {
+    var linId = String(req.params.lineaId).trim();
+    var { usuario, supervisor, auditor } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden anular auditorías.' });
+    var now = new Date().toISOString();
+    await supabase('PATCH', 'bod_lineas',
+      { auditado:false, auditado_por:null, ts_auditado:null, cantidad_audit:null, ts_modif:now },
+      '?id=eq.' + encodeURIComponent(linId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/cerrar ──────────────────────────────────────
+app.post('/api/bod/sesion/:id/cerrar', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var { usuario, supervisor, auditor } = req.body || {};
+    var esAuditor = supervisor === true || auditor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden cerrar sesiones.' });
+    var rows = await supabase('GET', 'bod_sesiones', null, '?id=eq.' + encodeURIComponent(sesId) + '&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    await supabase('PATCH', 'bod_sesiones',
+      { estado:'cerrada', ts_cierre:new Date().toISOString(), modificado_por:usuario },
+      '?id=eq.' + encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/furgones ─────────────────────────────────────
+// Devuelve asignaciones bod_tarima_furgon + cargas logísticas bod_furgon_cierres
+app.get('/api/bod/sesion/:id/furgones', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var cacheKey = 'bod:furgones:'+sesId;
+    var cached = cacheGet(cacheKey);
+    if(cached) return res.json(cached);
+    var [rows, cierres] = await Promise.all([
+      supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=furgon.asc,tarima.asc'),
+      supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)).catch(function(){ return []; })
+    ]);
+    rows    = Array.isArray(rows)    ? rows    : [];
+    cierres = Array.isArray(cierres) ? cierres : [];
+    var resp = { ok:true, asignaciones: rows, cargas: cierres };
+    cacheSet(cacheKey, resp, 30000); // 30s — invalida en crear/cerrar/reabrir/hamilton/borrar
+    res.json(resp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Helper: invalida cache relacionado con una sesión (furgones + sesiones-activas)
+function invalidarCacheSesion(sesId) {
+  cacheInvalidate('bod:furgones:'+sesId);
+  cacheInvalidate('bod:sesion:'+sesId);
+  cacheInvalidatePrefix('bod:sesion-buscar:');
+  cacheInvalidate('bod:sesiones-activas');
+}
+
+// ── POST /api/bod/sesion/:id/carga-logistica ──────────────────────────────
+// Combina: asignar tarimas a furgón + crear carga logística en bod_furgon_cierres.
+// Reemplaza el flujo de 2 pasos (asignar + finalizar) por un único paso.
+app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var { tarimas, furgon, placa, marchamo, licencia_hija, destino_tr999,
+          observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden crear cargas logísticas.' });
+
+    furgon        = String(furgon        || '').trim();
+    placa         = String(placa         || '').trim().toUpperCase();
+    marchamo      = String(marchamo      || '').trim().toUpperCase();
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    observacion   = String(observacion   || '').trim();
+    usuario       = String(usuario       || '').trim();
+
+    if(!furgon)        return res.status(400).json({ ok:false, error:'falta furgon' });
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+    if(!Array.isArray(tarimas) || !tarimas.length)
+      return res.status(400).json({ ok:false, error:'Debe seleccionar al menos una tarima.' });
+
+    var tarimasNorm = tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean);
+
+    // Verificar sesión
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = sesRows[0];
+    if(sesion.estado === 'cerrada') return res.status(400).json({ ok:false, error:'La sesión está cerrada.' });
+
+    // Verificar que el furgón no tenga carga logística ya en esta sesión
+    try {
+      var existing = await supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon)+'&limit=1');
+      if(Array.isArray(existing) && existing.length) {
+        return res.status(409).json({ ok:false, error:'El furgón '+furgon+' ya tiene una carga logística en esta sesión.' });
+      }
+    } catch(e) { /* tabla puede no existir — continuar */ }
+
+    // Verificar que las tarimas no estén ya en otro furgón diferente
+    var asigExist = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    asigExist = Array.isArray(asigExist) ? asigExist : [];
+    var asigMap = {};
+    asigExist.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
+    var bloqueadas = tarimasNorm.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
+    if(bloqueadas.length)
+      return res.status(409).json({ ok:false, error:'Tarimas ya en otro furgón: '+bloqueadas.join(', '), bloqueadas:bloqueadas });
+
+    // 1. Asignar tarimas al furgón en bod_tarima_furgon
+    var now = new Date().toISOString();
+    var nuevas = tarimasNorm.filter(function(t){ return !asigMap[t]; });
+    for(var i=0; i<nuevas.length; i++) {
+      await supabase('POST', 'bod_tarima_furgon',
+        { id:'btf-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
+          sesion_id:sesId, tarima:nuevas[i], furgon:furgon,
+          asignado_por:usuario, ts_asignacion:now },
+        '');
+    }
+
+    // 2. Leer líneas de esas tarimas para resumen SKU
+    var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&tarima=in.('+tarimasNorm.map(encodeURIComponent).join(',')+')'
+      +'&eliminada=eq.false';
+    var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
+    lineas = Array.isArray(lineas) ? lineas : [];
+
+    var skuMap = {};
+    lineas.forEach(function(l){
+      var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
+      if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
+      skuMap[l.sku].unidades += cant;
+    });
+    var resumenSkus  = Object.values(skuMap);
+    var totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
+
+    // 3. Crear carga logística en bod_furgon_cierres
+    var cierre = {
+      id:             'bfc-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+      sesion_id:      sesId,
+      licencia_padre: sesion.licencia_id || '',
+      furgon:         furgon,
+      placa:          placa,
+      marchamo:       marchamo,
+      licencia_hija:  licencia_hija,
+      destino_tr999:  destino_tr999,
+      tarimas:        tarimasNorm,
+      resumen_skus:   resumenSkus,
+      unidades_total: totalUnidades,
+      observacion:    observacion,
+      cerrado_por:    usuario,
+      estado:         'finalizado',
+      ts_cierre:      now
+    };
+    await supabase('POST', 'bod_furgon_cierres', cierre, '');
+
+    invalidarCacheSesion(sesId);
+    res.json({
+      ok:            true,
+      furgon:        furgon,
+      placa:         placa,
+      marchamo:      marchamo,
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      tarimas:       tarimasNorm,
+      skus:          resumenSkus,
+      unidades_total: totalUnidades
+    });
+  } catch(e) {
+    console.log('BOD carga-logistica FAILED:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/furgon ──────────────────────────────────────
+app.post('/api/bod/sesion/:id/furgon', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var { tarimas, furgon, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden asignar furgones.' });
+    if(!furgon)    return res.status(400).json({ ok:false, error:'falta furgon' });
+    if(!Array.isArray(tarimas)||!tarimas.length) return res.status(400).json({ ok:false, error:'tarimas debe ser array no vacío' });
+    var normadas = tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean);
+    if(!normadas.length) return res.status(400).json({ ok:false, error:'ninguna tarima válida' });
+    furgon = String(furgon).trim();
+
+    // Leer asignaciones existentes de la sesión
+    var existing = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var asigMap = {};
+    if(Array.isArray(existing)) existing.forEach(function(r){ asigMap[r.tarima] = r.furgon; });
+
+    // Detectar bloqueadas (asignadas a otro furgón distinto)
+    var bloqueadas = normadas.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
+    if(bloqueadas.length) return res.status(409).json({ ok:false, error:'Algunas tarimas ya están asignadas.', bloqueadas: bloqueadas });
+
+    // Insertar solo las nuevas
+    var nuevas = normadas.filter(function(t){ return !asigMap[t]; });
+    var now = new Date().toISOString();
+    for(var i=0; i<nuevas.length; i++) {
+      await supabase('POST', 'bod_tarima_furgon',
+        {
+          id: 'btf-' + Date.now() + '-' + i + '-' + Math.random().toString(36).slice(2,7),
+          sesion_id: sesId,
+          tarima: nuevas[i],
+          furgon: furgon,
+          asignado_por: usuario || '',
+          ts_asig: now
+        },
+        '?on_conflict=sesion_id,tarima');
+    }
+    cacheInvalidate('bod:furgones:'+sesId);
+    res.json({ ok:true, asignadas: normadas.length, nuevas: nuevas.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id/furgon/:tarima ─────────────────────────────
+app.delete('/api/bod/sesion/:id/furgon/:tarima', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var tarima  = bodNormTarima(req.params.tarima);
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden quitar asignaciones.' });
+    await supabase('DELETE', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&tarima=eq.'+encodeURIComponent(tarima));
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/manifiesto?furgon=N ──────────────────────────
+// Igual que antes + agrega estado_cierre desde bod_furgon_cierres
+app.get('/api/bod/sesion/:id/manifiesto', bodGuard, async (req, res) => {
+  try {
+    var sesId        = String(req.params.id).trim();
+    var filtroFurgon = req.query.furgon ? String(req.query.furgon).trim() : null;
+
+    var [lineas, asignaciones, cierres] = await Promise.all([
+      supabase('GET', 'bod_lineas', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000'),
+      supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)),
+      supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)).catch(function(){ return []; })
+    ]);
+    lineas       = Array.isArray(lineas)       ? lineas       : [];
+    asignaciones = Array.isArray(asignaciones) ? asignaciones : [];
+    cierres      = Array.isArray(cierres)      ? cierres      : [];
+
+    // Mapa tarima → furgon y cierre → datos
+    var tarimaFurgon = {};
+    asignaciones.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
+    var cierreMap = {};
+    cierres.forEach(function(c){ cierreMap[c.furgon] = c; });
+
+    var tarimasSinAsignar = [];
+    var tarimasConLineas = {};
+    lineas.forEach(function(l){ tarimasConLineas[l.tarima] = true; });
+    Object.keys(tarimasConLineas).forEach(function(t){
+      if(!tarimaFurgon[t]) tarimasSinAsignar.push(t);
+    });
+
+    var porFurgon = {};
+    var tarimasFurgon = {};
+
+    lineas.forEach(function(l){
+      var furgon = tarimaFurgon[l.tarima];
+      if(!furgon) return;
+      if(filtroFurgon && furgon !== filtroFurgon) return;
+      if(!porFurgon[furgon]) porFurgon[furgon] = {};
+      if(!tarimasFurgon[furgon]) tarimasFurgon[furgon] = {};
+      tarimasFurgon[furgon][l.tarima] = true;
+      var sku  = l.sku || '?';
+      var cant = (l.auditado && l.cantidad_audit != null)
+        ? Number(l.cantidad_audit) : Number(l.cantidad);
+      var desc = l.descripcion || '';
+      if(!porFurgon[furgon][sku]) {
+        porFurgon[furgon][sku] = { sku:sku, descripcion:desc, unidades:0, lineasCount:0, pendientes:0,
+          cantidad_auditada:null, _auditSum:0, _auditCount:0 };
+      }
+      var entry = porFurgon[furgon][sku];
+      entry.unidades    += Number(l.cantidad)||0;
+      entry.lineasCount += 1;
+      if(!l.auditado) { entry.pendientes += 1; }
+      else if(l.cantidad_audit != null) {
+        entry._auditSum   += Number(l.cantidad_audit)||0;
+        entry._auditCount += 1;
+      }
+      if(!entry.descripcion && desc) entry.descripcion = desc;
+    });
+
+    var furgonesKeys = Object.keys(porFurgon).sort(function(a,b){
+      return String(a).localeCompare(String(b), undefined, { numeric:true });
+    });
+
+    // Calcular cantidad_auditada total por SKU y limpiar campos internos
+    furgonesKeys.forEach(function(fg){
+      Object.values(porFurgon[fg]).forEach(function(e){
+        if(e._auditCount > 0) e.cantidad_auditada = e._auditSum;
+        delete e._auditSum; delete e._auditCount;
+      });
+    });
+
+    var furgonesRes = furgonesKeys.map(function(furgon){
+      var skus = Object.values(porFurgon[furgon]);
+      var totalUnidades   = skus.reduce(function(s,x){ return s+x.unidades; }, 0);
+      var totalPendientes = skus.reduce(function(s,x){ return s+x.pendientes; }, 0);
+      var cierre = cierreMap[furgon] || null;
+      return {
+        furgon:           furgon,
+        tarimas:          Object.keys(tarimasFurgon[furgon]).sort(),
+        skus:             skus,
+        total_unidades:   totalUnidades,
+        total_skus:       skus.length,
+        tiene_pendientes: totalPendientes > 0,
+        finalizado:       !!cierre,
+        licencia_hija:    cierre ? cierre.licencia_hija  : null,
+        destino_tr999:    cierre ? cierre.destino_tr999  : null,
+        ts_cierre:        cierre ? cierre.ts_cierre      : null,
+        cerrado_por:      cierre ? cierre.cerrado_por    : null
+      };
+    });
+
+    res.json({ ok:true, sesion_id:sesId, furgones:furgonesRes, tarimas_sin_asignar:tarimasSinAsignar });
+  } catch(e) {
+    console.log('BOD manifiesto FAILED:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/furgon/:furgon/finalizar ─────────────────────
+// Registra el cierre de un furgón: licencia hija + destino TR999.
+// Persiste en bod_furgon_cierres. Idempotente: error 409 si ya cerrado.
+app.post('/api/bod/sesion/:id/furgon/:furgon/finalizar', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var furgon  = String(req.params.furgon).trim();
+    var { licencia_hija, destino_tr999, observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden finalizar furgones.' });
+
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    observacion   = String(observacion   || '').trim();
+    usuario       = String(usuario       || '').trim();
+
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+
+    // Verificar sesión existe
+    var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length) return res.status(404).json({ ok:false, error:'Sesión no encontrada' });
+    var sesion = sesRows[0];
+
+    // Verificar que no esté ya finalizado
+    try {
+      var existing = await supabase('GET', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon)+'&limit=1');
+      if(Array.isArray(existing) && existing.length) {
+        return res.status(409).json({ ok:false, error:'El furgón '+furgon+' ya fue finalizado con licencia hija '+existing[0].licencia_hija+'.' });
+      }
+    } catch(e) { /* tabla puede no existir aún — continuar */ }
+
+    // Leer tarimas y líneas
+    var asig = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&furgon=eq.'+encodeURIComponent(furgon));
+    asig = Array.isArray(asig) ? asig : [];
+    if(!asig.length) return res.status(400).json({ ok:false, error:'El furgón '+furgon+' no tiene tarimas asignadas.' });
+
+    var tarimas = asig.map(function(a){ return a.tarima; });
+    var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&tarima=in.('+tarimas.map(encodeURIComponent).join(',')+')'
+      +'&eliminada=eq.false';
+    var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
+    lineas = Array.isArray(lineas) ? lineas : [];
+    if(!lineas.length) return res.status(400).json({ ok:false, error:'El furgón '+furgon+' no tiene líneas capturadas.' });
+
+    // Agrupar por SKU
+    var skuMap = {};
+    lineas.forEach(function(l){
+      var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
+      if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
+      skuMap[l.sku].unidades += cant;
+    });
+    var resumenSkus = Object.values(skuMap);
+    var totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
+
+    // Persistir el cierre
+    var cierre = {
+      id:             'bfc-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+      sesion_id:      sesId,
+      licencia_padre: sesion.licencia_id || '',
+      furgon:         furgon,
+      licencia_hija:  licencia_hija,
+      destino_tr999:  destino_tr999,
+      tarimas:        tarimas,
+      resumen_skus:   resumenSkus,
+      unidades_total: totalUnidades,
+      observacion:    observacion,
+      cerrado_por:    usuario,
+      ts_cierre:      new Date().toISOString()
+    };
+    await supabase('POST', 'bod_furgon_cierres', cierre, '');
+
+    res.json({
+      ok:            true,
+      furgon:        furgon,
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      tarimas:       tarimas,
+      skus:          resumenSkus,
+      unidades_total: totalUnidades
+    });
+  } catch(e) {
+    console.log('BOD furgon finalizar FAILED:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── PATCH /api/bod/sesion/:id/carga-logistica/:cargaId ───────────────────
+app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { placa, marchamo, licencia_hija, destino_tr999, observacion, usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden editar cargas logísticas.' });
+
+    destino_tr999 = String(destino_tr999 || '').trim().toUpperCase();
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'falta licencia_hija' });
+    if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
+      return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Carga no encontrada en esta sesión.' });
+    if(rows[0].estado === 'cerrada')
+      return res.status(409).json({ ok:false, error:'La carga está cerrada. Solo un supervisor puede reabrirla.' });
+
+    var patch = {
+      placa:         String(placa         || '').trim().toUpperCase(),
+      marchamo:      String(marchamo      || '').trim().toUpperCase(),
+      licencia_hija: licencia_hija,
+      destino_tr999: destino_tr999,
+      observacion:   String(observacion   || '').trim()
+    };
+    await supabase('PATCH', 'bod_furgon_cierres', patch,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true, patch });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id/carga-logistica/:cargaId ──────────────────
+app.delete('/api/bod/sesion/:id/carga-logistica/:cargaId', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores pueden eliminar cargas logísticas.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length) return res.status(404).json({ ok:false, error:'Carga no encontrada en esta sesión.' });
+
+    var carga  = rows[0];
+    if(carga.estado === 'cerrada')
+      return res.status(409).json({ ok:false, error:'La carga está cerrada. Solo un supervisor puede reabrirla antes de eliminar.' });
+    var tarimas = Array.isArray(carga.tarimas) ? carga.tarimas : [];
+
+    // Eliminar la carga logística
+    await supabase('DELETE', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+
+    // Liberar tarimas en bod_tarima_furgon
+    if(tarimas.length) {
+      for(var i = 0; i < tarimas.length; i++) {
+        try {
+          await supabase('DELETE', 'bod_tarima_furgon', null,
+            '?sesion_id=eq.'+encodeURIComponent(sesId)+'&tarima=eq.'+encodeURIComponent(tarimas[i]));
+        } catch(e) { /* continuar si una tarima falla */ }
+      }
+    }
+    res.json({ ok:true, tarimas_liberadas: tarimas });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── PATCH /api/bod/sesion/:id/carga-logistica/:cargaId/cerrar ─────────────
+app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId/cerrar', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAuditor = auditor === true || supervisor === true;
+    if(!esAuditor) return res.status(403).json({ ok:false, error:'Solo auditores o supervisores pueden cerrar cargas.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+
+    var cg = rows[0];
+    if(cg.estado === 'cerrada')
+      return res.status(409).json({ ok:false, error:'La carga ya está cerrada.' });
+
+    // Validaciones de datos obligatorios antes de cerrar
+    var faltantes = [];
+    if(!String(cg.placa||'').trim())          faltantes.push('Placa');
+    if(!String(cg.marchamo||'').trim())       faltantes.push('Marchamo');
+    if(!String(cg.licencia_hija||'').trim())  faltantes.push('Licencia hija');
+    if(!String(cg.destino_tr999||'').trim())  faltantes.push('Destino TR999');
+    var tarimas = Array.isArray(cg.tarimas) ? cg.tarimas.filter(Boolean) : [];
+    if(!tarimas.length) faltantes.push('Tarimas');
+    if(faltantes.length)
+      return res.status(400).json({ ok:false, error:'Faltan datos para cerrar: '+faltantes.join(', ')+'.' });
+
+    var now = new Date().toISOString();
+    await supabase('PATCH', 'bod_furgon_cierres',
+      { estado:'cerrada', cerrado_por: String(usuario||''), ts_cierre: now },
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+
+    invalidarCacheSesion(sesId);
+    res.json({ ok:true, estado:'cerrada', cerrado_por: usuario, ts_cierre: now });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── PATCH /api/bod/sesion/:id/carga-logistica/:cargaId/reabrir ────────────
+app.patch('/api/bod/sesion/:id/carga-logistica/:cargaId/reabrir', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, supervisor } = req.body || {};
+    // Solo supervisores pueden reabrir
+    if(supervisor !== true)
+      return res.status(403).json({ ok:false, error:'Solo supervisores pueden reabrir cargas cerradas.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+
+    if(rows[0].estado !== 'cerrada')
+      return res.status(409).json({ ok:false, error:'La carga no está cerrada.' });
+
+    await supabase('PATCH', 'bod_furgon_cierres',
+      { estado:'abierta' },
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+
+    invalidarCacheSesion(sesId);
+    res.json({ ok:true, estado:'abierta', reabierto_por: usuario });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton ─────
+// Crea licencia hija en state.teorico + state.cdg para que aparezca en Hamilton → Traslados CDG.
+// SQL previo requerido:
+//   ALTER TABLE bod_furgon_cierres
+//     ADD COLUMN IF NOT EXISTS enviado_hamilton BOOLEAN NOT NULL DEFAULT false,
+//     ADD COLUMN IF NOT EXISTS enviado_hamilton_por TEXT NOT NULL DEFAULT '',
+//     ADD COLUMN IF NOT EXISTS ts_envio_hamilton TIMESTAMPTZ,
+//     ADD COLUMN IF NOT EXISTS hamilton_contenedor TEXT NOT NULL DEFAULT '';
+app.post('/api/bod/sesion/:id/carga-logistica/:cargaId/enviar-hamilton', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    var esAud = auditor === true || supervisor === true;
+    if(!esAud) return res.status(403).json({ ok:false, error:'Solo auditores o supervisores pueden enviar a Hamilton.' });
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+    var cg = rows[0];
+
+    if(cg.estado !== 'cerrada')
+      return res.status(400).json({ ok:false, error:'La carga debe estar en estado "cerrada" para enviar a Hamilton.' });
+    if(cg.enviado_hamilton)
+      return res.status(409).json({ ok:false, error:'Esta carga ya fue enviada a Hamilton ('+cg.hamilton_contenedor+').' });
+
+    var licHija = String(cg.licencia_hija||'').trim().toUpperCase();
+    var dest    = String(cg.destino_tr999||'').trim().toUpperCase();
+    var furgon  = String(cg.furgon||'').trim();
+    var placa   = String(cg.placa||'').trim().toUpperCase();
+    var marchamo= String(cg.marchamo||'').trim().toUpperCase();
+    var tarimas = Array.isArray(cg.tarimas) ? cg.tarimas.filter(Boolean) : [];
+    var resSkus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
+
+    if(!licHija) return res.status(400).json({ ok:false, error:'La carga no tiene licencia hija definida.' });
+    if(!dest)    return res.status(400).json({ ok:false, error:'La carga no tiene destino TR999 definido.' });
+    if(!tarimas.length) return res.status(400).json({ ok:false, error:'La carga no tiene tarimas asignadas.' });
+    if(!resSkus.length) return res.status(400).json({ ok:false, error:'La carga no tiene SKUs en resumen.' });
+
+    // Leer licencia_padre desde la sesión
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&select=licencia_id&limit=1');
+    var licPadre = (Array.isArray(sesRows)&&sesRows.length) ? sesRows[0].licencia_id : '';
+
+    // Construir items del teórico desde resumen_skus
+    var items = resSkus.map(function(s){
+      return {
+        sku:  String(s.sku||''),
+        desc: String(s.descripcion||s.desc||''),
+        qty:  Number(s.unidades||0),
+        teoricoWMS: Number(s.unidades||0),
+        raw: {
+          origen: 'Bodega CDG',
+          status: 'Manifiesto Bodega CDG',
+          tipo:   'CDG',
+          licencia_padre: licPadre,
+          licencia_hija:  licHija,
+          destino_tr999:  dest,
+          furgon:  furgon,
+          placa:   placa,
+          marchamo: marchamo,
+          tarimas: tarimas.join(', ')
+        }
+      };
+    });
+
+    // Snapshot para rollback
+    var snapCdg     = state.cdg     ? JSON.parse(JSON.stringify(state.cdg[licHija]||null))     : null;
+    var snapTeorico = state.teorico ? JSON.parse(JSON.stringify(state.teorico[licHija]||null))  : null;
+    var snapFisico  = state.fisico  ? JSON.parse(JSON.stringify(state.fisico[licHija]||null))   : null;
+    var snapVer     = state.version;
+    var snapHist    = (state.historial||[]).length;
+
+    // Crear entrada en state
+    state.teorico[licHija] = {
+      type:             'Traslados',
+      fromCDG:          true,
+      fromBodegaCDG:    true,
+      cdgRef:           licHija,
+      cdgValidado:      true,
+      cdgBloqueado:     true,
+      cdgTipo:          'CDG',
+      items:            items,
+      meta: {
+        origen:       'Bodega CDG',
+        status:       'Manifiesto Bodega CDG',
+        tipo:         'CDG',
+        licencia_padre: licPadre,
+        licencia_hija:  licHija,
+        destino_tr999:  dest,
+        furgon:  furgon,
+        placa:   placa,
+        marchamo: marchamo,
+        tarimas: tarimas.join(', ')
+      }
+    };
+    state.fisico[licHija]  = null;
+    if(!state.cdg) state.cdg = {};
+    state.cdg[licHija] = {
+      creado: new Date().toISOString(),
+      autor:  usuario,
+      lastEditor: usuario,
+      tipo:   'CDG',
+      bloqueado: true,
+      items:  items
+    };
+    addHistorial(usuario, 'enviado_hamilton',
+      'Carga '+cargaId+' → Hamilton contenedor '+licHija+' ('+items.length+' SKUs, '+tarimas.join(',')+')');
+
+    try {
+      await saveDailyStateStrict('enviado_hamilton '+licHija);
+    } catch(saveErr) {
+      if(snapTeorico === null) delete state.teorico[licHija]; else state.teorico[licHija] = snapTeorico;
+      if(snapFisico  === null) delete state.fisico[licHija];  else state.fisico[licHija]  = snapFisico;
+      if(snapCdg     === null) delete state.cdg[licHija];     else state.cdg[licHija]     = snapCdg;
+      state.version = snapVer;
+      if(state.historial) state.historial.length = snapHist;
+      return res.status(500).json({
+        ok:false,
+        error:'No se pudo persistir a Supabase. Operación revertida. '+saveErr.message
+      });
+    }
+
+    // Marcar en bod_furgon_cierres
+    var now = new Date().toISOString();
+    try {
+      await supabase('PATCH', 'bod_furgon_cierres',
+        { enviado_hamilton: true, enviado_hamilton_por: String(usuario||''),
+          ts_envio_hamilton: now, hamilton_contenedor: licHija },
+        '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    } catch(patchErr) {
+      // Hamilton ya fue creado — avisar sin revertir
+      return res.status(500).json({
+        ok:false, hamilton_contenedor:licHija, skus:items.length,
+        error:'Hamilton fue creado, pero no se pudo marcar la carga como enviada en bod_furgon_cierres. Verificá antes de reintentar. '+patchErr.message
+      });
+    }
+
+    invalidarCacheSesion(sesId);
+    res.json({ ok:true, hamilton_contenedor: licHija, skus: items.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOD WMS / TRAZABILIDAD — POST /api/bod/wms/upload
+// Parsea Excel WMS con columnas: Número, Fecha, Status, SKU, Nombre,
+// Unidades, Origen, Destino. Clasifica movimientos y guarda en bod_wms_movimientos.
+// FIX (mar 2-jun-2026, server v20): módulo de trazabilidad BOD Fase 2.
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/bod/wms/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    if(!req.file) return res.status(400).json({ ok:false, error:'falta archivo' });
+    var usuario          = String((req.body && req.body.usuario)            || '').trim();
+    if(!usuario) return res.status(400).json({ ok:false, error:'falta usuario' });
+    var licenciaId       = String((req.body && req.body.licencia_id)        || '').trim().toUpperCase();
+    var tipoLicencia     = String((req.body && req.body.tipo_licencia)      || 'inicial').trim();
+    var licenciaPadre    = String((req.body && req.body.licencia_padre)     || '').trim().toUpperCase();
+    var furgonRelacionado= String((req.body && req.body.furgon_relacionado) || '').trim();
+
+    // Validaciones extra para licencias hija
+    if(tipoLicencia === 'hija_salida') {
+      if(!licenciaId)        return res.status(400).json({ ok:false, error:'falta licencia_id (licencia hija)' });
+      if(!licenciaPadre)     return res.status(400).json({ ok:false, error:'falta licencia_padre' });
+      if(!furgonRelacionado) return res.status(400).json({ ok:false, error:'falta furgon_relacionado' });
+    }
+
+    var wb = XLSX.read(req.file.buffer, { type:'buffer', raw:false });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'', raw:false });
+    if(rows.length < 2) return res.status(400).json({ ok:false, error:'Archivo vacío.' });
+
+    var hdr = rows[0].map(function(h){ return String(h).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); });
+    var cNum     = hdr.findIndex(function(h){ return h==='numero'||h.includes('numer'); });
+    var cFecha   = hdr.findIndex(function(h){ return h==='fecha'; });
+    var cStatus  = hdr.findIndex(function(h){ return h==='status'||h==='estado'; });
+    var cSku     = hdr.findIndex(function(h){ return h==='sku'||h==='codigo'; });
+    var cNombre  = hdr.findIndex(function(h){ return h.includes('nombre')||h.includes('descri'); });
+    var cUnis    = hdr.findIndex(function(h){ return h==='unidades'||h==='cantidad'||h==='cant'; });
+    var cOrigen  = hdr.findIndex(function(h){ return h==='origen'; });
+    var cDestino = hdr.findIndex(function(h){ return h==='destino'; });
+
+    if(cSku < 0 || cUnis < 0 || cOrigen < 0 || cDestino < 0) {
+      return res.status(400).json({ ok:false, error:'Faltan columnas: SKU, Unidades, Origen, Destino. Encontrados: '+rows[0].join(', ') });
+    }
+
+    var now = new Date().toISOString();
+    var nomArchivo = req.file.originalname || 'wms.xlsx';
+
+    // Escanear TODAS las filas y construir set de licencias encontradas
+    var licenciasEnArchivo = {};
+    if(cNum >= 0) {
+      rows.slice(1).forEach(function(r){
+        var lic = String(r[cNum]||'').trim().toUpperCase();
+        if(lic) licenciasEnArchivo[lic] = true;
+      });
+    }
+    var licsDistintas = Object.keys(licenciasEnArchivo).filter(function(l){
+      var norm = l.split(/[\s·\-·]+/)[0];
+      var esp  = licenciaId.split(/[\s·\-·]+/)[0];
+      return norm !== esp;
+    });
+    if(licsDistintas.length > 0) {
+      return res.status(400).json({
+        ok:false,
+        error:'El archivo contiene licencias: '+Object.keys(licenciasEnArchivo).join(', ')+
+              '. La sesión activa es "'+licenciaId+'". Verificá el archivo o la sesión.'
+      });
+    }
+
+    // Modo reemplazo selectivo según tipo_licencia
+    try {
+      if(tipoLicencia === 'hija_salida') {
+        // Reemplazar solo movimientos de esta licencia hija + furgón
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId)
+          +'&furgon_relacionado=eq.'+encodeURIComponent(furgonRelacionado)
+          +'&tipo_licencia=eq.hija_salida');
+      } else {
+        // Reemplazar movimientos iniciales de esta licencia
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId)+'&tipo_licencia=eq.inicial');
+        // Fallback: si la tabla no tiene la col aún, borrar todos los de esta licencia
+      }
+    } catch(e) {
+      // Fallback: borrar todos los de esa licencia
+      try {
+        await supabase('DELETE', 'bod_wms_movimientos', null,
+          '?licencia_id=eq.'+encodeURIComponent(licenciaId));
+      } catch(e2) { console.log('BOD WMS delete previo warn:', e2.message); }
+    }
+
+    var movimientos = [];
+    var procesadas = 0, omitidas = 0;
+    var cntEntradas = 0, cntSalidas = 0, cntOtros = 0;
+
+    rows.slice(1).forEach(function(r){
+      var sku     = String(r[cSku]     || '').trim();
+      var origen  = String(cOrigen  >= 0 ? (r[cOrigen]  || '') : '').trim().toUpperCase();
+      var destino = String(cDestino >= 0 ? (r[cDestino] || '') : '').trim().toUpperCase();
+      if(!sku){ omitidas++; return; }
+      var unis = Number(r[cUnis]) || 0;
+      if(unis <= 0){ omitidas++; return; }
+
+      var tipo;
+      if(destino === '952.006.01')                                    tipo = 'entrada_bolson';
+      else if(origen === '952.006.01' && /^TR999\./.test(destino))    tipo = 'salida_tr999';
+      else                                                             tipo = 'otro';
+
+      if(tipo === 'entrada_bolson') cntEntradas++;
+      else if(tipo === 'salida_tr999') cntSalidas++;
+      else cntOtros++;
+
+      movimientos.push({
+        id:                'bwm-'+Date.now()+'-'+procesadas+'-'+Math.random().toString(36).slice(2,5),
+        licencia_id:       licenciaId,
+        licencia_padre:    licenciaPadre,
+        furgon_relacionado: furgonRelacionado,
+        tipo_licencia:     tipoLicencia,
+        fecha:             cFecha  >= 0 ? String(r[cFecha]  || '').trim() : '',
+        status:            cStatus >= 0 ? String(r[cStatus] || '').trim() : '',
+        sku:               sku,
+        descripcion:       cNombre >= 0 ? String(r[cNombre] || '').trim() : '',
+        unidades:          unis,
+        origen:            origen,
+        destino:           destino,
+        tipo_movimiento:   tipo,
+        archivo_origen:    nomArchivo,
+        cargado_por:       usuario,
+        ts_carga:          now
+      });
+      procesadas++;
+    });
+
+    if(!movimientos.length) return res.status(400).json({ ok:false, error:'Sin filas válidas.' });
+
+    // Insertar en chunks de 200
+    var errores = [];
+    for(var ci = 0; ci < movimientos.length; ci += 200) {
+      var chunk = movimientos.slice(ci, ci + 200);
+      try {
+        await supabase('POST', 'bod_wms_movimientos', chunk, '?on_conflict=id');
+      } catch(e) { errores.push({ desde:ci, error:e.message }); }
+    }
+
+    var advertencia;
+    if(tipoLicencia === 'hija_salida' && cntSalidas === 0) {
+      advertencia = 'La licencia hija fue cargada, pero no contiene salidas desde 952.006.01 hacia TR999.';
+    } else if(tipoLicencia !== 'hija_salida' && cntEntradas === 0) {
+      advertencia = 'El archivo fue cargado, pero no contiene movimientos con destino 952.006.01. WMS vs App mostrará cero teórico.';
+    }
+
+    res.json({
+      ok:true, procesadas, omitidas,
+      entradas_bolson: cntEntradas,
+      salidas_tr999:   cntSalidas,
+      otros:           cntOtros,
+      tipo_licencia:   tipoLicencia,
+      advertencia:     advertencia,
+      errores:         errores.length ? errores : undefined
+    });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── Helpers para construir filtro de licencias (punto 5) ─────────────────
+// Acepta ?licencia_id=X | ?fecha=YYYY-MM-DD | ?licencias=A,B,C
+function bodBuildMovQuery(req) {
+  var licId   = String(req.query.licencia_id || '').trim().toUpperCase();
+  var fecha   = String(req.query.fecha       || '').trim();
+  var licsRaw = String(req.query.licencias   || '').trim();
+  var lics    = licsRaw ? licsRaw.split(',').map(function(l){ return l.trim().toUpperCase(); }).filter(Boolean) : [];
+  if(licId && !lics.includes(licId)) lics.push(licId);
+
+  if(lics.length === 1) return { q:'?licencia_id=eq.'+encodeURIComponent(lics[0])+'&limit=10000', lics:lics };
+  if(lics.length > 1)  return { q:'?licencia_id=in.('+lics.map(encodeURIComponent).join(',')+')'+'&limit=10000', lics:lics };
+  if(fecha)            return { q:'?fecha=eq.'+encodeURIComponent(fecha)+'&limit=10000', lics:[] };
+  return { q:'?limit=5000', lics:[] };
+}
+
+// ── GET /api/bod/reportes/wms-vs-app ─────────────────────────────────────
+// Acepta: licencia_id | fecha | licencias (CSV)
+// ── Helper: construir mapa SKU → contexto logístico ──────────────────────
+// Lee bod_sesiones, bod_lineas, bod_tarima_furgon y bod_furgon_cierres
+// para los licencia_id dados y devuelve skuLog[sku] = { tarimas, furgones, licencias_hijas, placas, marchamos, destinos }
+async function bodGetSkuLogistica(lics) {
+  if(!lics || !lics.length) return {};
+  var skuLog = {};
+  function addUniq(arr, val){ if(val && !arr.includes(val)) arr.push(val); }
+  function ensureSku(sku){
+    if(!skuLog[sku]) skuLog[sku] = { tarimas:[], furgones:[], licencias_hijas:[], placas:[], marchamos:[], destinos:[] };
+    return skuLog[sku];
+  }
+
+  // Leer sesiones para estos licencia_id
+  var qSes = lics.length === 1
+    ? '?licencia_id=eq.'+encodeURIComponent(lics[0])+'&select=id,licencia_id&limit=100'
+    : '?licencia_id=in.('+lics.map(encodeURIComponent).join(',')+')'+'&select=id,licencia_id&limit=100';
+  var sesiones = await supabase('GET', 'bod_sesiones', null, qSes).catch(function(){ return []; });
+  sesiones = Array.isArray(sesiones) ? sesiones : [];
+  if(!sesiones.length) return {};
+
+  var sesIds = sesiones.map(function(s){ return s.id; });
+  var qFilter = sesIds.length === 1
+    ? '?sesion_id=eq.'+encodeURIComponent(sesIds[0])
+    : '?sesion_id=in.('+sesIds.map(encodeURIComponent).join(',')+')';
+
+  var [lineas, asigs, cierres] = await Promise.all([
+    supabase('GET', 'bod_lineas', null, qFilter+'&eliminada=eq.false&select=sku,tarima&limit=20000').catch(function(){ return []; }),
+    supabase('GET', 'bod_tarima_furgon', null, qFilter+'&limit=5000').catch(function(){ return []; }),
+    supabase('GET', 'bod_furgon_cierres', null, qFilter+'&limit=1000').catch(function(){ return []; })
+  ]);
+  lineas  = Array.isArray(lineas)  ? lineas  : [];
+  asigs   = Array.isArray(asigs)   ? asigs   : [];
+  cierres = Array.isArray(cierres) ? cierres : [];
+
+  // Mapas: tarima → furgon, tarima → cierre
+  var tarimaFurgon = {}, tarimaCierre = {};
+  asigs.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
+  cierres.forEach(function(cg){
+    var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
+    ts.forEach(function(t){ tarimaCierre[t] = cg; });
+  });
+
+  // Cruzar líneas → tarima → furgon/cierre → skuLog
+  lineas.forEach(function(l){
+    var e = ensureSku(l.sku);
+    addUniq(e.tarimas, l.tarima);
+    var cierre = tarimaCierre[l.tarima];
+    if(cierre) {
+      addUniq(e.furgones, cierre.furgon);
+      addUniq(e.licencias_hijas, cierre.licencia_hija);
+      addUniq(e.placas, cierre.placa);
+      addUniq(e.marchamos, cierre.marchamo);
+      addUniq(e.destinos, cierre.destino_tr999);
+    } else {
+      var furg = tarimaFurgon[l.tarima];
+      if(furg) addUniq(e.furgones, furg);
+    }
+  });
+  return skuLog;
+}
+
+// ── GET /api/bod/reportes/wms-vs-app ─────────────────────────────────────
+app.get('/api/bod/reportes/wms-vs-app', bodGuard, async (req, res) => {
+  try {
+    var f = bodBuildMovQuery(req);
+
+    var lineasQ = f.lics.length === 1
+      ? '?licencia_id=eq.'+encodeURIComponent(f.lics[0])+'&eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id'
+      : f.lics.length > 1
+      ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000'
+      : '?eliminada=eq.false&select=sku,cantidad,descripcion,licencia_id&limit=10000';
+
+    var [wmsRows, lineas, skuLog] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null, f.q+'&tipo_movimiento=eq.entrada_bolson'),
+      supabase('GET', 'bod_lineas', null, lineasQ),
+      bodGetSkuLogistica(f.lics)
+    ]);
+    wmsRows = Array.isArray(wmsRows) ? wmsRows : [];
+    lineas  = Array.isArray(lineas)  ? lineas  : [];
+
+    var wmsMap = {}, wmsDesc = {}, wmsLic = {};
+    wmsRows.forEach(function(r){
+      var k = r.licencia_id+'|'+r.sku;
+      wmsMap[k]  = (wmsMap[k]||0) + Number(r.unidades);
+      if(!wmsDesc[k] && r.descripcion) wmsDesc[k] = r.descripcion;
+      if(!wmsLic[k]) wmsLic[k] = r.licencia_id;
+    });
+    var appMap = {}, appDesc = {}, appLic = {};
+    lineas.forEach(function(l){
+      var k = l.licencia_id+'|'+l.sku;
+      appMap[k]  = (appMap[k]||0) + Number(l.cantidad);
+      if(!appDesc[k] && l.descripcion) appDesc[k] = l.descripcion;
+      if(!appLic[k]) appLic[k] = l.licencia_id;
+    });
+
+    var keys = Object.keys(Object.assign({}, wmsMap, appMap));
+    var result = keys.map(function(k){
+      var wms = wmsMap[k]||0, app = appMap[k]||0, dif = app - wms;
+      var estado;
+      if     (wms > 0 && app === wms)           estado = 'Cuadrado';
+      else if(wms > 0 && app === 0)             estado = 'Pendiente de entarimar';
+      else if(wms > 0 && app > 0 && wms > app)  estado = 'Diferencia: faltante APP';
+      else if(wms > 0 && app > 0 && app > wms)  estado = 'Diferencia: excedente APP';
+      else if(wms === 0 && app > 0)             estado = 'Entarimado sin WMS';
+      else                                       estado = 'Sin datos';
+      var parts = k.split('|');
+      var lic = wmsLic[k] || appLic[k] || parts[0];
+      var sku = parts.slice(1).join('|');
+      var log = skuLog[sku] || {};
+      return { licencia_id:lic, sku, descripcion:wmsDesc[k]||appDesc[k]||'',
+               cantidad_teorica_wms:wms, cantidad_app:app, diferencia:dif, estado,
+               tarimas:       (log.tarimas||[]).join(', '),
+               furgon:        (log.furgones||[]).join(', '),
+               licencia_hija: (log.licencias_hijas||[]).join(', '),
+               placa:         (log.placas||[]).join(', '),
+               marchamo:      (log.marchamos||[]).join(', '),
+               destino_tr999: (log.destinos||[]).join(', ') };
+    });
+    res.json({ ok:true, skus:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/flujo-bolson ───────────────────────────────────
+app.get('/api/bod/reportes/flujo-bolson', bodGuard, async (req, res) => {
+  try {
+    var licId   = String(req.query.licencia_id || '').trim().toUpperCase();
+    var licsRaw = String(req.query.licencias   || '').trim();
+    var lics    = licsRaw ? licsRaw.split(',').map(function(l){ return l.trim().toUpperCase(); }).filter(Boolean) : [];
+    if(licId && !lics.includes(licId)) lics.push(licId);
+
+    // Entradas: WMS entrada_bolson
+    var qEntradas;
+    if(lics.length === 1) {
+      qEntradas = '?licencia_id=eq.'+encodeURIComponent(lics[0])+'&tipo_movimiento=eq.entrada_bolson&limit=10000';
+    } else if(lics.length > 1) {
+      qEntradas = '?licencia_id=in.('+lics.map(encodeURIComponent).join(',')+')'+'&tipo_movimiento=eq.entrada_bolson&limit=10000';
+    } else {
+      qEntradas = '?tipo_movimiento=eq.entrada_bolson&limit=5000';
+    }
+
+    // Cierres: fuente de verdad para salidas (bod_furgon_cierres, NO WMS salida_tr999)
+    var qCierres;
+    if(lics.length === 1) {
+      qCierres = '?licencia_padre=eq.'+encodeURIComponent(lics[0])+'&limit=1000';
+    } else if(lics.length > 1) {
+      qCierres = '?licencia_padre=in.('+lics.map(encodeURIComponent).join(',')+')'+'&limit=1000';
+    } else {
+      qCierres = '?limit=500';
+    }
+
+    var [movsEntrada, cierres] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null, qEntradas),
+      supabase('GET', 'bod_furgon_cierres',  null, qCierres).catch(function(){ return []; })
+    ]);
+    movsEntrada = Array.isArray(movsEntrada) ? movsEntrada : [];
+    cierres     = Array.isArray(cierres)     ? cierres     : [];
+
+    var skuData = {};
+    function ensureSku(skuRaw, desc) {
+      var sku = String(skuRaw||'').trim().toUpperCase();
+      if(!sku) return null;
+      if(!skuData[sku]) skuData[sku] = { sku:sku, descripcion:desc||'',
+        entradas_952:0, salidas_tr999:0, licencia_origen:'',
+        licencias_hijas:[], furgones:[], tarimas_arr:[], placas:[], marchamos:[], destinos:[] };
+      return skuData[sku];
+    }
+    function addUniq(arr, val){ if(val && !arr.includes(val)) arr.push(val); }
+
+    // Entradas desde WMS
+    movsEntrada.forEach(function(m){
+      var d = ensureSku(m.sku, m.descripcion);
+      if(!d) return;
+      if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
+      d.entradas_952 += Number(m.unidades);
+      if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
+    });
+
+    // Salidas exclusivamente desde cierres logísticos (bod_furgon_cierres.resumen_skus)
+    cierres.forEach(function(c){
+      var skus = Array.isArray(c.resumen_skus) ? c.resumen_skus : [];
+      var ts   = Array.isArray(c.tarimas)      ? c.tarimas      : [];
+      skus.forEach(function(sv){
+        var d = ensureSku(sv.sku, sv.descripcion);
+        if(!d) return;
+        if(!d.descripcion && sv.descripcion) d.descripcion = sv.descripcion;
+        d.salidas_tr999 += Number(sv.unidades)||0;
+        addUniq(d.licencias_hijas, c.licencia_hija);
+        addUniq(d.furgones, c.furgon);
+        addUniq(d.placas, c.placa);
+        addUniq(d.marchamos, c.marchamo);
+        addUniq(d.destinos, c.destino_tr999);
+        ts.forEach(function(t){ addUniq(d.tarimas_arr, t); });
+      });
+    });
+
+    var result = Object.values(skuData).map(function(d){
+      return {
+        sku:             d.sku,
+        descripcion:     d.descripcion,
+        entradas_952:    d.entradas_952,
+        salidas_tr999:   d.salidas_tr999,
+        remanente:       d.entradas_952 - d.salidas_tr999,
+        licencia_origen: d.licencia_origen,
+        licencia_hija:   d.licencias_hijas.join(', '),
+        furgon:          d.furgones.join(', '),
+        destino_tr999:   d.destinos.join(', '),
+        tarimas:         d.tarimas_arr.join(', '),
+        placa:           d.placas.join(', '),
+        marchamo:        d.marchamos.join(', ')
+      };
+    });
+    res.json({ ok:true, movimientos:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/remanentes ─────────────────────────────────────
+app.get('/api/bod/reportes/remanentes', bodGuard, async (req, res) => {
+  try {
+    var f = bodBuildMovQuery(req);
+    var lineasQ = f.lics.length === 1
+      ? '?licencia_id=eq.'+encodeURIComponent(f.lics[0])+'&eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000'
+      : f.lics.length > 1
+      ? '?licencia_id=in.('+f.lics.map(encodeURIComponent).join(',')+')'+'&eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000'
+      : '?eliminada=eq.false&select=sku,cantidad,tarima,licencia_id&limit=10000';
+
+    var [movs, lineas, skuLog] = await Promise.all([
+      supabase('GET', 'bod_wms_movimientos', null, f.q),
+      supabase('GET', 'bod_lineas', null, lineasQ),
+      bodGetSkuLogistica(f.lics)
+    ]);
+    movs   = Array.isArray(movs)   ? movs   : [];
+    lineas = Array.isArray(lineas) ? lineas : [];
+
+    var appMap = {}, skuTarimadas = {};
+    lineas.forEach(function(l){
+      appMap[l.sku] = (appMap[l.sku]||0) + Number(l.cantidad);
+      skuTarimadas[l.sku] = true;
+    });
+
+    var hoy = new Date();
+    var skuData = {};
+    movs.forEach(function(m){
+      if(!skuData[m.sku]) skuData[m.sku] = { sku:m.sku, descripcion:m.descripcion||'', entradas:0, salidas:0,
+        fechas_entrada:[], ultima_fecha:null, licencia_origen:'', licencia_salida:'', destinos_distintos:false };
+      var d = skuData[m.sku];
+      if(!d.descripcion && m.descripcion) d.descripcion = m.descripcion;
+      if(m.tipo_movimiento === 'entrada_bolson'){
+        d.entradas += Number(m.unidades);
+        if(m.fecha) d.fechas_entrada.push(m.fecha);
+        if(!d.licencia_origen) d.licencia_origen = m.licencia_id;
+      }
+      if(m.tipo_movimiento === 'salida_tr999'){
+        d.salidas += Number(m.unidades);
+        if(!d.licencia_salida) d.licencia_salida = m.licencia_id;
+      }
+      if(m.tipo_movimiento === 'otro') d.destinos_distintos = true;
+      if(m.fecha && (!d.ultima_fecha || m.fecha > d.ultima_fecha)) d.ultima_fecha = m.fecha;
+    });
+
+    Object.keys(appMap).forEach(function(sku){
+      if(!skuData[sku]) skuData[sku] = { sku:sku, descripcion:'', entradas:0, salidas:0, fechas_entrada:[],
+        ultima_fecha:null, licencia_origen:'', licencia_salida:'', destinos_distintos:false };
+    });
+
+    var result = Object.values(skuData).filter(function(d){
+      var rem = d.entradas - d.salidas;
+      return rem > 0 || (appMap[d.sku] || 0) > 0;
+    }).map(function(d){
+      var rem = d.entradas - d.salidas;
+      var app = appMap[d.sku] || 0;
+      var fechaMin = d.fechas_entrada.sort()[0] || null;
+      var dias = fechaMin ? Math.floor((hoy - new Date(fechaMin)) / 86400000) : null;
+      var log    = skuLog[d.sku] || {};
+      var furgon        = (log.furgones||[]).join(', ');
+      var licencia_hija = (log.licencias_hijas||[]).join(', ');
+      var tarimas       = (log.tarimas||[]).join(', ');
+      var placa         = (log.placas||[]).join(', ');
+      var marchamo      = (log.marchamos||[]).join(', ');
+      var destino_tr999 = (log.destinos||[]).join(', ');
+
+      // Causa operativa enriquecida con contexto logístico
+      var causa;
+      if(d.entradas === 0 && d.destinos_distintos)
+        causa = 'Pendiente por ubicación distinta a 952';
+      else if(d.entradas > 0 && app === 0)
+        causa = 'Pendiente de entarimar';
+      else if(d.entradas === 0 && app > 0)
+        causa = 'Entarimado sin WMS';
+      else if(app > 0 && !furgon)
+        causa = 'Pendiente de asignación de furgón';
+      else if(app > 0 && furgon && !licencia_hija)
+        causa = 'Pendiente de licencia hija';
+      else if(app > 0 && furgon && licencia_hija && d.salidas === 0)
+        causa = 'Pendiente de movimiento WMS salida';
+      else if(d.entradas > 0 && d.salidas > 0 && rem > 0)
+        causa = 'Remanente operativo';
+      else if(app > 0 && !skuTarimadas[d.sku])
+        causa = 'Pendiente de traslado';
+      else
+        causa = dias !== null && dias <= 2 ? 'Pendiente normal' : 'Atrasado';
+
+      return { sku:d.sku, descripcion:d.descripcion, cantidad_remanente:rem,
+               entrada_952:d.entradas, app_entarimada:app, salida_tr999:d.salidas,
+               licencia_origen:d.licencia_origen, licencia_salida:d.licencia_salida,
+               furgon, licencia_hija, tarimas, placa, marchamo, destino_tr999,
+               fecha_primer_ingreso:fechaMin, ultimo_movimiento:d.ultima_fecha,
+               dias_en_bolson:dias, estado_remanente:causa };
+    });
+    res.json({ ok:true, remanentes:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/reportes/furgones ───────────────────────────────────────
+app.get('/api/bod/reportes/furgones', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.query.sesion_id || '').trim();
+    var q = sesId ? '?sesion_id=eq.'+encodeURIComponent(sesId) : '?limit=2000';
+    var [asig, lineas] = await Promise.all([
+      supabase('GET', 'bod_tarima_furgon', null, q+'&order=furgon.asc,tarima.asc'),
+      supabase('GET', 'bod_lineas', null, (sesId?'?sesion_id=eq.'+encodeURIComponent(sesId):'?limit=5000')+'&eliminada=eq.false')
+    ]);
+    asig   = Array.isArray(asig)   ? asig   : [];
+    lineas = Array.isArray(lineas) ? lineas : [];
+
+    var tarimaFurgon = {};
+    asig.forEach(function(a){ tarimaFurgon[a.tarima] = a.furgon; });
+    var porFurgon = {};
+    lineas.forEach(function(l){
+      var furg = tarimaFurgon[l.tarima]; if(!furg) return;
+      if(!porFurgon[furg]) porFurgon[furg] = {};
+      if(!porFurgon[furg][l.sku]) porFurgon[furg][l.sku] = { sku:l.sku, descripcion:l.descripcion||'', cantidad:0, tarimas:new Set() };
+      porFurgon[furg][l.sku].cantidad += Number(l.cantidad)||0;
+      porFurgon[furg][l.sku].tarimas.add(l.tarima);
+    });
+    var result = Object.keys(porFurgon).sort().map(function(furg){
+      return { furgon:furg, skus: Object.values(porFurgon[furg]).map(function(s){ return Object.assign({}, s, { tarimas_relacionadas: Array.from(s.tarimas) }); }) };
+    });
+    res.json({ ok:true, furgones:result });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// Logo Manifiesto Bodega CDG — base64 embebido (compártido entre Word y PDF)
+var _MANIF_LOGO_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAJsAAAB7CAIAAADsR2VZAAAAAXNSR0IArs4c6QAAAAlwSFlzAAASdAAAEnQB3mYfeAAAQvRJREFUeF7tfeeTHdeVX+cXJifMIGeCACGCFAlSJEiCQdJKVOJK4kq217v7wSuV/wdXuWyXXeUv/uA/YP1hy1sr2lX2riIpggEAAYIkciAyZjAzmBxefp39O+fe7hfmzcybwRAMcqsFvnmv+/bte+4553fCPVft7ev7n//4xre168V/+q+KpiuKqnwOh+orWqDqeLgWBmroq0qohSE6EqpqqGoBvlbRMfyB7wNN8fEv/gwVNQgV3KhqeqAqAd+iaoYbKkU3zLtKzjVynjHvqPN2mLHDkq/gp5yrZ2193lYyjpr3tHKg+2gVz8Yj8HRqghv6ch6qpGhwsfi//2P4uVFUwQjSmMoDH0L6f/wNkZP+wFCroCjoqgaqBjJooKgLSoZqNrCygemFmqOYOVedLQWTxWCqGE4VlblyWCDKaR5NDtUJdDvUbV+zQWBfxTeaEuiBj3/x2VN1nj3UpS/jEVHUO1d8499/jhSNB5BJS8wqRhRcA94DFemDYB/wq6KDcnZIRCp5at4JynYw4aUm/HTZV3KOAv6bs8GX+BBkykHJCd0A92shTQI0B3lgBIoehJgQ1CqY3iCK+mB8+vXzEVRrM39iip4v/q/PlaIk5yD36K3AmjTO4DvIXhK/JIchXP1Q9UPdUc1SmMh41lRZmyypM7Y6a6sFW5t1jTnPKHlhtuxnXbUUmK5i+GHo+7jd01iSizFjBgcjSqIKRSO4n2aPArJ+BaSu9zlTlNmCKMryjmgZggD0P1JvfhCCVNB5ec/Ie/qcZ43Z1t2cejcb3iuqGT/hqCktcDWv6AVKKTDKSsJWLTAiGtNDzwgdM3S00BNEZd0MYauLEyxKc4ifDMEbEVVyDAT62vDOg2rli8KjwD4QdxhxXTBKqPiqbitGITCynpl11MmSPlY2pspqpuTNlLxZW5t3jayjQWVCKSpGwgihCx2Mf4AZoBKpiOtompDeZc6LpSnRj6jLQIqnEot5uhqP16oH/0+XogLVVM3nBV/QjxLg0GCCUVhN0k30vwrWDYPA8ZWikpj1kvfKxlBOvVdQxsvmjGNkHK3kennHh/r0FMKoLtAM9KoOVoNeZEilgoSsd0EN+SBwJNCyVMWReqYLmDf5F1bRpGVJ11YA/5eOojXzcdWCgee4HBcxOJUzHh4yCZjiREQSfDSG4BBiktBXFCdUi74+4xp3i+aVrPXxlHV83Hz/nnH0nvbBmH56Ur06q0DMjpWgMs1CYJVD01WNUDMUjd6CKakD+5DsFHpRilChoRkA0X8YYEWzjzoNE4jQkO6TEF6bAVn1SN7/jWv2AsRxTCoeTLIrxOynEeTBFT+yxiJ+4u9JDEJClkJrzkuMlYybGe38tH5y0npnPPnWSOKPw+bxMePSrDFU0GfKSsEB74YeiK9oMF1wqCoktaZAxpKoBIxi1mRhwJqSJDmega/EnCPxS8aPkMPioCtZQsizmkHvf3wffAtrRFFJLgExiEukMBPk5BP/MB+YOImSwCmgTqhkg+SI234l3/bxVOL9YfWPd8K37qrvjSVOziQvZhJDBXPOMyFgQUKcaI+oQ4+JaEPkZWBD84g8DxL+kJiVp9CSkRSp/iDIGikICY8ePBXW8olrQ1FMcwYjEjTyNBeGCDAOkVPwRABzAjYDcUNgK0EuVCcd42Y28eF46u1h6+1R671x68Np69J8YqiYmPESJdX0dUNYMjhJPDKdQFYhCioOhyqCMY0YMnM3qjRCpBcqSkHybjWx13J0P4+21oii0mynEedBEniHDDuhK4m3iGXwM74NcoE64iQu5tMfTCXfHdGODaunRtXzc4nbTtuk0plV28qhBeuTzBh2y5FUlMCn6UGK1GXTN3xFLlwbimIwIEhhNgjwyuSEumPjj3EHk5LsAzdQp23jWtY6OZ08Mp58c8R6f8y8NG+OlqxZ1yqESVdLAOygJV3xcfJtCmMWOJIqEHTZ4f/SYdRl36jJC9aMohHgZ8sP5MQpLANN81XNVTQ70LKuNlI0Ls1Zx8aSR0asY/eM0zPGjXxiygchLahJHf7VEIR0DcUz2B3PApdcPOTlWRKIkqauOhq+f9014s/qKxde0OQ4xpc1fMT9N9t8N9aMogCtgJoUFeEPwtBkcuqOYuQC855jXcokPhi3joyYx0aNcxPGcM4o+kao6zABoR9NxbFC2whteHkIBgv8I6ALwVUBpv//scwIrA1F2ddDtBQmIJGWmQs+OXBnztdvF6yj0+nfjFq/v6t+NKbeLaRKSkugpFTQM3TNMG8qJSYkGR4EiTXDAyxSyI1HgZHQBeOy3+eLf6xANXwWL7MKigpgqKl0ShcaUS8gOw8+vMhfA5AEd7k+VtQuzujvjhh/gHE5mbyeB4g1Ec+CSQo7MkRoUwlMpQzXK9FS1cHT4mTtK8Fq3OwSQ8D49/M/2BXW5MkwQwqe+Jb7fYWVUpRiIWBI8BaC09JlwAEvUJTfha11RQOT5XxzsGCcnDTeHDHfHU9cmTenynoxNDx4dqATwYp8NRuvpCaFjY/byW8QWSPi/dhfQd9Jr1Ojt141FFr1jYuoakGnJQ7xKzkcI4rGH9ZAs6yEotI0J+5kukY+buGFYecs5KSrWGU1NR+23MwlTkyYfxw1359I3MibZZiWKrEkkYbsUxHlwDtA1yY8CpWw947oJthd6mPppRNhS7ZLlwU4K53ncYMrvZEoU4/IYoItxqkLb6KQPb1ZhblX0RF5S7MUFX4y4hWSuKzseIqxs5bkr0lsByIYJT09HbZ+mm95b8w6MqzDqzfr6OA7famZ2+Tc/GoiI+k+icy+5Vh8GWI3RVERPmRySt+B8NZEOoPd5CKQqWlw2sETe+SO/+GEOlIybSUZaAmXuNC4T5fpF0RTrp59Fr9T2lHCMSP8Y6s9mqIoiQkmmbAoiEHp5MA0fQk/ESQnoKoxVtTPTIRHR8JPprSRnFaCSUnOVQPSGP+utJMP0oxbad8+i+uFebysVb30o5ulaOT5FMKWyCn+Q4a/biBTZNqzhp3UqQnjvRH19LR2rwRbUxM5dszdwqBcwXE/83QFj/nCXSpHSbz+KgahKYoSmgkpu0A4EEBHQFt2uULMIp3HmvZS5/Ndx6bTR+4Zn0wb90om0nzIoISkpWytwAjdOCnkCzeGX4AONVQoqyNqUxQl7EP4Ew4E8iHEmBuIyFGtSds8P5f+7WTfPw+al7PmvG/aoYnvbS3lKRbkMjn2cC9x9Z/CEcWd1uZdVybYWAU2cbATjhOj4UjgkBlxbeAHQQi3++kp680h48SEfiNrZV2TJS3wMBwIFM6UcRihcJeDBvepQpp4lQdyibAH2MCLcjmqn1sPDxb0qWL2MJvin0jZNWHeNEVRRkQkY4F9KPMdtApDL9Snyua5SfXomH5mRp/OIxFPRRqtSMoS8plSFySAEv6lP4GDmCompISOVa/dJM9VXEhVtnJTfqXmKMpTBZ45V0P6ATkJQM4ZN3V+Lnl8XD87q0/YWuB57GMQfjtKJ0AsjH0Igj2/suRcoAJrpa5891WL4hgoiRzi5SdEUxQVmTgIUhJ3gllDbd6zriFePW6dnkXqLLJGED2poFk2cwiGR/iW08S+okc9HJVvGr2wJMH9vL9kzdi2qfIGNxjT5ijKUWuQxwzKgKxYG3Qznzw1oZ2bCifKSHeGrbl8O0sHDj8jci9w0a3Bc5pps8anV2NirjJdP3I8yIcv8RrLU4JZnbQjBKkZOI4X3i0Ypyf1j8d85EODYXVOUV96qFZhV93/2H8uDxVOH3lEIrP2XZp0eS46AEs7lJqiKHvPSYS6qjnpJq7MGWcmlTt5o6RYELZG6CH34P4JsLYtfD7kZAhZFU1j7VNzLK8IG44DpxnHbLNUI81RlHwLAVIsZ4JWqM/zMzBU9KySttUk1n3qgWsEiG7+yRwr0ImrpF+joayJ5CzBpjFFRa5qdWc57iXz0KmFfGjdLLWemUki0jntJTwjDTeCC7gUeFhwslIn35eX/svBvBUQvMlBWABBhHew8XSpUFShFBD0Jg6TQT2KXGrKFSoq5r1y4vy0enZGu2unynoaF+vIWyDjhJcNNdm7L/pleI/YnG/0QXKHmOuNTuKLuJEaxlrJq9fdWENTES2PxHudXSgwqrAZ4xwE/sSnwDzwyZrTfupaxrg04QznsZo6gbx4I3BTQdHCcjAVaQnJr4bFuTQgj+LSVYqyfuSF4pSxKRmErMl5a+hFqqN1FL2MyCDbif5k7EUJl+xLiqJihGAJ8Ii0ARzI/CGHAK0Vif18IpdACUo+cr2MSzPKnTkftQvQBtJSaEkCvPaUe41MeXMlE/BLfq1k0wbErMO4n9l7CnuIaChzKMRHPiKpy+ERkJhShGQhAs4e4hVIs2Xl2qxyeVadtA2HVn9hwSZW12LRCq1x/2os6Vrh6C+mZASZ70eVNqW+IkoKwvItkQFJFGVMhNi0xxTi1HjqFHE0qJX1jKGsemVWQYZmXkvTwmm4eANaBB9nAIkmVzgoX9rLl8n2W817VUn7BqlUDVqs9lrQz5V5EPGoWNwlpDIvxYQKRS48koYGCwlkmdzK6hk/6agJcsTTIlwwKPIYkGjCuWDyJSuPbsaxsppXv797llWTzTa/iIZjTLTiY9leLX6BSHioYSdBUXwn0kcImaPuhAahCrpp5pzSeimXPD+rjxYph5YNmkDHBXQlcuGpUAxXF/JW/B5f1hsaqs+qLxdM7hW/aBOzQiyLj12D9TzK4pJrRInV0RQ5gZqE10AHsv00aw2Vk4UAye8oUcHLUVjeijxpjqwFGri2mvelFK7pWt0yh/g3fnoTL7HCgXngaWaSqA/ILifOlP7GiE2l/q74jISHgRdgQ4iiFkKY840bs/7NrD7tWhCwqPgDokbZCCK5tAqYM2InC1WkYrNajRbASN8Fq17OhJALhymmQ6tLCWbLtWwrJFz15Ww2RPZ0rReQO7D20yZ+umyaAcvK3mB13kqePpKo3ELMUeRDEAfZMUgKQnwlxJoiRXcCbaKkXZ1XhvOoyCbXRLBc5gyVgEs60ZJCEBAEQZKYwcWdULAEWpYc+JxhRNlI/HiREQ/ORtgc//IjKQOYVDAvEq3UG1p0SGQKeB1LC+aganJVAQqROiNmXJT1VrUQeGWj3uDqipiNg1xRWGR5klbrRepj7SzgaVF/1HUhyrJF6jbeGpgmns1VFMWbGz78eWgPCxYSOc+8MRfcyZk5B5xGSfABL7gPFdCbDRgq++ThN4LEqFSjpT01wcNHtdhgoSJNHgWleCGwmEUwWy1PM7FKAkqa2R094SUSTQ1wbJtXeyvrtBomU0TLijBveGNTj1z8okqbQrxz+EyilGaariNqM7dUXcMyUIJZJirRlQtOsJ9PWFA66uFhlJN+wQxdYNoxN/3prDJWVB2BiIixUFfPcFXL0WjdrqdhXQMlytPSJWhd3UINGtNUE4ZqaChNoyFu6tCiTywoxBpCuPLx1rSWAvMGUTkTq9ZQRkzRUO8ETcFMai4/u875XDsUMq9HfBnzSkz1FY7bCi+PldDqBOnKnyZeUIgioVOZRURDSMNEMiakqOUXgH3mXPN6Pn0jl8g4yOkkmsnFhOQr1DzFQJKfhwIZsE2J3Mjh9FqUQrdR3Nbm7+kKdra5G5LlroSfMkIDEwfsGDhpzeuz3E1meUArpkOQE5mhQMtiGRTVZ1h6we8iL1wxgmU9lEq8gWkvsEHFglzhuK388gdCzvpuVZuzkqJU8RSmCDmDXLDjvTJW0lvD5VQZupIMT1DF53XXELPICOQl3Jy0S1IOctN3Wv3ZAav4aG9waEP40gb38ID9jV57b4fXn1JShmZpan8yONDlP9vrPdbpDSSwbtSghcAqrejmpfmrKwRbUVpcu0MGixZk4ImlcOJc46OOhFT1Y7n4/5I9WF4NL7wdfQgAZflWPd3S8pOfvr5DmXavvK/R4PpFo/3MbOromDlYtDwqkygdSaKrnBLmwmVoIiwaeiaHu/XASymlTe36gX5rX4+ysz3Y0a5sa/HXJbyUDk1p6oq2vV19er3xWK/Wn9S80JgPzCIVUsFSX8wS1gtc4khKTNCnflxqfdwCulaCSphbuADTQhwCesnG+D/NCfVGg90M24mqPPQGKyfngvab6aoYKPGGAn3i2XATiGpdNLc96D6IPl+zsJRsuKDfK+olFL9E+URk/mnJktZSBthRUPQiaNfcPtNen7Q3JPEvBKzXl1LSiQTUaA4FUEsKGuo2g33t7uF+/9ublRc2aI90K+tTQV9S2dpuHehPPbMp9bVupcuww8D1AI+ppB9wlmSgZkawQq+YBsJ3WWHTmJxCj4oXjT83It1qyRlNotWQs9l+LHkdrVaMLpA8uisY8y4fQZZCqJs3s9ZHk4lPM5bthckQBTFMBzhI1cHBraozkPC2t4UPdal7erSHuvTdXcb2Dm1Tu9bfZnZZoWM7kxl3LBfk7BCStiOhdCfVdgvzIHQcV/H9tKH0pPSuBFYnepO54rSNxfhWUlNaoJGpjBVnv8jpJ3iWUZmcj4JNScawnEEKuEB6bKMAE9QksMVZHBI70Hxhw5zvjW0NfmAVZ8U6Kb4m+hDdU2tZxBAsboNeYylOrdIUbOehfcKoVIGLeIxy9LhD8XOY/yqIIZqdFR6l1+fya1SdREjdneFYcOkIMFBZbz09aXwyhbUr4BzAVBcLBZGrAD3UopQ2JJ0D3drjvdreHnVrt7KtQ9vWqm1sUTa0Kpvb1E7Tt91wJBfezqAwo55zCFTpuqZrqMeoTRe8iZyLstMg8EDKb9HLc2V7ukzLgTe2G5s71aTium6IBf0YYqq7yVX6opw0HgUh2qgWo2qZumlBF+uGidMwUB2Q1ubEfMkcyWYF0xHUVA1dM0xcquPEf01uAZ9rBpjKEWiGYZiWSSd9ii6mD3ziO9xucQvi6XhJjfxmPCPlo8V69FpKiM7IaYXPeBG0n0iYLS3p9vbW9o5W/NvWmm5pTadSSQsvSQ2DzhXTiOVAvNY90iuiWh8TlKqx/sM/vvEt76z7xr+DlB3TBv7hqvb2iI7FZdxHv6S12loSjoEOJfdwm/vShuT+bjWd9PKq6wc6UC85gDUFbzVnh9fn1HOT4c1MiALVXZa/q0MDB3cmUKlauzVnj2SczqTxjY3JF9YraS3z8bTy+7vGWDn96KbWDW329Gzuwrh+NZMsq3BfYDhgIGEZMq30ltKSlyIbutrenh5Y35dqSTK7Ee3z+dLk1Mz8XKbis2FyMt+jaLJnWVZnV2d3dxfGyLKIBEIJge9GRsbmZjM+qoAEeCW3q6ujd113e3sbLpLeUyGrYy+8tJHkN5AUED+loj07lysXHddzAkSxhOQgzpGimAVJpFYgTEBLw2hva+3q7ujsbG9rawVRrYSJ6Q8Mh/s91y2Xyrl8IZvNzc7Oz89n7LLt++RMAOEgn4TRKcQZO2EhRTEXzZii50FRSN2z9sa/u2qeHFeLDpxAPgxQR03CLQBztF0t72v1Xlxv7utGsRr3TrE8bhvlIjmJWi3Q2Cz5+nAuuJVVhwtqhoOtXQmtJ6F0wMwJg4wXTJf9lKl/vc96dbP6UDo7GyTfvu2P5/Vv7u/ZmJrLFwtv37beHE5O+B70eagkAbpQdt6EVMJwUhV5QmYtLYmHHt5+6NBT6zf0Q+oGWJih6YODo6dOnf70ylXPw4Op7hlPWnpd1MB2HAe03Ltvz9e+tjeZSnR3tScSlmAX1GJ+880jF85fLuTKAFbFcuHRA/uefPLxHTu2pVM8Y4T/sOJ/Z9RBRCUZgEfYtp3P52em52/dHpmenM3lc8VivlAoUB4sARZBUfKrkpGI2afrVsJqa2/t7OjcsmXTrt07tm7d1NXZkUwnwa/iauqYF5TLdiabHRubuHnzzu07g1MTU6BusVjCBURa0TU6pHBi6WLSKl0h0bBu0FbMwUyASrbFUPcQyUb1WtCSEpBcXVeTkDdqOF/2xkuaaWpZO3m3oF2btou21WIkE5YGjDNftAse0si4TIZmTXnKDMrf0MugUDxZvSlVv55X+2cDS08nE+2mnoP43ZBwtmq5RKcz3m19Mq1PlEJXFL5V4VcCosbIQBaQ6wl+xXRLYvv2zS+9dGj37h2kSLFyStXPnr04MjJ8/eo1igGR6yQGKfRymBLJVHLb9i3PPPt0W1vLps39ra1pIf1c17t27RqmAiN6ODedgYG+gwcff/LJxzDoHJKINHm16SuRJgk72y7ncnlw+fDI+L3R8bF743eHR27fHpyanLZtF7xEbfC9uAnD2NqW2rBx/cN7d+/cuWPHju07tm/buGl9uiXFYoMVhLwenBeUiqWpmdnBO0Mg6vXrN69du3H75mAul2sAHkXeERaFSj0aTDhXjufC1Hsjyvn5FMqGR3NTTQblTtPe0hrs79Yea/e3tpe6026LiTVNxnjBvZFzp8tWwU3Ouyj2H5YguKhLXE+ThQweAX+Qh0lNpRjg+9UgrMuug6KqGde6OVvKOYU9PcomLdul2ROF1OVc66iHWrscvNM8XUXqKCY41d2g7uphW1tq90M7nnn24KYtG5IpK5UGsVKzc9OXLl25ceMOVaWPQIRAFuiD5/mdXR179uw+cGB/R0fb+o3rIFrT6RTOZDJx/PgH169ft8tUfgfi85H9e5544lGwTld3O2ZPS0uypTWJK6HYcODfyplOpNIJEANtrlvXs2Xrhu3bN23avKG3tyeRTIDMhULRw2YVIoMAUkZX2jtaHnp458uvPHf4xeeeffapPXt3r+vvw/QC4wqhQidtkEBFZlGJBCoWmnVgYN2WzZvWr8dEbPF8b3Jy0gFg4XnLKExMBTGP2Xrhg+Q+6tWMZd2cDdUgFox6ScXpT7iPdjgv95df3VB+YaC8u73cZtiwU7NlYzwb5n0MPaYH7nECzyGHg7AUeYEibE0LlcQUO6G4VohpgmXfQcEObmeDD4fLJwZzN+bceV/NgcgswgBeLB2UpFAMVUjiYp1wUXENVwFhRK4USEsDhRfHB7y5UHlCFomDYTDBSGYOJi3NfVJg0Df8gVAbUI2cAAw/mJEIkKFBtGxwy/jGcSEAM1NTUxMTk/E5OTk1OTkNyuGKlrZ0d0/H5q0DX3t0z/OHn/nud7/5+OP7e1htC7yG5qH+9+7d/co3D7/66rchA7Zt39zd3ZFImlDzM9PTQ0N3wYVXITGu3gRHDg0No/1iqYhudHS0bN4y8Njj+3Hvd77zysMP78YME1TEazL5JIYnESwJqpJYnC4q0yUFiwZBGORVw8Hbk1D39pnPbdQPD/iPtNspEw5CA2Vtzs1Yp6e0W7Na0YHZgWlFflp4lGh5ISrHYQ8d8CWBVTTlGQHVhoPJy3WuXVcJ5l3tdja8Mu2MF0CftKG3+FrKMVpLMIA9O+UX24N8itbYQGhx8TGKxsdr3MS4i3Fi17zwWUMnMhWjOVoBScJgiTzaZC/U2qZsFEnDSWRycBviO3TacWdmZq5du37ixEfHjp6k89jJ48c+PH7s1AfHP/ro1JmbN+4UCyVoa9AeLLt588Ynnjjw1FNPbt22GQJEoBhw7bbtW59/4dA3v/kiNDr0OmiMWzLzmZs3b3/yyZn33zv+1pvv/P53b//+d0fefuv999878dFHZ69duzU9PQPBjhYgCXbv3vnss08ffvH5DRvWcyF3Qtc0xVmuC5EUVbtAAoqnDc3BdZS01QR+hu0Crdnfld6/UTvQVejT8hOF8FwmcTmbGiyYs4WwXPBy5RBc5Sa0ohYmPYBOEpWwXImf+BHwBov8M2qPt1rBBh+ca2iUjTS2R0qEQVq32pJtruHOqOGMq/pOfkDNYmZngmBGSRXAnSrqIGFQqIocu0XYXyhEGYkCzouKPLdszEWzVHAd44dYpglKxUBRqOuKXwJuUMqz4eXMEVKF0J6YmPr4ozOffHyhkC9H+JXZXFPBZABcP/7pDwcGevFwD1FkXYMg3b9/38WLV+/cHp6bndd0q7evGzR+8fBzD+95iLieD8yDG9dvvfPOURB1Ynwyl83bDonTdKoVXNjT27HnYdIvBw7sa28HQCQJ1NnZ9cwzT58/9+m9sclCroAOyDeUL82eevpOw5YN1rU5cybE2gdgUy5MrMDkghT080Xn1oxyejZxoZC6U0qPZrXxjJP1HLxQStFMMIfm2yhxQ9EYYBdYsQCoNjbkQMYoBW00y1NTfpgMEHklcAOAbjiaWTZNDy4oxS/53ryZvlowB3NuUis/0ae+tNF4rFsdsLDqn+ilK4gY2GiZouPMO5KN+G2YbNhnS9NNSFEIYY1PfCBVxGKZvoEai7KWmSlFO5IZOb+xcoqfKJuDCmj5YWa+cPP64KmTZz48eebUyXMfnjh34sTZkx+c/eD46d/++siv//mtK5dvFAo2FD1ZhNwpQPH1A+tSqQQoAbN127Yt3/jGwR07t+J3ZibV95VbN4d+/Zs3//7vf/XWm++eOX3p5o27w0PjQ3fGr31698zpK39869j//T+/P/L20cE7o4VCCVp5YmL63th4LlcQWh1ih1VpJFT4ZWI9GhZc42q+LUsDWNJJ4uGR1uBk/qPBuaPDzpV5A2/8bHf+5b65bdas75Vs3QosCxPV8APslCMHAOQMPCuwE0E5AaIGLuc8EHJFnMUMdNM3YJlwXXlws1LQ/Lul/InBcWTrv/Vp/vpUcUOP9dJDXa/uHziwIdmTQslA2gaLZIuoARB58gQpRK0uqM+WlpbdD+189tCTzz775LOHnqAPzz156NDB5547eOj5gy8c/sZTT8Eg2dre1oK5D9pHbByJaOG6qDY6Y8nLtCej03ZLJFlhKEKtwiLySyWYjE6pZGdzOYhlx7FZALIfSAnhH4AXAqLRMKBBW4GYtmzdBDNXpE2jzzPTs++/d+x3v/nDzNRcCRDKDT0PZig0TQD4AxCOxu/dm4Co/+1v3nz7j0f/+NbR3/7mrX/+pz/89jd/hKItl0oCMYihiMkaZY4FftFV75SSJaJHGeyFC93QxL5jVzPqsGOZqeS+Hv2xrmBL2sfWKi4Xo4JSBHeChbTA4FKsonWW2XTSBGeJRsYk5zPQqkVa9o3aqxSxQcKZds9VT4w471wtfTTo2Z6+E57FVm+gFdzmY9w8LKCCwQ0kLz2CUokyKQgXkP3i+319fa+8cvhvf/HXf/vLv/nFL//6F7/8q1/Q57/C+W/+9l//8t/+zb/8Vz899PzTQLk9vZ0Y62gQIspWfAiMjGpT+qi/wFOmYSUMgM9k0kylLMDsZMoE1u3t69q8ZeP6Devg4YGBRpX0GBfCmoT+83wHkqOjE3i1r7WtBWCMfsXYus7tO7cvXLgIBERp7+RZ4FKLPHVpHgCaGYpj2zBXQMj/8Xf/gPONX/3Tb3/99nvvnhi6M1Qul9mbJMkp3oTQohQ7gZJ3sC2OA8vWgsmArBQNYRF4EqxEsqW/M72r19zagQZM+O3mPN1F+XjSxA4sOg5tJmPlRDmCJLchgSkkHkU9CWhSSgoANDATlG/opcmPbOaC1K1i6vKobQepLR3pPa1+m5efyhaGc/6MrTmY0NjbTkWMj8112XExKYkbGHconZ2djz66/+WXn3/lm8+//Ep8vvDyKy+88s0XvvXtF59/4Rv79j3U09PVAWcQRkuSULRYBbViZ4J8EhEYBkE6newf6N25a+vOXVt27Nq8czc8A5t2P7R5z8Pbnjn0xEsvQzvuBJlRfxZdgqYHkYBopmdmS+UyXJRQq52dHXASMVAnNgYX3h0aAngWlnMkIiQyp6rfjA/A7fl8Afjo2LETx46eOHv6Aj7fG50AwMY8FneKgWCHB0tdATCKnj5FO/3Nmj6UXLsTpkqwPEyvy3Qf79ae6lU2p5xM2bk0HVydLOVKtkUpRhCbJnMPgnB1GQjVYyTYFqKXqMvld9FdCGQ7FfgJyi4yAyvV2mHt39ry5ICxI4mOhhfnvav51KzXjvwYVUWak0M5aZEalLMwAnhkzLFgBNStO+F5YTnpAd3AVJVGjOTMCoaKWVXq12jmCAMBOrhvXQ/g6/d/8Gc/fO3VH/zo29//wSs4f/Cjb/3wz7/9V3/9F6/96FUYuOSuoWlOZX4I8ty4NXx3pJgv6/DHGPBCInJBlgwPPhEhlwcOstkSre0J6TuSpgTQqJIpHL8WzGAoTtOyoKjRXDUArOo8U1T8f9JWh0qYi7qJRb40dDqYAgp1d0fhYHvm4URW80rXZt2jd0uXppws4jGaKGpsEJIFfCUcu8TBBEamitiPhV8bkxmzQVPspFIeSAbPbE8d3h3u67c13bte0E5MeXcKhg0BD2xEXUrqfgJWohAx0aCQcxo9IcnL/jzQDHSlf+G+4g846XqitLiqyqSp6W/dFBTQSUx+H+gQQvWZZ5/6yU9f+/nPf/yzn732s5//6Of/4rWf/exHP/7J9556+rF1/V1AvHRYcIDrmfns1avXT538GAgWHEYuA4nChLoW9jK5Z/Gvj9BjZHpIAUR/is03yPNOZjNCEuBvGOlQRChh4gFQM7hgD77gmOiIVjKNORqUqBa2Mnoq6qpnIhiuhg91FPa25zp0e6aoXM9q2PPKM1p0AxlihFVYblO6dvXOgY0JSxIXoVZAVuwQaYYB0vOTZQNoyelQ8w8n7YN9xo5UXvHtW1nrg3HzypyGLQp1zzF9eC3Qa/JBcbeZzSqvIIIOSqGQv3t3+NLFK/DQXrxw+eJF/HsF56VLn8KXdO7cpSuXr42OjsEpCvVGZK46JN8ImEGUreIY/gg2SSQSXZ2d8Nps3DgAp93GjRvo3DSwccMALEv8ivHI50rTk/O3b949efLjX//6D6dOnZkYnwaMgqvGtr1y2SEyRCIec3HdunVtbW0sPCWakR2gi1jasA8SQnvdul6ojEceeWj7js2bNq1f198NDyXsEJkyJmc5DxPoD5T409dfz2fm333/k7l80kaFG3hVyUYwO3TtYF95d4dS9JOfZpODBTWdsHraWvDOCH+6IaYNQVmu0gqVuzSbUv4mR1HAotC7MDGRlYK/7VbN3pnU93a1+nZxNu+PFoyRoom9toAnQ5BTsSk5nGYtQSq8e2tLcvv2LU88+VhPTzeuoACHpo+NjZ088fF77x6/cP4SU/HTy5cEOT+9eOnK+XMX4GuFBMYIYoInkxarUlahQfjuO8eufnoTlAZVXNeGR+Zrj+4D2IGDkCcRwGdol13YDPOZfAHxBEyfQjGfL8LNB7d8NgOgmxm7N3Xr1uDlS9c+/hiGzceffHJ2ZHgM2Jh6x2Jz8+YNaBmRFqIp0ws/DQ+PwmcLDwapLtEhnqAQLuzvCmCM9fV1PXnw6y8cfu6xx/bv3Llt67YtAwP98MgXi+hJEY2BiqAlOdhUCGT21KOJoov9A1HyxHY1csqTfy2EKdg6Xypey6I4inUrB5+9f2AAhNDOasZMkSYdHo/oKZmcMuAlYQY3WUNgEbnmCQonA96GJwDt8gqYZGGLwhvjJUSSyKQ0le3thg7gGDhDvouXBaRGggXZQGTz1Cs/zEzARESbzp49D3yPkDs9na+ScIPDI/Dj4GGbNm2Cp76zoy1BTpQaRo36y92Sr8O6AijOdSenZm/eGBwZGSclQ/EuskDIuc9xd9t2ctni1PQsMMvI6Ci8d8KjS4EvZDJ7wdxc5u7dkcmpqY2bB6AN0T9Edjdu2njwqSdv3x46e+aSCwZmNS+oSsuw6QDia937yJ4XX37+6acOwvKBpxj+irF7E+8cOQZnJA4Y2kI7RFAxJB59/fWfzk/lj777Ydkrwi/AlgXlxythUndKkyUfBsysE25vcZ9f5/YmwjlbHy3omRImFoIz7FWQ/IdZzoWVSYyQ00VqA3ZTi0xSQlJceJm2FQh8S1XSJuQ4Qiw2GK6nQ93eq2xq1VJWetxGApuC3ZrpWsr+hclBAL+lJbV9x5avP3lA8ChmMphgZGQEPrPz56+CdcBtmG34t8QfaLhzRcCKLVu27N69C3Hsjk5QlKJpEY8evXr1Bq7EW8MIfHjvLviAYh4FSYpF+9bNwSNvv/+bX//hk0/OIc5z9vT5M2fi88K5sxchDG7fvnt3aBROAHAwTwXCNXgEWVe+C7NnAPKyvxdyQugOaF18hsRG7BMGFcXhLUZQlgFojZnX19e9Z++uw4cPPf/cM1u3bm7vaEM8FZFU6NbLl+AAvpnJZMngFfQkY4Ji9dLWLnuwXkAWDD04lXxgSPhzPGewoJ+dMa6ijoartZvqOstuU4qqD089rzQF9/DGOoikkjMBtiMlAsMLiIg1gmDEqLTnNuE/zruQWg/PB7MFHVawq019vFt/pEffO2Ae2Ggi06U7GbqeO5UrzMF+9wG+kBBDtKQ5IrP9YtjCQFBsp8aTBfwE3ztOhJMR/aUP9NmUpp5U/EJ+CLwp/yttGBLvYnl2zL5C0mBX6fL09NQdjmrhBIFv3xzi8y78fIjOgn3hKcxkc2BNQnByaQGrZQAN3wfvnjr1yYXzVxCWR5cZ7GhQzC8cPvSXf/kX3/3eK8+/8PTBpw48/sQjTzz5NXx47vmD+PK1176HC+DFBbEJMSAzyLNHRodv3b4zNzfPEQfIW1rZgJ9E2EV6AV0f+9Bj+RJSdgFfGbmSbLQzyCbxsIcAdoTEnq1aUsO+9I4P50jgdaa0Dq3cEhbhb+CtJUxAHsq7pRXCFLohjy5l3WM1BcAwpKeHpD88wlFSoBOiuzt6jcNbtO9t8V9cbz/ar23qwoQzRjPK6THnk9HiSBbeQdqUlGI7KhQ25fZXOblYPDHY5SASu9akyUrUF8At9tsLypA0lgpLEK0aBAl5W4sG5O8MUBlLkxUEpEkomvQrBpMioBwvwPciEoLeyPQUAbT4odlM9uKFS0ePfgCGhswgomoaNDqQzqHnnv6z77z8w9e+++c//v5Pfkrnj3/y/R/96NXvfPdbANjbtm2Fn4tjOCEcvzCKjh09fuvW7VKxTJTiR7ARTG4QJrqYhCFyAchxD5JVvNuaD+84VqhRLcBo6Mg+Cz2kfu3u0g/0eLtShXbVRnqKo7TCeYsWDKRxi2ALKM2GDa+mQK4frSKGcwG5f2DWdsPf0618fR3Crs6mVhvZJ9i/+fxk+MFIcPxecHFOmbJVyEERT0MvKK2X/WfCI0jxQxo7cCGv2iBvqvCXRuwlUH1s6lFTYgKwgmJ6MwyJQHRES/6O07jIC06Skw9KlyKQw/ZEdLAMkCeZlcwzleQ3njIslxBn8Lx7o2Mff3T63feOXbhweWZmHrgbMA3ydmB9/yOPPPz000/ADfLii4defOnQ8y88+/QzB/fv37tx48aWFILzgALu7Mw8tMPR9z84eeLU1NQ0W6w01YQNwxQV23Dwi7PNhiNyCsrZKxU1foAqcAK1jDx6zUxBJbTqe7vDlzeph/r9zSmyXUvIX9EAXzESvqlSTBT+evJDCG8GRLyGVOywVUd2i9MZ2r2a02t6acCOwJ3x1HMzwXujwdvD4bExFdvJTrhWiTwS6Kio6CuXdohIJyeagFmQX+g5tufSGQUKY3lZA334Li+AqwEXY3Q8uB34XmhZzOUolEYdBZvhJ1wDRy7+xS34AFkKjoxFdfyQRT5ENlC8pxRfB9U+NDh84oNTb751BPr45o3b42OTgMrAutCm0O69vd19fT0ImAMiIPmIfPFBkC8WZ2bmhgZHzp27iIgbkPntW0PoGM/LyB5lk4vj5Gy9vP7661OT80ffP1ntvKh85rds1b1NreGWTixFSky5iaKn9SecZwbC9S3KnKMOFRQEOg3dS5leyvCQoEIb84AdaSWThn18W3StJ6kNpIOBhN9v+D26P5AI+iyscXNpMzU3fXwkvDhn3MlpYM0ylmDwWmOKfZA8EexGGhlTMJG0kDCwedNGfIuUKmA/ZITcvjN0/vyVwaERtrsjWSkFLBSzh7ys/v51vb29wL2QmwwaM3MzGQzW8eOnaIyAjMgGCMji27A+mUgWi2XoPJyTEzOwMa58en1oCCaQzElYjKhszQqPSsVrEQsCMCVcReAwuOnnM1nYx5hS8NDiwGcYJDBJ4JQQJ4DP7OwsnPXwVJw/fxFT4eSJj5CYgggBw0zWBRGPQmFRoAyyCj7uN9544/LFwf/0H/4bvo2lVDwu7JB11yWcb2zQXtnRkjbNW7Ph4HSpVyv8+V69xVSODIdv3NIu5wxL8Ta2al1JelrBNSdtfR6OWTeA9t3Qpu/p1ra1eN061sCoNjz7mt5qBm2mY1rKXGj99lrxUgY7BRNf0pAg1ERrM6Syg5XACx3RXw1pKBjzRx/d193dSY4/SlhUEfq4dOkqglNVYldKXVwAPkP0A3lGu3btgJRra08DTwrghl9PfXjm1q07pVKJ1u35LqLKDz20s3+gD243ipNA4tsuDBIosDt37uIzVYqprWxZ91DudLU+FgQWviJ6DfgLkV+yceP69RsGAGi7e7r61/UByCY5F5C0ok99xrSbn5ufmZ6bnJyBe+TevTHMP6eMsDKH+eipbI6TCYVQD2Lqaeig5SlKcyFwW3V3a7u2r7+lw9Kms85UptxjeT/fn9zVbt/NhW+Opt6ZSPu52b092s5utTWp5QMLSYG354OpvAfvw/buxBPrzH2tzgbLTSB3CMsOgcKwH2VIGXPYmvsPd5yPpvVJKF8BJdgC57wFoqrIHeJ9mQjZYkRgwwAuitxo0hpIsiohvoR4VuUQmoYBE1S3BoslkUoIeMytCuik4kZ2JHElnyBARBNiQOTgMmXIewhAhOTKMkQ0gYEaii5CzgX+FpY0Asew8lORESiSfgF8ID/gBoJPAwAdP/tIaXTh08jPwbKZzyHNE5YYJhNnUQnuFAvt42QMNWElE4kUzbZleZTVrI+4d9I02lOJNrLZ7JIddqTN7+8yXh7Idxgu9ut5Z7Jrfnqyx/K391obu9FZfSJvD87Yd7NB3jfaWlo2t1gbzHKH7sCrERgQuIYWIqPeyTvYFiaB7SeuZoLZMoFFipoLkBMDUgl4pLUhHLbsJxPoh8PdAso0Omhy0OV0HzVbAVCEJ2Ch4m5BAaYfrkIeFS344R7QL5zQxHYSDacYU3lwHxZwZPRj5UqhO2QcmTpB0IAehLCkhmxd6gbNInoiLxfwEYzlkBwt1OT0at78XDpvGPFEFIVwBUVNM0GutaYoCrcUhA+5h6yUVzSRZKyamMlP9pZ/sqX4eA/y4K2b5faJ+fKtiZyeSG3rb8e6pZYgg4gwcpcm7dRs0Jp39SycZ1Ab8EJgYQQ5DgqKi2zQxKTfPe2aefh74DuhEYNIZA0hT3IXim9E8hfPch5bVlBCnyy/9Exwk8Q3YsiFCSSIJLRfnO0tLoihIn7k7DZhulb7fusFPV9ZfVRfLG+XM1GoQuHB5QUfpEJYJAmEzPNG1EBgqVL1AtIGFwMBWuJAkAcdq0FGDH9lX6pREroE5wOCLVjmTTYQEsOwmxZCM+U8sssMzWxFdKLFSbemzo+Xzs0oo3bC9tW0ag8kw41pvS9tIV087yk358rnZ7xzGfNyMX0jq97JuHeyIbbsHvHaYPLC3qO4oFipzMMr1AULRzHQwvhgw4OzpXjG8gDzRTXDyCJXSF0xIrysRNgq4hee7rx8ipthS4D98qId3BfdIe6TP3CDlbOGXnyfoJqcMbJT1TwttanoSJyCIJCq6JYwnviJomOyR2L+ceu8ITPzK8wIUBQeJ6Hdm6IoDSCt5Uc40ycPIY04JmzZD935ojdtJ/PITvKx3EW7MK1cy6gjyCm0w7myT6cT5OFfMIxS4E/ly9OlECrWh68CtiS5keDqIBMOzhDaE4brKJH7UOxeEZn8PGNFVoqYp/JjlQ+2Xm/FMzKme0xvQdb45CaJSQSdYpYTT4tOcXdE7IWOCDHycrjFlRUq8t9ybrEs5weJZ7H0lfJT7A5YXYC6IobiNjkaSen5AiVAeyVMAzKPPGv4oTmKUhFdpAjpsEaxek1MZ3ho4fRDqvRsORzPO/eK3sUp53ZBn/atXAg3UzhVcIfn7MGMO1wA9glHs969nD9tY8PKBDxjvL4Y8TUKGYhdDbmwSg2b1fy14I94senSl635r/Vzp/YBNUK96icpruumwsLO1Q5Bw86zqqBxE4ltlpnEOs8YfkufUd2d8QSXMxOzgXI9TWQ+8+ZMWBRMvgRo07KenPbN6zn19JR5aUabLsPlRNnLZc8YLyeu51vOz6U+ntRPjXoXJry7BT2P4Ch79pEPTGtGRZ1QfszSI7Xw3SRaWnOKLdfg0mNeN3QL5+FyzTf1O9UR4/FiFzFMQV7DwAPZmKK1yp5RBxx45MzzPQ1JZXCxYm12AG8vqqF4Rso2O+a9NltpRQ2UJDLzkH6Gmhla2re6Snr3nNs2UbTGSuacl4D3gHAbeXxFjiCLNap+U4smmnqvz+eiZXh0kYkW8e5K5+3i78jAEdzJeS1CJdHZmKLEMZUDgw1uch3NLRtIjHFdFDtC4o/vWvDneqj6SH4dh4MrUISmghyiMqqhwJVLq5dQ7sZIOKC60eLoqVCj9VeYDSS4KXWOzC+u7Uve7qqHVt6c1Yb85cHTsLpL0qaqpVndBQ17GPV+ZeRsPBqRohfRM0pfQiJybFA1s6uHkIi8AZ7j6T774OE7h/hFrpFiYdkYlZyzQx1ZJDYkqa2D2iRVcb0K7xBF0ZGsTR5eZkrerQsUQiMa8tSoRArVdqAva44I6T14Iq7xExu5IJZ6xEIoR3pTQPPoYHiqIqZqsQ0qrbylebT6mdCd2A7NwuoTxF0U/BeGKdmmUYETqiNoUXAFXIZaDWkvTCMDGbaORaWLsO4F/ltK2UV6IW9ySN4ZXk/BYW+C8Oy/XahJa4ks7bOoZ8tprMbcUm141OLY6uur7ZNlVOHS3VgpOetmtWCnhf3EaFGKoYnaF3DcxsO0pNStbpqsNE6KN1DvEaU7Ce5STJvTFUhDE8nl30YI7IOMFvjtIWFBYTAx1QvkkoHEzbyZWrz+qGre1Y2cFHFV39bByJUPVjNCTwzfkketBbp0Nxahd5VOWQrgVVm9FfuK+sbpCgkkewr/CJstdLI0beLgRHhBOZARFOJqf1Q1mTiLHgADktAXue9oXbZMwyHLi76PzGLxVHaLsPhli5MVKieq1BpwjVmsWr0vPewLFWCsjWsUVK27QNqmcoDEGNWezDQNm4qarWH2BgQT3q8aZFDbWeH6Fc3ET6dEhdgnjHXiBjEo+EVkjpIxyTlcTVKU7V7aN4LDW6L+GKLZcjdvpimV46SmIURRmgGnj4uopA6Zm1KFstdAbv8tI2WRv0B45BsewshuYuI1vqQxZSPKsYun6lxIwupf5Wf5oIVSRBKh6WkXX183CZjdIpuOHsrej2jBJKAQIi3QoURGDmnIyB0za1M8SpQUq7Uqvlb2egiXI484iV9uUaTqVG1SyffUjhzfJd22PA9jo3RRwq1Ua4rrFxGJS6rJVc+dqhubAcBNPUc4oRjfiv1AqLoK8JCZgCHKX0tTIGboZina1OM/g4saIvjFnrPcOEaydHGZ2WTLPI6Lvu3CaVQnVCMiVQRv7WtKG51pJbye7L/lYjlgTcuCk4hScEUWfHTIDn2hKbpy7FMzyovfvhz2qSVWg3ZWQs5GlF+2AzHzxXdTYFdncoKo7NFltRp5nyvXfQZ8tTZNrpSc4voV8XQzHW3McBJYNtPAwmvqm2z4CImJpH4QARla8GiatLRGajJquzbktJgXcHU9/dzvWukk+Nw73LADtW8huBkEJXLCn4DlBrQ8NwqqLbS1vtBS94s54nVhsgWdXD0sr2pKEFKSk0pPYfkI5bDQonqZqlP/HPn3GlJ0oekWW1XxT/dFowZ2SI1Vt1gH6p6+rA5btpN1ULnmuTDWGrmlKtcwCy7VB47Di4PMTHYmICcJSUGoiMnZ1BG8FReJ1gSMwrGGFF1sINaSnIs+Q7zaMu6e+6dl/Py4KfF2YvGTSBCv/jP+Xn5YSM4lNQUJW5R4gu7ECbcfe+fYFJTElGBYvj2//lpRdGn+WHbW1yCaxXixDvjUXcZmrTCIFzuXJXmDbizoer3gEXwSG0a1f9a7oCQ/VXW94dCwMU3uNi43mhQxbV6yJo6YTytQUCZErKo0/PLkWd0VSwjVrwbkaXJYWNLSagy2PRO0WB/L9EXeiDxEyevG7a0Vjy7V26Ws8ei+pckZKYwlx2ThGy7wJDQ5pktftri/cpXNS4URSVKOm2F9KUxPpA6nUA+YS1gI/5c8l0BfnzlFmyHVqlmwWnpJ4RcpmKWd6UsI9oVkqb04QiBNk6/5ERDjQOtITUqnJmeCsFVi2CMeKqFTvbtfCOTPlqJilJfBK4sMTX2u0wLWqJ0HEjDEikY+uulxX+zCBbNtGaRa107zk1VcCfceEqFTSZT9R7lErESvIZDIX4zesTHQ+2wpKrX4aodVBO4bxvR5ptbIHhaxVdBmdfNo5V1dduYt22TcApMTijOFdVTgTl4eKgyYSgi0IZ6vHqPPnqLLvtDaXbBQvq1d22vcUhV/ceIBL/qGpMVqJOBbXhdfwcki/4pEqsjFWlLwrxVFqVvVp3wsd1xq8zWwBkVMKd70Lv7MgSZpYdcMfTM6rPqGCpiMgpGi+5VirjXqunHzixC/ysATMTJqlxJyUOFG06x0uj2VbNN0VIZUebU4VRjmZEmxdhaOeS6/xQtGouXo0hqOCs3SlWtFUZaClVO8VBQgXpnqWZQbajMKRLgwPkXJ5aWk9LKaMtJ59bZ1NciMnlhprJGmFEMhB4H/U2lTaAZWGkjJJNZEXatEosWyUDUwRRXYqJgMLaTiyu4iA1bQNdIqUbhZsHGdi2oNKVo9YvKVWANUv979yK6FPL4U168oQi4BcmXoqwkm6HH/R7XWJ3JiuT9ctbTsk3BQCsscqMqeLNAvHxqjypic8fxYDHN+RhStrPtZFds0Hr46I2xFNFuCQetE54IrlyFno25UhFIETcW0pkUNWH4qtCbVnKNqf7BSTJCXeReLIeV6SIHziLBVR/2fERKs7vNnRVGSuRGDCqi2XMji/pngi9GClKrV84BpKRZosco0DKz9xa4HkLTI/qJ1zaKyIe0vKLSmJGdETIERWPEKTwMvd+R5I5m38u6fIUWpE9HSKubUGt0Tq594CsZXLHD1SKG4EIfU0XA5blvebVtj/zQDq/ia6m5w5+XigChIwkvV2ecOWgpPEBiU6rtwnRwpSKkhsTEsr2+vf5nargnaSr6pchCunad+Gf4QnufF5GQ8KEsK0kZYtuqxy/zcNAPXEbXp++ILBetErMajznvrgCGJlpTGhyLKtLRBlOsRE0I+VnKglLexid0AkFU6JpGzbOgz5NEGYyEWsUriLuGbbEqP1l20RosP7x+XV+kXSlYWOpOy9wCDkIeALd7k5glCiFY4VBhgnD0kjdFak6wm/6TeuxKPxoOjqOyCJGot8GsuHXchUq+xCqQcqkfzteB+5SxXf4ewJWKzof5nlkSiohiKc9COeWBKRMRQbZP4UtZmj70HFdkq2ZT5lYWuyLcWTlTB97XSfZFXeXAU5YAfz18Jfwn48SJ5XonPWy5V6STuvpzulRFcQrVJ2bW88os2fol3gKn6UBF/i7cjJaogSsVeFAFNKvJBCe8GNCVq7OBMmUYCgTFaNEtXi4fFfYgfwwJWqk/8J647IeCQGBqhaCPqVqaWKNchzf8HRlHBlHKpvOjAwqNq2jGWW4gPFhjUK2dTMeUb546IYZWCsPGzBB4RrBR5qngXGgQ0mZaQrins1IDToEi1RRuViEKVkjY1iyprX1Fo1FgAVDpTKxgauhbk4D0wisYc14CWYvlj5G5mqksYJTL5m9K4dZizkUyKB0iQsz5lhKuhLL0wWciYWLqgHA0VJmRCYicQqEkhYGGTWLT5V2WhbqwZI2aLeC+Wv5WJFOvWBnNL8EVFfsV2YfzhQVJ0UR0Wm+GiViL/K0+qrihKh1CxfSL84ppwacLHWqghj1ZVSa7MdUm5SPrHvYLVIQo8Mi11LEGJT9Rx4+Kv9EqRiJUmppS0UW2cGq0YE7EClSp0beCzWuJVvxAUZXFcQ0imKNecon8IZciamTGxWQfHTs8INPJMjSVUFUiSBQKkIBWjVY2hom+kSBVTR55CPUabAFBlY9rmE0wJjkRKNHEnUA9OKtXO2Id8BlSstWLDVFE31ouNVHUDk3mh8Gk0GeKJ/oWiqJAm1YfETVH1U/af8dhxKWSuAkZ1sXmnM3bKcN3tBqdYNxUhmZoPsX9Orn2viAfaVYdKMEf7RAtCCirySYcoscQ8Kcghyg9Qxb4I7MS2aRUNaydULUCvR+1SuVajqFpJVT03vigUZYaJF5tKABUVHeLFqbK0rWBW6RqlXbwJj8QnbaRBf3LJe64sV3PyN1whmwpj0wkDA245CE8uUUEfiAUpaUscvGk3b+pNpgiXseAmRbGZmGYRiBM7xUdrKtlEljB1AQWraFKFWqVZtLhqWfaXCkWZlZfk52UbW5sLFip7ISMlpJKAWRp9cjsUsSkKk7b6QzWxiXiSKoYgoTwBZ1gREqJhEcpyVVxMBR+FyiQastOLmbHqrMQmReC2tj5IBJ4XH1h5xTJmbvNDW6GokGwNTIoH85VEPyi32vhs0DmSiXQwNamsT8RV8gOSInlbnfhgxw1OQqTRyeQkEUrcCdVITFlhUWqJNDmbmaxK5V8c3IyhUm0RswYDVoF6EfiLL2puzOtIU3dTza9U6fFXv/r0yvB/+c//XWxM8DkdmPtLqwAqpSPEnHCmiNcQLjMW2bwwWf6K//IXrJkXvlGtE7j6gspic2FFsdiU+l34SLiqLZUYjS0rvqDayqrnSOH6rHSD6w/Gf0oDNL6puopcdFE1PKIn1T5B+pP4y/8H15fHC3UZpkUAAAAASUVORK5CYII=';
+
+// ── GET /api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-word ─────────
+// Genera DOCX real del Manifiesto Bodega CDG usando la librería docx.
+// No guarda el archivo; lo devuelve como stream de descarga.
+// FIX (vie 06-jun-2026, server): endpoint manifiesto-word DOCX real
+app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-word', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+
+    // ── Leer carga logística ────────────────────────────────────────────────
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+    var cg = rows[0];
+
+    // ── Leer sesión (para fecha_trabajo) ───────────────────────────────────
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&select=fecha_trabajo,licencia_id&limit=1');
+    var ses = (Array.isArray(sesRows)&&sesRows.length) ? sesRows[0] : {};
+
+    // ── Mapeo de campos (mismo que Export Excel) ────────────────────────────
+    var marchamo   = String(cg.marchamo      ||'');
+    var licId      = String(cg.licencia_hija  ||'');
+    var ubicacion  = String(cg.destino_tr999  ||'');
+    var transporte = String(cg.transporte || cg.placa || '');
+    var furgon     = String(cg.furgon || '');
+    // Fecha
+    var fechaRaw = cg.ts_cierre||cg.created_at||cg.fecha_creacion||ses.fecha_trabajo||'';
+    if(/^\d{4}-\d{2}-\d{2}T/.test(fechaRaw)) fechaRaw = fechaRaw.slice(0,10);
+    var fechaFmt = fechaRaw;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
+      var pp = fechaRaw.split('-'); fechaFmt = pp[2]+'/'+pp[1]+'/'+pp[0];
+    }
+    // Carga No. — no usar licencia_hija ni carga.id
+    var cargaNo   = String(cg.carga_no||cg.numero_carga||cg.no_carga||cg.id_carga||'');
+    // Responsables
+    // autorizador eliminado: AUTORIZACIÓN DE ENVÍO usa nombres fijos (ASTRID DUARTE, CINTYA RIVERA, HUVALDO PEREZ)
+    var encargado   = String(cg.encargado_pedido||cg.creado_por||'');
+    var auditorVal  = String(cg.auditado_por||cg.validado_por||req.query.usuario||'');
+    var recibidoPor = String(cg.recibido_por||'');
+    // ID contenedor — no usar licencia_hija ni carga.id
+    var idCont = String(cg.hamilton_contenedor||cg.id_contenedor||cg.contenedor||'');
+
+    // ── SKU helpers ─────────────────────────────────────────────────────────
+    function fd() {
+      for(var i=0;i<arguments.length;i++){
+        var v=arguments[i];
+        if(v!==null&&v!==undefined&&v!=='') return v;
+      }
+      return '';
+    }
+
+    // ── Fuente de datos: bod_lineas (misma que pantalla y PDF) ───────────────
+    // cg.resumen_skus no tiene estado de auditoría real; bod_lineas sí.
+    var bodLineasWord = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
+    bodLineasWord = Array.isArray(bodLineasWord) ? bodLineasWord : [];
+    var asigWordRows = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var tarimaFurgonWord = {};
+    (Array.isArray(asigWordRows)?asigWordRows:[]).forEach(function(a){
+      tarimaFurgonWord[a.tarima] = a.furgon;
+    });
+    var porSkuWord = {};
+    bodLineasWord.forEach(function(l){
+      if(tarimaFurgonWord[l.tarima] !== furgon) return;
+      var sku=l.sku||'?', desc=l.descripcion||'';
+      if(!porSkuWord[sku]) porSkuWord[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
+      var e=porSkuWord[sku];
+      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+      if(!l.auditado){ e.pendientes++; }
+      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+      if(!e.descripcion&&desc) e.descripcion=desc;
+    });
+    Object.values(porSkuWord).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+    var resSkus = Object.values(porSkuWord);
+
+    // ── Construir DOCX con librería docx ────────────────────────────────────
+    var docx;
+    try { docx = require('docx'); }
+    catch(e) { return res.status(500).json({ ok:false, error:'Librería docx no instalada en el servidor.' }); }
+
+    var { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+          ImageRun, AlignmentType, WidthType, BorderStyle, VerticalAlign } = docx;
+
+    var logoBytes = Buffer.from(_MANIF_LOGO_B64, 'base64'); // usa constante de módulo
+
+    // ── Helpers — tabla única de 9 columnas (evita desalineación en Word) ──────
+    var FONT='Aptos Narrow', SZ=20, SZ_S=18, SZ_B=22;
+    var sp0={after:0}, marg={top:60,bottom:60,left:80,right:80};
+
+    function bS(type,sz,color){return{style:BorderStyle[type]||BorderStyle.SINGLE,size:sz||4,color:color||'000000'};}
+    function bNil(){return{style:BorderStyle.NIL,size:0,color:'000000'};}
+    function bSgl(sz){return bS('SINGLE',sz||4);}
+    function bDbl(sz){return bS('DOUBLE',sz||6);}
+    function run(text,opts){opts=opts||{};return new TextRun({text:String(text||''),font:FONT,size:opts.sz||SZ,bold:!!opts.bold});}
+    function paraC(text,opts){opts=opts||{};return new Paragraph({alignment:opts.align||AlignmentType.LEFT,spacing:sp0,children:[run(text,opts)]});}
+    function mkCell(w,borders,children,opts){
+      opts=opts||{};
+      return new TableCell({width:{size:w,type:WidthType.DXA},columnSpan:opts.span,
+        borders:borders,margins:marg,verticalAlign:opts.vAlign||VerticalAlign.BOTTOM,children:children});
+    }
+    function emptyCell(w,borders){return mkCell(w,borders,[new Paragraph({spacing:sp0,children:[run('')]})]);}
+
+    // Columnas: [marg_izq, CODIGO, ESTATUS, %AUD, DESC, CANT, VAL, DIF, marg_der]
+    var CW9=[400,1500,1100,900,4580,982,1180,1306,400];
+    var TOTAL9=CW9.reduce(function(a,b){return a+b;},0);
+    var W_IZQ=CW9[1]+CW9[2]+CW9[3]+CW9[4]; // span 4: cols 1-4
+    var W_DER=CW9[5]+CW9[6]+CW9[7];         // span 3: cols 5-7
+    var INNER=W_IZQ+W_DER;                   // span 7: cols 1-7
+
+    var bLEFT ={top:bNil(),bottom:bNil(),left:bDbl(),right:bNil()};
+    var bRIGHT={top:bNil(),bottom:bNil(),left:bNil(),right:bDbl()};
+    var bNONE ={top:bNil(),bottom:bNil(),left:bNil(),right:bNil()};
+
+    // Fila full-width interior (span 7)
+    function mkFullRow(children,bTop,bBot,ht){
+      return new TableRow({height:{value:ht||288,rule:'atLeast'},children:[
+        emptyCell(CW9[0],Object.assign({},bNONE,{left:bDbl()})),
+        mkCell(INNER,{top:bTop||bNil(),bottom:bBot||bNil(),left:bNil(),right:bNil()},children,{span:7}),
+        emptyCell(CW9[8],Object.assign({},bNONE,{right:bDbl()})),
+      ]});
+    }
+    // Fila dividida izq (span 4) / der (span 3)
+    function mkSplitRow(izqText,izqOpts,izqBord,derText,derOpts,derBord,ht){
+      return new TableRow({height:{value:ht||288,rule:'atLeast'},children:[
+        emptyCell(CW9[0],Object.assign({},bNONE,{left:bDbl()})),
+        mkCell(W_IZQ,izqBord,[paraC(izqText||'',izqOpts||{})],{span:4}),
+        mkCell(W_DER,derBord,[paraC(derText||'',derOpts||{})],{span:3}),
+        emptyCell(CW9[8],Object.assign({},bNONE,{right:bDbl()})),
+      ]});
+    }
+    // Fila metadatos: texto izq (span 4) + label/valor en cols 5-6 / 7
+    function mkLabelValRow(izqText,label,value,ht){
+      return new TableRow({height:{value:ht||288,rule:'atLeast'},children:[
+        emptyCell(CW9[0],Object.assign({},bNONE,{left:bDbl()})),
+        mkCell(W_IZQ,bNONE,[paraC(izqText||'',{sz:SZ})],{span:4}),
+        mkCell(CW9[5]+CW9[6],{top:bSgl(),bottom:bSgl(),left:bSgl(),right:bSgl()},[paraC(label||'',{sz:SZ})],{span:2}),
+        mkCell(CW9[7],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},[paraC(value||'',{sz:SZ})]),
+        emptyCell(CW9[8],Object.assign({},bNONE,{right:bDbl()})),
+      ]});
+    }
+
+    // ── Filas de encabezado ─────────────────────────────────────────────────
+    var rowTop = new TableRow({height:{value:200,rule:'exact'},
+      children:CW9.map(function(w,i){
+        return emptyCell(w,{top:bDbl(),bottom:bNil(),left:i===0?bDbl():bNil(),right:i===8?bDbl():bNil()});
+      })
+    });
+    var rowLogo = new TableRow({height:{value:600,rule:'atLeast'},children:[
+      emptyCell(CW9[0],Object.assign({},bNONE,{left:bDbl()})),
+      mkCell(CW9[1]+CW9[2],bNONE,
+        [new Paragraph({spacing:sp0,children:[new ImageRun({data:logoBytes,transformation:{width:110,height:88},type:'png'})]})],
+        {span:2,vAlign:VerticalAlign.CENTER}),
+      mkCell(CW9[3]+CW9[4]+CW9[5]+CW9[6]+CW9[7],{top:bSgl(8),bottom:bSgl(8),left:bSgl(8),right:bSgl(8)},
+        [paraC('CARGA ENVÍO A BODEGA',{sz:SZ_B,bold:true,align:AlignmentType.CENTER})],
+        {span:5,vAlign:VerticalAlign.CENTER}),
+      emptyCell(CW9[8],Object.assign({},bNONE,{right:bDbl()})),
+    ]});
+    var rowEmpresa = mkLabelValRow('Herramientas Poderosas','Marchamo:',marchamo);
+    var rowDir1 = mkLabelValRow('DIRECCIÓN: 27 Calle Bodega C 41-55 Zona 5 Calzada la Paz','Licencia:',licId);
+    var rowDir2 = mkLabelValRow('DIRECCIÓN DESTINO: BODEGA NODUS (Hamiltón)','UBICACIÓN:',ubicacion);
+    var rowTrans = mkLabelValRow('TRANSPORTE: '+transporte+'   Furgón: '+furgon,'Fecha:',fechaFmt);
+    var rowCargaNo = mkLabelValRow('','Carga No.',cargaNo);
+
+    // ── Encabezados tabla SKU ───────────────────────────────────────────────
+    var HDRS=['','CODIGO','ESTATUS','% AUDITADO','DESCRIPCIÓN','CANTIDAD','VALIDADO','DIFERENCIA',''];
+    var rowSkuHdr = new TableRow({height:{value:300,rule:'atLeast'},
+      children:CW9.map(function(w,i){
+        var bord = i===0 ? Object.assign({},bNONE,{left:bDbl()})
+                 : i===8 ? Object.assign({},bNONE,{right:bDbl()})
+                 : i===1 ? {top:bSgl(),bottom:bSgl(),left:bSgl(),right:bSgl()}
+                 :         {top:bSgl(),bottom:bSgl(),left:bNil(),right:bSgl()};
+        return mkCell(w,bord,[new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,
+          children:[run(HDRS[i]||'',{sz:SZ,bold:true})]})]);
+      })
+    });
+
+    // ── Filas SKU — sin límite, filas dinámicas ────────────────────────────
+    var skuRows = resSkus.map(function(s){
+      var cantVal = fd(s.cantidad_auditada,s.cantidad_audit,s.auditada,
+                       s.cantidad_validada,s.validado,s.unidades_auditadas);
+      var tieneVal = cantVal!==''&&cantVal!==null&&cantVal!==undefined;
+      var estatus  = tieneVal ? 'Auditado' : 'No auditado';
+      var desc = s.descripcion_completa||s.descripcion_larga||s.descripcion||s.desc||s.nombre||s.sku_desc||'';
+      var cantidad = Number(s.unidades)||0;
+      var validado = tieneVal ? Number(cantVal) : '';
+      var dif      = tieneVal ? (Number(cantVal)-cantidad) : '';
+      var pct      = (!tieneVal||cantidad<=0) ? '0%'
+                   : Math.min(100,Math.round((Number(cantVal)/cantidad)*100))+'%';
+      return new TableRow({height:{value:288,rule:'atLeast'},children:[
+        emptyCell(CW9[0],Object.assign({},bNONE,{left:bDbl()})),
+        mkCell(CW9[1],{top:bNil(),bottom:bSgl(),left:bSgl(),right:bSgl()},[paraC(String(s.sku||''),{sz:SZ})]),
+        mkCell(CW9[2],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},[paraC(estatus,{sz:SZ})]),
+        mkCell(CW9[3],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},
+          [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,children:[run(pct,{sz:SZ})]})]),
+        mkCell(CW9[4],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},[paraC(String(desc),{sz:SZ_S})]),
+        mkCell(CW9[5],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},
+          [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,children:[run(String(cantidad),{sz:SZ})]})]),
+        mkCell(CW9[6],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},
+          [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,children:[run(validado!==''?String(validado):'',{sz:SZ})]})]),
+        mkCell(CW9[7],{top:bNil(),bottom:bSgl(),left:bNil(),right:bSgl()},
+          [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,children:[run(dif!==''?String(dif):'',{sz:SZ})]})]),
+        emptyCell(CW9[8],Object.assign({},bNONE,{right:bDbl()})),
+      ]});
+    });
+
+    // ── Firmas / Footer ─────────────────────────────────────────────────────
+    // AUTORIZACIÓN DE ENVÍO: 3 filas reales — responsables siempre estáticos
+    var rowFirmaHdr = mkFullRow(
+      [paraC('AUTORIZACIÓN DE ENVÍO',{sz:SZ,bold:true})],
+      bSgl(),bNil(),280);
+    var rowFirmaA1 = mkFullRow(
+      [paraC('ASTRID DUARTE',{sz:SZ})],
+      bNil(),bNil(),288);
+    var rowFirmaA2 = mkFullRow(
+      [paraC('CINTYA RIVERA',{sz:SZ})],
+      bNil(),bNil(),288);
+    var rowFirmaA3 = mkFullRow(
+      [paraC('HUVALDO PEREZ',{sz:SZ})],
+      bNil(),bSgl(),288);
+    var rowFirmaRecibe = mkFullRow(
+      [paraC('NOMBRE Y FIRMA QUIEN RECIBE: '+(recibidoPor||''),{sz:SZ})],
+      bSgl(),bSgl(),280);
+    var rowTransCentral = mkFullRow(
+      [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,
+        children:[run('TRANSPORTE: '+transporte,{sz:SZ,bold:true})]})],
+      bNil(),bNil(),288);
+    var rowEncHdr = mkSplitRow(
+      'ENCARGADO DE PEDIDO',{sz:SZ,bold:true},
+      {top:bSgl(),bottom:bNil(),left:bSgl(),right:bNil()},
+      'AUDITOR / VALIDADOR',{sz:SZ,bold:true},
+      {top:bSgl(),bottom:bNil(),left:bSgl(),right:bSgl()},280);
+    var rowEncVal = mkSplitRow(
+      encargado,{sz:SZ},{top:bNil(),bottom:bSgl(),left:bSgl(),right:bNil()},
+      auditorVal,{sz:SZ},{top:bNil(),bottom:bSgl(),left:bSgl(),right:bSgl()},500);
+    var rowIdCont = mkFullRow(
+      [new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,
+        children:[run('ID DE CONTENEDOR: '+idCont,{sz:SZ,bold:true})]})],
+      bNil(),bNil(),288);
+    var rowBot = new TableRow({height:{value:200,rule:'exact'},
+      children:CW9.map(function(w,i){
+        return emptyCell(w,{top:bNil(),bottom:bDbl(),left:i===0?bDbl():bNil(),right:i===8?bDbl():bNil()});
+      })
+    });
+
+    // ── Ensamblar y enviar ──────────────────────────────────────────────────
+    var allRows = [rowTop,rowLogo,rowEmpresa,rowDir1,rowDir2,rowTrans,rowCargaNo,
+      rowSkuHdr].concat(skuRows).concat([
+      rowFirmaHdr,rowFirmaA1,rowFirmaA2,rowFirmaA3,rowFirmaRecibe,rowTransCentral,
+      rowEncHdr,rowEncVal,rowIdCont,rowBot
+    ]);
+
+    var doc = new Document({
+      sections:[{
+        properties:{page:{size:{width:12240,height:15840},margin:{top:720,right:720,bottom:720,left:720}}},
+        children:[new Table({width:{size:TOTAL9,type:WidthType.DXA},columnWidths:CW9,rows:allRows})]
+      }]
+    });
+
+    var buf = await Packer.toBuffer(doc);
+    var licFile  = (licId||'BOD').replace(/[^A-Z0-9]/gi,'_');
+    var fechaFile= (fechaFmt||'').replace(/\//g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
+    var filename = 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.docx';
+
+    res.setHeader('Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition',
+      'attachment; filename="'+filename+'"');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+
+  } catch(e) {
+    console.error('manifiesto-word error:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf ──────────
+// Genera PDF del Manifiesto Bodega CDG usando wkhtmltopdf.
+// DEPLOY: requiere wkhtmltopdf instalado en Render.
+//   - Sin wkhtmltopdf: responde 503 con mensaje claro. El endpoint /manifiesto-word sigue funcionando.
+//   - Para instalar: usar Dockerfile con "apt-get install -y wkhtmltopdf"
+//     o binario estático en /bin/wkhtmltopdf commiteado al repo.
+//   - Mientras no esté configurado, el botón PDF en el cliente muestra aviso en lugar de descargar.
+// FIX (vie 06-jun-2026, server): endpoint manifiesto-pdf via wkhtmltopdf
+app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var cargaId = String(req.params.cargaId).trim();
+
+    // Verificar que wkhtmltopdf esté disponible antes de continuar
+    var { execFileSync } = require('child_process');
+    try { execFileSync('wkhtmltopdf', ['--version'], { timeout:5000, stdio:'pipe' }); }
+    catch(_) {
+      return res.status(503).json({
+        ok:false,
+        error:'PDF no disponible: wkhtmltopdf no está instalado en este servidor. El export Word sigue funcionando normalmente.',
+        code:'WKHTMLTOPDF_NOT_FOUND'
+      });
+    }
+
+    var rows = await supabase('GET', 'bod_furgon_cierres', null,
+      '?id=eq.'+encodeURIComponent(cargaId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Carga no encontrada.' });
+    var cg = rows[0];
+
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&select=fecha_trabajo,licencia_id&limit=1');
+    var ses = (Array.isArray(sesRows)&&sesRows.length) ? sesRows[0] : {};
+
+    // ── Mapeo de campos (idéntico al endpoint Word) ─────────────────────────
+    var marchamo   = String(cg.marchamo      ||'');
+    var licId      = String(cg.licencia_hija  ||'');
+    var ubicacion  = String(cg.destino_tr999  ||'');
+    var transporte = String(cg.transporte || cg.placa || '');
+    var furgon     = String(cg.furgon || '');
+    var fechaRaw   = cg.ts_cierre||cg.created_at||cg.fecha_creacion||ses.fecha_trabajo||'';
+    if(/^\d{4}-\d{2}-\d{2}T/.test(fechaRaw)) fechaRaw = fechaRaw.slice(0,10);
+    var fechaFmt = fechaRaw;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
+      var pp = fechaRaw.split('-'); fechaFmt = pp[2]+'/'+pp[1]+'/'+pp[0];
+    }
+    var cargaNo     = String(cg.carga_no||cg.numero_carga||cg.no_carga||cg.id_carga||'');
+    var encargado   = String(cg.encargado_pedido||cg.creado_por||'');
+    var auditorVal  = String(cg.auditado_por||cg.validado_por||req.query.usuario||'');
+    var recibidoPor = String(cg.recibido_por||'');
+    var idCont      = String(cg.hamilton_contenedor||cg.id_contenedor||cg.contenedor||''); // NO usar licencia_hija
+
+    // ── Obtener datos reales de auditoría desde bod_lineas (igual que Word y manifiesto) ──
+    var bodLineasPdf = await supabase('GET', 'bod_lineas', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
+    bodLineasPdf = Array.isArray(bodLineasPdf) ? bodLineasPdf : [];
+    var asigPdfRows = await supabase('GET', 'bod_tarima_furgon', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId));
+    var tarimaFurgonPdf = {};
+    (Array.isArray(asigPdfRows)?asigPdfRows:[]).forEach(function(a){ tarimaFurgonPdf[a.tarima]=a.furgon; });
+    var porSkuPdf = {};
+    bodLineasPdf.forEach(function(l){
+      if(tarimaFurgonPdf[l.tarima] !== furgon) return;
+      var sku=l.sku||'?', desc=l.descripcion||'';
+      if(!porSkuPdf[sku]) porSkuPdf[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
+      var e=porSkuPdf[sku];
+      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+      if(!l.auditado){ e.pendientes++; }
+      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+      if(!e.descripcion&&desc) e.descripcion=desc;
+    });
+    Object.values(porSkuPdf).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+    var resSkus = Object.values(porSkuPdf);
+
+    function fd() {
+      for(var _i=0;_i<arguments.length;_i++){
+        var _v=arguments[_i];
+        if(_v!==null&&_v!==undefined&&_v!=='') return _v;
+      }
+      return '';
+    }
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    // Logo embebido desde constante de módulo _MANIF_LOGO_B64 (compartido con Word)
+
+    // ── Construir HTML del manifiesto ────────────────────────────────────────
+    var filasSku = '';
+    resSkus.forEach(function(s){
+      var cantVal = fd(s.cantidad_auditada,s.cantidad_audit,s.auditada,
+                       s.cantidad_validada,s.validado,s.unidades_auditadas);
+      var tieneVal = cantVal!==''&&cantVal!==null&&cantVal!==undefined;
+      var estatus  = tieneVal ? 'Auditado' : 'No auditado';
+      var desc = s.descripcion_completa||s.descripcion_larga||s.descripcion||s.desc||s.nombre||s.sku_desc||'';
+      var cantidad = Number(s.unidades)||0;
+      var validado = tieneVal ? Number(cantVal) : '';
+      var dif      = tieneVal ? (Number(cantVal)-cantidad) : '';
+      var pct      = (!tieneVal||cantidad<=0) ? '0%'
+                   : Math.min(100,Math.round((Number(cantVal)/cantidad)*100))+'%';
+      filasSku += '<tr>'
+        +'<td>'+esc(String(s.sku||''))+'</td>'
+        +'<td class="c">'+esc(estatus)+'</td>'
+        +'<td class="c">'+esc(pct)+'</td>'
+        +'<td class="desc">'+esc(desc)+'</td>'
+        +'<td class="c">'+esc(String(cantidad))+'</td>'
+        +'<td class="c">'+(validado!==''?esc(String(validado)):'')+'</td>'
+        +'<td class="c">'+(dif!==''?esc(String(dif)):'')+'</td>'
+        +'</tr>';
+    });
+
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+      +'*{margin:0;padding:0;box-sizing:border-box}'
+      +'body{font-family:Arial,sans-serif;font-size:8.5pt;padding:8px}'
+      +'table{width:100%;border-collapse:collapse;border:2px double #000}'
+      +'th{background:#d0d7de;border:1px solid #555;padding:3px 5px;font-weight:bold;text-align:center}'
+      +'td{border:1px solid #555;padding:2px 5px;vertical-align:top}'
+      +'.c{text-align:center}.desc{word-wrap:break-word;white-space:normal}'
+      +'.lbl{background:#f6f8fa;font-weight:bold;white-space:nowrap}'
+      +'.val{}'
+      +'.title{text-align:center;font-size:12pt;font-weight:bold;border:1px solid #555;padding:6px;vertical-align:middle}'
+      +'.hdr2{width:100%;border-collapse:collapse;border:2px double #000;border-top:none;margin-top:0}'
+      +'.firma{background:#f6f8fa;font-weight:bold;border-top:1px solid #555}'
+      +'</style></head><body>'
+      // Encabezado: logo + título
+      +'<table style="border-bottom:none">'
+      +'<tr>'
+      +'<td rowspan="2" style="width:110px;border:none;padding:4px;vertical-align:middle">'
+      +'<img src="data:image/png;base64,'+_MANIF_LOGO_B64+'" width="95" height="75" style="display:block">'
+      +'</td>'
+      +'<td class="title">CARGA ENV\u00cdO A BODEGA</td>'
+      +'</tr>'
+      +'<tr><td style="font-weight:bold;padding:3px 8px;border-top:1px solid #555">Herramientas Poderosas</td></tr>'
+      +'</table>'
+      // Campos de encabezado
+      +'<table class="hdr2">'
+      +'<tr>'
+      +'<td colspan="2" style="width:58%;border-bottom:1px solid #999;padding:2px 6px"><strong>DIRECCI\u00d3N:</strong> 27 Calle Bodega C 41-55 Zona 5 Calzada la Paz</td>'
+      +'<td class="lbl" style="width:21%">Marchamo:</td>'
+      +'<td class="val" style="width:21%">'+esc(marchamo)+'</td>'
+      +'</tr>'
+      +'<tr>'
+      +'<td colspan="2" style="border-bottom:1px solid #999;padding:2px 6px"><strong>DIRECCI\u00d3N DESTINO:</strong> BODEGA NODUS (Hamilt\u00f3n)</td>'
+      +'<td class="lbl">Licencia:</td><td class="val">'+esc(licId)+'</td>'
+      +'</tr>'
+      +'<tr>'
+      +'<td style="width:30%;padding:2px 6px;border-bottom:1px solid #999"><strong>TRANSPORTE:</strong> '+esc(transporte)+'</td>'
+      +'<td style="width:28%;padding:2px 6px;border-bottom:1px solid #999"><strong>Furg\u00f3n:</strong> '+esc(furgon)+'</td>'
+      +'<td class="lbl">UBICACI\u00d3N:</td><td class="val">'+esc(ubicacion)+'</td>'
+      +'</tr>'
+      +'<tr>'
+      +'<td colspan="2" style="padding:2px 6px;border-bottom:1px solid #999"></td>'
+      +'<td class="lbl">Fecha:</td><td class="val">'+esc(fechaFmt)+'</td>'
+      +'</tr>'
+      +'<tr>'
+      +'<td colspan="2" style="padding:2px 6px"></td>'
+      +'<td class="lbl">Carga No.</td><td class="val">'+esc(cargaNo)+'</td>'
+      +'</tr>'
+      +'</table>'
+      // Tabla SKU
+      +'<table class="hdr2">'
+      +'<thead><tr>'
+      +'<th style="width:12%">CODIGO</th>'
+      +'<th style="width:10%">ESTATUS</th>'
+      +'<th style="width:8%">% AUDITADO</th>'
+      +'<th style="width:40%">DESCRIPCI\u00d3N</th>'
+      +'<th style="width:9%">CANTIDAD</th>'
+      +'<th style="width:10%">VALIDADO</th>'
+      +'<th style="width:11%">DIFERENCIA</th>'
+      +'</tr></thead>'
+      +'<tbody>'+filasSku+'</tbody>'
+      +'</table>'
+      // Firmas
+      +'<table class="hdr2" style="margin-top:8px">'
+      +'<tr><td colspan="4" class="firma" style="padding:3px 6px">AUTORIZACI\u00d3N DE ENV\u00cdO</td></tr>'
+      +'<tr><td colspan="4" style="padding:3px 6px">ASTRID DUARTE</td></tr>'+'<tr><td colspan="4" style="padding:3px 6px">CINTYA RIVERA</td></tr>'+'<tr><td colspan="4" style="padding:3px 6px">HUVALDO PEREZ</td></tr>'
+      +'<tr><td colspan="4" style="padding:3px 6px;border-top:1px solid #555">NOMBRE Y FIRMA QUIEN RECIBE: '+esc(recibidoPor)+'</td></tr>'
+      +'<tr><td colspan="4" style="padding:3px 6px;text-align:center;border-top:1px solid #555;font-weight:bold">TRANSPORTE: '+esc(transporte)+'</td></tr>'
+      +'<tr>'
+      +'<td colspan="2" class="firma" style="padding:3px 6px">ENCARGADO DE PEDIDO</td>'
+      +'<td colspan="2" class="firma" style="padding:3px 6px;border-left:1px solid #555">AUDITOR / VALIDADOR</td>'
+      +'</tr>'
+      +'<tr>'
+      +'<td colspan="2" style="height:45px;padding:4px 6px">'+esc(encargado)+'</td>'
+      +'<td colspan="2" style="height:45px;padding:4px 6px;border-left:1px solid #555">'+esc(auditorVal)+'</td>'
+      +'</tr>'
+      +'<tr><td colspan="4" style="text-align:center;padding:4px 6px;font-weight:bold;border-top:1px solid #555">ID DE CONTENEDOR: '+esc(idCont)+'</td></tr>'
+      +'</table>'
+      +'</body></html>';
+
+    // ── Generar PDF con wkhtmltopdf ─────────────────────────────────────────
+    var os   = require('os');
+    var fs   = require('fs');
+    var path = require('path');
+    var { execFile } = require('child_process');
+
+    var tmpHtml = path.join(os.tmpdir(), 'manif_'+cargaId+'_'+Date.now()+'.html');
+    var tmpPdf  = tmpHtml.replace('.html','.pdf');
+
+    fs.writeFileSync(tmpHtml, html, 'utf8');
+
+    var wkArgs = [
+      '--quiet',
+      '--page-size', 'Letter',
+      '--margin-top',    '8mm',
+      '--margin-bottom', '8mm',
+      '--margin-left',   '8mm',
+      '--margin-right',  '8mm',
+      '--encoding', 'utf-8',
+      '--disable-smart-shrinking',
+      tmpHtml, tmpPdf
+    ];
+
+    execFile('wkhtmltopdf', wkArgs, function(err) {
+      // Limpiar HTML temporal siempre
+      try { fs.unlinkSync(tmpHtml); } catch(_){}
+
+      if(err) {
+        try { fs.unlinkSync(tmpPdf); } catch(_){}
+        console.error('wkhtmltopdf error:', err.message);
+        return res.status(500).json({ ok:false, error:'Error al generar PDF: '+err.message });
+      }
+
+      var pdfBuf;
+      try { pdfBuf = fs.readFileSync(tmpPdf); }
+      catch(e) {
+        return res.status(500).json({ ok:false, error:'No se pudo leer el PDF generado.' });
+      }
+      try { fs.unlinkSync(tmpPdf); } catch(_){}
+
+      var licFile  = (licId||'BOD').replace(/[^A-Z0-9]/gi,'_');
+      var fechaFile= (fechaFmt||'').replace(/\//g,'') || new Date().toISOString().slice(0,10).replace(/-/g,'');
+      var pdfName  = 'Manifiesto_'+licFile+'_Furgon'+furgon+'_'+fechaFile+'.pdf';
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="'+pdfName+'"');
+      res.setHeader('Content-Length', pdfBuf.length);
+      res.end(pdfBuf);
+    });
+
+  } catch(e) {
+    console.error('manifiesto-pdf error:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── DELETE /api/bod/sesion/:id ─────────────────────────────────────────────
+// Borra (soft delete) una sesión bolsón y todos sus datos relacionados.
+// Solo Erick Vela puede ejecutarlo — validado en BACKEND.
+// Devuelve detalle por tabla para que el usuario sepa si algo falló.
+// FIX (vie 06-jun-2026): borrar sesión bolsón por Erick Vela
+app.delete('/api/bod/sesion/:id', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var usuario = String((req.body && req.body.usuario) || '').trim();
+
+    if(usuario !== 'Erick Vela')
+      return res.status(403).json({ ok:false, error:'Solo Erick Vela puede eliminar sesiones bolsón.' });
+
+    var sesRows = await supabase('GET', 'bod_sesiones', null,
+      '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
+    if(!Array.isArray(sesRows)||!sesRows.length)
+      return res.status(404).json({ ok:false, error:'Sesión no encontrada.' });
+    var ses = sesRows[0];
+
+    var now    = new Date().toISOString();
+    var tablas = {};   // detalle por tabla: {ok, error, filas}
+    var hayCritico = false;
+
+    // 1. bod_lineas — soft delete (columna eliminada ya existe)
+    try {
+      await supabase('PATCH', 'bod_lineas',
+        { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_lineas = { ok:true };
+    } catch(e) {
+      tablas.bod_lineas = { ok:false, error:e.message };
+      hayCritico = true;
+    }
+
+    // 2. bod_tarima_furgon — borrar físico (sin columna eliminada)
+    try {
+      await supabase('DELETE', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_tarima_furgon = { ok:true };
+    } catch(e) {
+      tablas.bod_tarima_furgon = { ok:false, error:e.message };
+      // No es crítico si no hay asignaciones — continuar
+    }
+
+    // 3. bod_furgon_cierres — borrar físico
+    try {
+      await supabase('DELETE', 'bod_furgon_cierres', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_furgon_cierres = { ok:true };
+    } catch(e) {
+      tablas.bod_furgon_cierres = { ok:false, error:e.message };
+      hayCritico = true;
+    }
+
+    // 4. bod_sesiones — soft delete primero, físico como fallback
+    try {
+      await supabase('PATCH', 'bod_sesiones',
+        { eliminada:true, eliminado_por:usuario, ts_eliminado:now },
+        '?id=eq.'+encodeURIComponent(sesId));
+      tablas.bod_sesiones = { ok:true, metodo:'soft_delete' };
+    } catch(e) {
+      // Intentar borrado físico si la columna no existe
+      try {
+        await supabase('DELETE', 'bod_sesiones', null,
+          '?id=eq.'+encodeURIComponent(sesId));
+        tablas.bod_sesiones = { ok:true, metodo:'delete_fisico' };
+      } catch(e2) {
+        tablas.bod_sesiones = { ok:false, error:e2.message };
+        hayCritico = true;
+      }
+    }
+
+    if(hayCritico) {
+      return res.status(500).json({
+        ok:false,
+        sesion_id: sesId,
+        licencia_id: ses.licencia_id,
+        error: 'Algunas tablas no se pudieron limpiar. Verificá el detalle.',
+        tablas: tablas
+      });
+    }
+
+    invalidarCacheSesion(sesId);
+    res.json({ ok:true, sesion_id:sesId, licencia_id:ses.licencia_id,
+               mensaje:'Sesión '+ses.licencia_id+' eliminada por '+usuario+'.',
+               tablas:tablas });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// FASE 2 BODEGA CDG — Persistencia Teórico 952 + Papel de Trabajo
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/bod/sesion/:id/teorico-952 ───────────────────────────────────
+app.get('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var licHija = String(req.query.licencia_hija || '').trim().toUpperCase();
+    var ck = 'bod:teorico952:'+sesId+':'+(licHija||'*');
+    var cached = cacheGet(ck);
+    if(cached) return res.json(cached);
+
+    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc';
+    if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
+    var rows = await supabase('GET', 'bod_teorico_952', null, query);
+    var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
+    cacheSet(ck, resp, 30000);
+    res.json(resp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/teorico-952 ──────────────────────────────────
+// Body: { licencia_hija, skus: [{sku,nombre,cantidad_952,unidades,existencia,disponible}], creado_por }
+app.post('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
+  try {
+    var sesId    = String(req.params.id).trim();
+    var { licencia_hija, skus, creado_por } = req.body || {};
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    creado_por    = String(creado_por    || '').trim();
+    if(!Array.isArray(skus) || !skus.length)
+      return res.status(400).json({ ok:false, error:'skus requeridos' });
+
+    var now = new Date().toISOString();
+    var upserts = skus.map(function(s){
+      return {
+        sesion_id:      sesId,
+        licencia_hija:  licencia_hija,
+        sku:            String(s.sku||'').trim().toUpperCase(),
+        nombre:         String(s.nombre||''),
+        cantidad_952:   Number(s.cantidad_952)||0,
+        unidades:       Number(s.unidades)||0,
+        existencia:     Number(s.existencia)||0,
+        disponible:     Number(s.disponible)||0,
+        creado_por:     creado_por,
+        actualizado_en: now
+      };
+    }).filter(function(r){ return !!r.sku; });
+
+    if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
+
+    // Batch upsert (Supabase: POST con Prefer merge-duplicates)
+    var saved = await supabase('POST', 'bod_teorico_952', upserts,
+      '?on_conflict=sesion_id,licencia_hija,sku');
+
+    // Invalidar caches
+    cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
+
+    res.json({ ok:true, guardados: upserts.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── GET /api/bod/sesion/:id/papel-trabajo ─────────────────────────────────
+app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
+  try {
+    var sesId   = String(req.params.id).trim();
+    var licHija = String(req.query.licencia_hija || '').trim().toUpperCase();
+    var ck = 'bod:papel:'+sesId+':'+(licHija||'*');
+    var cached = cacheGet(ck);
+    if(cached) return res.json(cached);
+
+    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc';
+    if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
+    var rows = await supabase('GET', 'bod_papel_trabajo', null, query);
+    var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
+    cacheSet(ck, resp, 15000); // 15s — cambia frecuentemente al validar
+    res.json(resp);
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ── POST /api/bod/sesion/:id/papel-trabajo ────────────────────────────────
+// Body: { licencia_hija, skus: [{sku,fisico_auditoria,diferencia,seguimiento,
+//                                validado,cantidad_manifiesto,validado_por}] }
+app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
+  try {
+    var sesId    = String(req.params.id).trim();
+    var { licencia_hija, skus } = req.body || {};
+    licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    if(!Array.isArray(skus) || !skus.length)
+      return res.status(400).json({ ok:false, error:'skus requeridos' });
+
+    var now = new Date().toISOString();
+    var upserts = skus.map(function(s){
+      var validado = !!s.validado;
+      return {
+        sesion_id:           sesId,
+        licencia_hija:       licencia_hija,
+        sku:                 String(s.sku||'').trim().toUpperCase(),
+        fisico_auditoria:    Number(s.fisico_auditoria)||0,
+        diferencia:          Number(s.diferencia)||0,
+        seguimiento:         String(s.seguimiento||''),
+        validado:            validado,
+        cantidad_manifiesto: Number(s.cantidad_manifiesto)||0,
+        validado_por:        String(s.validado_por||''),
+        validado_en:         validado ? (s.validado_en || now) : null,
+        actualizado_en:      now
+      };
+    }).filter(function(r){ return !!r.sku; });
+
+    if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
+
+    var saved = await supabase('POST', 'bod_papel_trabajo', upserts,
+      '?on_conflict=sesion_id,licencia_hija,sku');
+
+    cacheInvalidatePrefix('bod:papel:'+sesId+':');
+
+    res.json({ ok:true, guardados: upserts.length });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
