@@ -11707,6 +11707,10 @@ function bodRecargarSesionActual() {
       bodRenderDetalleAuditoria(bodAuditoriaData);
     } else if(bodAudVista === 'tarimas') {
       bodRenderTarimasAuditoria();
+    } else if(bodAudVista === 'flujo') {
+      // FIX (mié 10-jun-2026): Papel de Trabajo se recalcula con lineas frescas
+      window._bodPapelPersistido = {};  // forzar recarga desde server
+      bodRenderFlujoBolson();
     } else if(bodAuditoriaData) {
       bodRenderAuditoria(bodAuditoriaData);
     }
@@ -11846,22 +11850,20 @@ function bodRenderManifiestoAuditoria() {
       +'<div id="manif-body"><div style="color:#888;font-size:.82rem">Cargando manifiesto…</div></div>';
   }
   bodManifestLoading = true;
-  // Aviso Fase 1: manifiesto aún desde Tarimas (no desde Papel de Trabajo)
+  // FIX (mié 10-jun-2026): indicador de fuente dinámico (Papel de Trabajo vs Tarimas fallback)
   var avisoFase1 = document.getElementById('bod-manif-aviso-fase1');
   if(!avisoFase1) {
     avisoFase1 = document.createElement('div');
     avisoFase1.id = 'bod-manif-aviso-fase1';
-    avisoFase1.style.cssText = 'background:#fff8e1;border-left:3px solid #f9a825;padding:5px 8px;font-size:.73rem;color:#795548;margin-bottom:.5rem';
+    avisoFase1.style.cssText = 'padding:5px 8px;font-size:.73rem;margin-bottom:.5rem;border-left:3px solid #4caf50;background:#e8f5e9;color:#1b5e20';
     var tieneP = Object.keys(window._bodPapelPersistido || {}).length > 0;
-    var tieneT = Object.keys(window._bodTeorico952 || {}).length > 0;
-    if(tieneP && tieneT) {
-      avisoFase1.style.background = '#e8f5e9';
-      avisoFase1.style.borderColor = '#4caf50';
-      avisoFase1.innerHTML = '📋 <strong>Papel de Trabajo guardado</strong> — Manifiesto aún usa Tarimas hasta Fase 2B.';
+    if(tieneP) {
+      avisoFase1.innerHTML = '📋 <strong>Fuente: Papel de Trabajo</strong> — Cantidades del Manifiesto provienen de Físico s/Auditoría. Fallback a Tarimas si no hay dato.';
     } else {
       avisoFase1.style.background = '#fff8e1';
       avisoFase1.style.borderColor = '#f9a825';
-      avisoFase1.innerHTML = '📌 <strong>Fuente: Tarimas</strong> — Completá el Papel de Trabajo para activar Fase 2B.';
+      avisoFase1.style.color = '#795548';
+      avisoFase1.innerHTML = '📌 <strong>Fuente: Tarimas (fallback)</strong> — Completá el Papel de Trabajo para usar Físico s/Auditoría.';
     }
     vistaEl.insertBefore(avisoFase1, vistaEl.firstChild);
   }
@@ -11953,13 +11955,21 @@ function bodRenderManifiestoAuditoria() {
             +'<th>SKU</th><th>Descripción</th><th class="tc">Unidades</th><th>Estado</th>'
             +'</tr></thead><tbody>';
           skusFilt.forEach(function(s){
+            // FIX clave: licencia_hija:furgon:sku
+            var papelKey = (f.licencia_hija||'')+':'+(f.furgon||'')+':'+s.sku;
+            var papelRow = window._bodPapelPersistido[papelKey];
+            var cantFinal = (papelRow && papelRow.cantidad_manifiesto != null)
+              ? Number(papelRow.cantidad_manifiesto) : s.unidades;
+            var fuenteTag = (papelRow && papelRow.cantidad_manifiesto != null)
+              ? '<span style="font-size:.68rem;color:#1565c0;margin-left:3px">PT</span>'
+              : '<span style="font-size:.68rem;color:#999;margin-left:3px">TAR</span>';
             var skuEstado = s.pendientes === 0
               ? '<span style="color:#1e7e34;font-size:.75rem">Auditado</span>'
               : '<span style="color:#e65100;font-size:.75rem">No auditado</span>';
             html += '<tr>'
               +'<td style="font-weight:600">'+escH(s.sku)+'</td>'
               +'<td style="font-size:.82rem">'+escH(s.descripcion||'—')+'</td>'
-              +'<td class="tc">'+s.unidades.toLocaleString('es-GT')+'</td>'
+              +'<td class="tc">'+cantFinal.toLocaleString('es-GT')+fuenteTag+'</td>'
               +'<td>'+skuEstado+'</td>'
               +'</tr>';
           });
@@ -11973,7 +11983,7 @@ function bodRenderManifiestoAuditoria() {
         // Wire Finalizar furgón removido — envío a Hamilton se hace desde Tarimas.
         // Wire botones Exportar Excel
         manifBody.querySelectorAll('.bod-btn-export-xlsx').forEach(function(btn){
-          btn.addEventListener('click', function(){
+          btn.addEventListener('click', async function(){
             var furgon = btn.dataset.furgon;
             var fData = d.furgones.find(function(f){ return f.furgon === furgon; });
             if(!fData) return;
@@ -12047,39 +12057,84 @@ function bodRenderManifiestoAuditoria() {
             // Tabla encabezado
             sc(12, 2, 'CODIGO'); sc(12, 3, 'ESTATUS'); sc(12, 4, '% AUDITADO');
             sc(12, 5, 'DESCRIPCION'); sc(12, 6, 'CANTIDAD'); sc(12, 7, 'VALIDADO'); sc(12, 8, 'DIFERENCIA');
-            // Filas SKU — usa cantidad_auditada del endpoint (misma fuente que Word/PDF/Pantalla)
+            // FIX: Papel de Trabajo como fuente PRIMARIA — filtrar por licencia_hija:furgon
+            var licHijaXlsx = carga ? (carga.licencia_hija || '') : '';
+            var furgonXlsx  = carga ? String(carga.furgon || fData.furgon || '') : '';
+            var papelPrefixXlsx = licHijaXlsx + ':' + furgonXlsx + ':';
+            var papelKeysXlsx = Object.keys(window._bodPapelPersistido).filter(function(k){
+              return k.slice(0, papelPrefixXlsx.length) === papelPrefixXlsx;
+            });
+
+            // FIX (mié 10-jun-2026): si no hay en memoria, cargar del server antes de exportar
+            if(!papelKeysXlsx.length && _sesIdM && licHijaXlsx) {
+              try {
+                var papelXlsxRes = await bodFetch('GET',
+                  '/api/bod/sesion/'+encodeURIComponent(_sesIdM)+'/papel-trabajo'
+                  +'?licencia_hija='+encodeURIComponent(licHijaXlsx));
+                if(papelXlsxRes && papelXlsxRes.ok && papelXlsxRes.rows) {
+                  papelXlsxRes.rows.forEach(function(r){
+                    var k = (r.licencia_hija||'')+':'+(r.furgon||'')+':'+r.sku;
+                    window._bodPapelPersistido[k] = {
+                      validado:           !!r.validado,
+                      cantidad_manifiesto:Number(r.cantidad_manifiesto)||0,
+                      nombre:             r.nombre||'',
+                      fisico_auditoria:   r.fisico_auditoria != null ? Number(r.fisico_auditoria) : null,
+                      furgon:             r.furgon||''
+                    };
+                  });
+                  papelKeysXlsx = Object.keys(window._bodPapelPersistido).filter(function(k){
+                    return k.slice(0, papelPrefixXlsx.length) === papelPrefixXlsx;
+                  });
+                }
+              } catch(eFetch){ /* silencioso — cae a fallback Tarimas */ }
+            }
+
+            var skusToExport;
+            if(papelKeysXlsx.length > 0) {
+              // FUENTE: Papel de Trabajo
+              skusToExport = papelKeysXlsx.map(function(k){
+                var p   = window._bodPapelPersistido[k];
+                var skuX = k.slice(papelPrefixXlsx.length);
+                return {
+                  sku:              skuX,
+                  descripcion:      p.nombre || '',
+                  unidades:         Number(p.cantidad_manifiesto)||0,
+                  cantidad_auditada:p.fisico_auditoria != null ? Number(p.fisico_auditoria) : null,
+                  _fuente:          'PT'
+                };
+              });
+            } else {
+              // FALLBACK: Tarimas
+              skusToExport = fData.skus;
+            }
+
             var DATA_START = 13;
-            fData.skus.forEach(function(s, i) {
+            skusToExport.forEach(function(s, i) {
               var row = DATA_START + i;
               var cantVal = s.cantidad_auditada !== null && s.cantidad_auditada !== undefined
                 ? s.cantidad_auditada : '';
               var tieneValidacion = cantVal !== '' && cantVal !== null && cantVal !== undefined;
               var estatus = tieneValidacion ? 'Auditado' : 'No auditado';
               var desc = s.descripcion_completa||s.descripcion_larga||s.descripcion||s.desc||s.nombre||s.sku_desc||'';
-              // Validado: firstDefined con respeto de 0 (cantVal ya calculado arriba)
-              var validado = cantVal; // vacío si no hay auditoría real
+              var validado = cantVal;
+              var cantManifX = Number(s.unidades)||0;
               var dif = (validado !== '' && validado !== null && validado !== undefined)
-                ? (Number(validado) - Number(s.unidades)) : '';
-              // % AUDITADO (usa cantVal ya calculado)
-              var cantCargada = Number(s.unidades) || 0;
-              var pctAuditado;
-              if(!tieneValidacion || cantCargada <= 0) {
-                pctAuditado = '0%';
-              } else {
-                pctAuditado = Math.min(100, Math.round((Number(cantVal) / cantCargada) * 100)) + '%';
-              }
+                ? (Number(validado) - cantManifX) : '';
+              var cantCargada = cantManifX;
+              var pctAuditado = (!tieneValidacion || cantCargada <= 0) ? '0%'
+                : Math.min(100, Math.round((Number(cantVal) / cantCargada) * 100)) + '%';
               sc(row, 2, s.sku);
               sc(row, 3, estatus);
               sc(row, 4, pctAuditado);
               sc(row, 5, desc);
-              sc(row, 6, s.unidades, 'n');
+              sc(row, 6, cantManifX, 'n');
               if(validado !== '' && validado !== null && validado !== undefined) {
                 sc(row, 7, typeof validado === 'number' ? validado : Number(validado), 'n');
               }
               if(dif !== '') sc(row, 8, Number(dif), 'n');
             });
             // Footer — posición dinámica tras los datos
-            var FOOTER = DATA_START + fData.skus.length + 2;
+            var FOOTER = DATA_START + skusToExport.length + 2;
             sc(FOOTER,   2, 'AUTORIZACIÓN DE ENVÍO'); sc(FOOTER,   6, 'NOMBRE Y FIRMA QUIEN RECIBE');
             sc(FOOTER+1, 2, 'ASTRID DUARTE');
             sc(FOOTER+2, 2, 'CINTYA RIVERA');
@@ -12332,11 +12387,12 @@ function bodRenderWmsVsApp() {
     var reader = new FileReader();
     // Fix 1: leer licHija952 ANTES de que reader.onload se ejecute
     var licHija952 = (document.getElementById('filtro-wms-lichija')||{}).value || '';
-    reader.onload = function(ev){
+    // FIX (mié 10-jun-2026): XLSX.read no existe en la lib embebida; usar readAsync
+    reader.onload = async function(ev){
       try {
-        var wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+        var wb = await XLSX.readAsync(ev.target.result);
         var ws = wb.Sheets[wb.SheetNames[0]];
-        var rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+        var rows = XLSX.utils.sheet_to_json(ws, {defval:'', raw:false});
         var teo = {};
         rows.forEach(function(row){
           var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
@@ -12519,6 +12575,47 @@ function bodCargarWmsVsApp(licId, sesId) {
 // ── Vista Papel de Trabajo (antes Flujo Bolsón) ──────────────────────────
 // Estado de validación en memoria: { [sku]: bool }
 var _bodPapelValidaciones = {};
+// FIX (mié 10-jun-2026): debounce para auto-save de Papel de Trabajo
+var _bodPapelSaveTimer = null;
+
+// FIX (mié 10-jun-2026): guarda agrupando por licencia_hija real de cada fila.
+// Clave en memoria: licencia_hija:furgon:sku  (evita mezclar furgones distintos).
+function bodGuardarPapelTrabajo(sesId, skusArr) {
+  if(!sesId || !skusArr || !skusArr.length) return;
+  // Agrupar por licencia_hija real de cada SKU
+  var grupos = {};
+  skusArr.forEach(function(s){
+    var lic = String(s.licencia_hija || '').trim().toUpperCase();
+    if(!grupos[lic]) grupos[lic] = [];
+    grupos[lic].push(s);
+  });
+  Object.keys(grupos).forEach(function(lic){
+    bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo', {
+      licencia_hija: lic,
+      skus: grupos[lic]
+    }).then(function(d){
+      if(d && d.ok) {
+        grupos[lic].forEach(function(s){
+          var k = (s.licencia_hija||'') + ':' + (s.furgon||'') + ':' + s.sku;
+          window._bodPapelPersistido[k] = {
+            validado:           s.validado,
+            validado_por:       s.validado_por||'',
+            validado_en:        s.validado ? new Date().toISOString() : null,
+            cantidad_manifiesto:s.cantidad_manifiesto,
+            nombre:             s.nombre||'',
+            fisico_auditoria:   s.fisico_auditoria,
+            cantidad_952:       s.cantidad_952,
+            estado_papel:       s.estado_papel||'',
+            tr999:              s.tr999||'',
+            tarimas:            s.tarimas||'',
+            furgon:             s.furgon||'',
+            destino:            s.destino||''
+          };
+        });
+      }
+    }).catch(function(){});
+  });
+}
 
 function bodRenderFlujoBolson() {
   var vistaEl = document.getElementById('bod-aud-vista');
@@ -12528,21 +12625,36 @@ function bodRenderFlujoBolson() {
   var esAud   = isBodAuditor();
   var sesIdPapel = (bodAuditoriaData.sesion||{}).id||'';
   var filtPapelPrev = (document.getElementById('filtro-papel-lichija')||{}).value||'';
+
+  // FIX (mié 10-jun-2026): limpiar memoria si cambia la sesión activa
+  if(sesIdPapel && window._bodPapelSesionId !== sesIdPapel) {
+    window._bodPapelPersistido  = {};
+    _bodPapelValidaciones = {};
+    window._bodPapelSesionId = sesIdPapel;
+  }
   // Cargar papel de trabajo persistido si no lo tenemos aún
   if(sesIdPapel && !Object.keys(window._bodPapelPersistido).length) {
     bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo')
       .then(function(d){
         if(d && d.ok && d.rows && d.rows.length) {
           d.rows.forEach(function(r){
-            var k = (r.licencia_hija||'')+':'+r.sku;
+            // FIX clave: licencia_hija:furgon:sku
+            var k = (r.licencia_hija||'') + ':' + (r.furgon||'') + ':' + r.sku;
             window._bodPapelPersistido[k] = {
-              validado: !!r.validado, validado_por: r.validado_por||'',
-              validado_en: r.validado_en||'',
-              cantidad_manifiesto: Number(r.cantidad_manifiesto)||0
+              validado:           !!r.validado,
+              validado_por:       r.validado_por||'',
+              validado_en:        r.validado_en||'',
+              cantidad_manifiesto:Number(r.cantidad_manifiesto)||0,
+              nombre:             r.nombre||'',
+              fisico_auditoria:   r.fisico_auditoria != null ? Number(r.fisico_auditoria) : null,
+              cantidad_952:       Number(r.cantidad_952)||0,
+              estado_papel:       r.estado_papel||'',
+              tr999:              r.tr999||'',
+              tarimas:            r.tarimas||'',
+              furgon:             r.furgon||'',
+              destino:            r.destino||''
             };
-            // Sincronizar con validaciones en memoria (clave compuesta)
-            var papelKey = (r.licencia_hija||'')+':'+r.sku;
-            _bodPapelValidaciones[papelKey] = !!r.validado;
+            _bodPapelValidaciones[(r.licencia_hija||'')+':'+(r.furgon||'')+':'+r.sku] = !!r.validado;
           });
           bodRenderFlujoBolson(); // re-render con datos cargados
         }
@@ -12602,6 +12714,10 @@ function bodRenderFlujoBolson() {
   Object.keys(fisicoSku).forEach(function(s){ todosSkus[s]=true; });
   Object.keys(teorico952).forEach(function(s){ todosSkus[s]=true; });
 
+  // FIX (mié 10-jun-2026): recolectar datos para auto-save
+  var skusParaGuardar = [];
+  var usuarioPapelRender = window.currentUser ? window.currentUser.name : '';
+
   var filas = Object.keys(todosSkus).sort().map(function(sku){
     var fis  = fisicoSku[sku]  || { cantidad:0, desc:'' };
     var teo  = teorico952[sku] || { nombre:'', cantidad:0 };
@@ -12611,47 +12727,74 @@ function bodRenderFlujoBolson() {
     var diff    = cant952 - fisico;
     var seguimiento = diff > 0 ? 'Se queda en Bolsón' : diff === 0 ? 'OK' : 'Solicitar traslado a la 952';
     var segColor = diff > 0 ? '#e65100' : diff === 0 ? '#1e7e34' : '#c0392b';
-    var papelRenderKey = (filtPapelLic||'')+':'+sku;
-    var validado  = !!_bodPapelValidaciones[papelRenderKey];
-    var cantManif = validado ? fisico : cant952;
-    var difDespues = validado ? 0 : diff;
+    // Estado = Auditado si tiene conteo físico (de Detalle)
+    var auditado  = fisico > 0;
+    var cantManif = auditado ? fisico : cant952;
+    var difDespues = auditado ? 0 : diff;
     var difDespColor = difDespues < 0 ? '#c0392b' : difDespues > 0 ? '#e65100' : '#1e7e34';
-    var chk = validado ? ' checked' : '';
     var nota = diff < 0 ? '<span style="font-size:.7rem;color:#c0392b"> ⚠</span>' : '';
-    // Columnas nuevas
-    var tarimAI   = escH(tarimarAiMap[sku]||'—');
+    var estadoTxt  = auditado ? 'Auditado' : 'No auditado';
+    var estadoColor = auditado ? '#1e7e34' : '#888';
+    var estadoBg    = auditado ? '#e8f5e9' : '#f5f5f5';
+    var papelRenderKey = (filtPapelLic||'')+':'+sku;
+    _bodPapelValidaciones[papelRenderKey] = auditado;
+    // Columnas
+    var tarimAI      = escH(tarimarAiMap[sku]||'—');
     var tarimasLista = tarimasPorSku[sku] ? Object.keys(tarimasPorSku[sku]).sort().join(', ') : '—';
-    var furgon    = escH(furgonPorSku[sku]  || '—');
+    var furgonVal = furgonPorSku[sku]  || '';
     var licHija   = escH(licHijaPorSku[sku] || '—');
-    var destino   = escH(destinoPorSku[sku] || '—');
+    var tr999Val  = escH(destinoPorSku[sku] || '—');
+
+    // Recolectar para auto-save — licencia_hija real por SKU (no del filtro)
+    skusParaGuardar.push({
+      sku:                sku,
+      licencia_hija:      licHijaPorSku[sku] || filtPapelLic || '',
+      nombre:             teo.nombre || fis.desc || '',
+      cantidad_952:       cant952,
+      fisico_auditoria:   fisico,
+      diferencia:         diff,
+      seguimiento:        seguimiento,
+      estado_papel:       estadoTxt,
+      tr999:              destinoPorSku[sku] || '',
+      tarimas:            tarimasLista !== '—' ? tarimasLista : '',
+      furgon:             furgonVal,
+      destino:            destinoPorSku[sku] || '',
+      cantidad_manifiesto:cantManif,
+      validado:           auditado,
+      validado_por:       auditado ? usuarioPapelRender : ''
+    });
+
     return '<tr>'
       +'<td style="font-weight:600;font-size:.8rem">'+escH(sku)+'</td>'
       +'<td style="font-size:.78rem">'+escH(nombre)+'</td>'
       +'<td class="tc" style="font-size:.73rem;color:#888">'+tarimAI+'</td>'
+      +'<td class="tc"><span style="background:'+estadoBg+';color:'+estadoColor
+        +';font-size:.72rem;padding:2px 6px;border-radius:6px">'+estadoTxt+'</span></td>'
       +'<td class="tc">'+cant952+'</td>'
       +'<td class="tc">'+fisico+'</td>'
       +'<td class="tc" style="font-weight:600;color:'+segColor+'">'+diff+'</td>'
       +'<td style="font-size:.76rem;color:'+segColor+'">'+escH(seguimiento)+nota+'</td>'
-      +(esAud
-        ? '<td class="tc"><input type="checkbox" class="bod-papel-chk" data-sku="'+escH(sku)+'"'+chk+'></td>'
-        : '<td class="tc">'+(validado?'✅':'—')+'</td>')
-      +'<td class="tc" style="font-weight:600;color:'+difDespColor+'">'+(validado?0:diff)+'</td>'
+      +'<td class="tc" style="font-size:.73rem;color:#555">'+tr999Val+'</td>'
+      +'<td class="tc" style="font-weight:600;color:'+difDespColor+'">'+(auditado?0:diff)+'</td>'
       +'<td style="font-size:.73rem;color:#666">'+escH(tarimasLista)+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+furgon+'</td>'
+      +'<td style="font-size:.73rem;color:#666">'+escH(furgonVal||'—')+'</td>'
       +'<td style="font-size:.73rem;color:#666">'+licHija+'</td>'
-      +'<td style="font-size:.73rem;color:#666">'+destino+'</td>'
       +'<td class="tc" style="font-weight:600">'+cantManif+'</td>'
       +'</tr>';
   }).join('');
+
+  // Auto-save con debounce (1.5s) — agrupa por licencia_hija real de cada SKU
+  if(sesIdPapel && skusParaGuardar.length) {
+    clearTimeout(_bodPapelSaveTimer);
+    _bodPapelSaveTimer = setTimeout(function(){
+      bodGuardarPapelTrabajo(sesIdPapel, skusParaGuardar);
+    }, 1500);
+  }
 
   if(!filas) filas = '<tr><td colspan="14" style="color:#aaa;font-size:.82rem;padding:12px">Sin datos. Capturá tarimas primero o cargá el teórico 952.</td></tr>';
 
   var prevPapelLic = filtPapelLic; // guardar para restaurar tras re-render
   vistaEl.innerHTML = ''
-    // Nota futura
-    +'<div style="background:#fff8e1;border-left:3px solid #f9a825;padding:5px 8px;font-size:.73rem;color:#795548;margin-bottom:.5rem">'
-    +'📌 <strong>Fase 1:</strong> Manifiesto aún usa Tarimas. En la próxima fase, esta tabla alimentará el Manifiesto directamente.'
-    +'</div>'
     // Filtro lic.hija
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label>Lic. hija:</label>'
@@ -12660,18 +12803,18 @@ function bodRenderFlujoBolson() {
     // Tabla
     +'<div class="tbl-wrap"><table>'
     +'<thead><tr>'
-    +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">952</th>'
+    +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">Estado</th><th class="tc">952</th>'
     +'<th class="tc">Físico s/Aud.</th><th class="tc">Diferencia</th>'
     +'<th>Seguimiento</th>'
-    +'<th class="tc" title="El auditor confirma traslado y valida la cantidad física">Validación</th>'
+    +'<th class="tc" title="Destino TR999 asociado a la licencia hija (WMS)">TR999</th>'
     +'<th class="tc">Dif. post-valid.</th>'
-    +'<th>Tarimas</th><th>Furgón</th><th>Lic. hija</th><th>Destino</th>'
+    +'<th>Tarimas</th><th>Furgón</th><th>Lic. hija</th>'
     +'<th class="tc">Cant. Manifiesto</th>'
     +'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
     +'</table></div>'
     // Leyenda
-    +(esAud ? '<div style="font-size:.72rem;color:#888;margin-top:.4rem">✅ Marcar Validación confirma que se investigó y autorizó el traslado. Cant. Manifiesto pasa a usar cantidad Física.</div>' : '');
+    +'<div style="font-size:.72rem;color:#888;margin-top:.4rem">ℹ️ <strong>Estado</strong> = Auditado cuando el SKU tiene conteo físico registrado en Detalle. <strong>Cant. Manifiesto</strong> usa Físico cuando Auditado, o 952 cuando No auditado.</div>';
 
   // Restaurar selección del dropdown tras re-render
   var selPapelEl = document.getElementById('filtro-papel-lichija');
@@ -12684,46 +12827,6 @@ function bodRenderFlujoBolson() {
     selPapel.addEventListener('change', function(){ bodRenderFlujoBolson(); });
   }
 
-  // Wire checkboxes de validación — guarda en Supabase
-  vistaEl.querySelectorAll('.bod-papel-chk').forEach(function(chk){
-    chk.addEventListener('change', function(){
-      var sku        = chk.dataset.sku;
-      var validado   = chk.checked;
-      var licHijaVal = (document.getElementById('filtro-papel-lichija')||{}).value || '';
-      var papelChkKey = licHijaVal+':'+sku;
-      _bodPapelValidaciones[papelChkKey] = validado;
-      // Misma lógica que el render — helpers garantizan consistencia
-      var fisicoChk = bodGetFisicoSkuPorLicHija(licHijaVal);
-      var teorChk   = bodGetTeoricoSkuPorLicHija(licHijaVal);
-      var fisico952    = (fisicoChk[sku]||{cantidad:0}).cantidad;
-      var teo952v      = (teorChk[sku]||{cantidad:0}).cantidad;
-      var diff952      = teo952v - fisico952;
-      var seg952       = diff952>0?'Se queda en Bolsón':diff952===0?'OK':'Solicitar traslado a la 952';
-      var cantManif952 = validado ? fisico952 : teo952v;
-      var usuarioPapel = window.currentUser ? window.currentUser.name : '';
-      var sesIdPapelSave = (bodAuditoriaData&&bodAuditoriaData.sesion)||{};
-      var sesId952s = sesIdPapelSave.id||'';
-      if(sesId952s && !_bodPapelGuardando) {
-        _bodPapelGuardando = true;
-        bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952s)+'/papel-trabajo', {
-          licencia_hija: licHijaVal,
-          skus: [{ sku:sku, fisico_auditoria:fisico952, diferencia:diff952,
-                   seguimiento:seg952, validado:validado,
-                   cantidad_manifiesto:cantManif952,
-                   validado_por: validado ? usuarioPapel : '' }]
-        }).then(function(d){
-          _bodPapelGuardando = false;
-          if(d && d.ok) {
-            var k = licHijaVal+':'+sku;
-            window._bodPapelPersistido[k] = { validado:validado, validado_por:usuarioPapel,
-              validado_en: new Date().toISOString(), cantidad_manifiesto:cantManif952 };
-          }
-        }).catch(function(){ _bodPapelGuardando = false; });
-      }
-      // Re-render sin perder el filtro activo
-      bodRenderFlujoBolson();
-    });
-  });
 }
 // _bodRenderFlujoTbl: helper de tabla legacy (usada por reportes internos, no por Papel de Trabajo)
 function _bodRenderFlujoTbl() {
