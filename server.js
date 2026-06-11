@@ -4268,6 +4268,8 @@ app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
       estado:         'finalizado',
       ts_cierre:      now
     };
+    // FIX (jue 11-jun-2026): vincular al manifiesto/PT si se envió manifiesto_id
+    if(req.body.manifiesto_id) cierre.manifiesto_id = String(req.body.manifiesto_id).trim();
     await supabase('POST', 'bod_furgon_cierres', cierre, '');
 
     invalidarCacheSesion(sesId);
