@@ -10927,22 +10927,25 @@ function bodRenderAuditoria(data) {
   function _switchTab(vista, fn) {
     var ALL = ['bod-tab-tarimas','bod-tab-detalle','bod-tab-manifiesto','bod-tab-wms-app','bod-tab-flujo','bod-tab-remanentes','bod-tab-ctrl-manif'];
     ALL.forEach(function(id){ var b=document.getElementById(id); if(b) b.classList.remove('on'); });
-    var active = document.getElementById('bod-tab-'+vista);
+    // FIX (jue 11-jun-2026): control-manifiestos usa id bod-tab-ctrl-manif, no bod-tab-control-manifiestos
+    var tabId = (vista === 'control-manifiestos') ? 'bod-tab-ctrl-manif' : ('bod-tab-'+vista);
+    var active = document.getElementById(tabId);
     if(active) active.classList.add('on');
     bodAudVista = vista;
     fn();
   }
-  ['tarimas','detalle','manifiesto','wms-app','flujo','control-manifiestos'/* remanentes oculto en Fase 1 */].forEach(function(v){
-    var btn = document.getElementById('bod-tab-'+v);
+  ['tarimas','detalle','manifiesto','wms-app','flujo','control-manifiestos'].forEach(function(v){
+    // FIX: usar el id real del botón para control-manifiestos
+    var tabId = (v === 'control-manifiestos') ? 'bod-tab-ctrl-manif' : ('bod-tab-'+v);
+    var btn = document.getElementById(tabId);
     if(btn) btn.addEventListener('click', function(){
       _switchTab(v, function(){
-        if(v==='tarimas')    bodRenderTarimasAuditoria();
+        if(v==='tarimas')                bodRenderTarimasAuditoria();
         else if(v==='detalle')            bodRenderDetalleAuditoria(data);
         else if(v==='manifiesto')         bodRenderManifiestoAuditoria();
         else if(v==='wms-app')           bodRenderWmsVsApp();
         else if(v==='flujo')             bodRenderFlujoBolson();
         else if(v==='control-manifiestos') bodRenderControlManifiestos();
-        /* remanentes oculto en Fase 1: else if(v==='remanentes') bodRenderRemanentes(); */
       });
     });
   });
@@ -11599,17 +11602,27 @@ function bodRenderControlManifiestos() {
         });
         html += '</tbody></table></div>';
         listaEl.innerHTML = html;
+        // FIX (jue 11-jun-2026): guardar array completo para que los wires usen el objeto real
+        window._bodManifiestosControlActuales = d.manifiestos;
 
-        // Wire: Entrar como colaborador → va a Papel de Trabajo
+        function _mFullById(id) {
+          return (window._bodManifiestosControlActuales||[]).find(function(x){ return x.id === id; }) || null;
+        }
+
+        // Wire: Entrar como colaborador → va a Papel de Trabajo con objeto completo
         listaEl.querySelectorAll('.ctrl-man-btn-colab').forEach(function(btn){
           btn.addEventListener('click', function(){
-            _irAPapel({ id:btn.dataset.id, licencia_hija:btn.dataset.lic, furgon:btn.dataset.furgon, estado:btn.dataset.estado });
+            var mF = _mFullById(btn.dataset.id);
+            if(!mF){ alert('Manifiesto no encontrado. Recargá la lista.'); return; }
+            _irAPapel(mF);
           });
         });
-        // Wire: Ver / continuar → va a Papel de Trabajo
+        // Wire: Ver / continuar → va a Papel de Trabajo con objeto completo
         listaEl.querySelectorAll('.ctrl-man-btn-ver').forEach(function(btn){
           btn.addEventListener('click', function(){
-            _irAPapel({ id:btn.dataset.id, licencia_hija:btn.dataset.lic, furgon:btn.dataset.furgon, estado:btn.dataset.estado });
+            var mF = _mFullById(btn.dataset.id);
+            if(!mF){ alert('Manifiesto no encontrado. Recargá la lista.'); return; }
+            _irAPapel(mF);
           });
         });
         listaEl.querySelectorAll('.ctrl-man-btn-fin').forEach(function(btn){
@@ -11649,9 +11662,13 @@ function bodRenderControlManifiestos() {
     bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control',{
       auditor_lider:usuario, creado_por:usuario
     }).then(function(d){
-      if(d.ok && d.manifiesto) {
-        if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(d.manifiesto.correlativo||'Creado')+'</span>';
+      if(d.ok && d.manifiesto && d.manifiesto.id && d.manifiesto.correlativo) {
+        if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(d.manifiesto.correlativo)+'</span>';
         _irAPapel(d.manifiesto);
+      } else if(d.ok && d.manifiesto) {
+        // Manifiesto creado pero sin correlativo en la respuesta — recargar lista
+        if(msg) msg.innerHTML='<span style="color:#e65100">⚠ Creado, recargando…</span>';
+        _cargarLista();
       } else {
         if(msg) msg.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
       }
@@ -12493,6 +12510,21 @@ function bodRenderFlujoBolson() {
       +'</div>';
     var bC = document.getElementById('btn-papel-ir-ctrl');
     if(bC) bC.addEventListener('click', function(){
+      bodAudVista = 'control-manifiestos';
+      bodRenderAuditoria(bodAuditoriaData);
+    });
+    return;
+  }
+  // FIX (jue 11-jun-2026): validar que el manifiesto tenga id y correlativo reales
+  var _mSel = window._bodManifiestoSeleccionado;
+  if(!_mSel.id || !_mSel.correlativo) {
+    window._bodManifiestoSeleccionado = null;
+    vistaEl.innerHTML = '<div style="background:#fdecea;border-radius:8px;padding:.9rem 1rem;font-size:.82rem;color:#c0392b">'
+      +'⚠ Manifiesto inválido (sin id o correlativo). Volvé a Control de Manifiestos.'
+      +'<br><button class="btn btn-sm" id="btn-papel-ir-ctrl-inv" style="margin-top:.4rem;font-size:.75rem">Ir a Control de Manifiestos</button>'
+      +'</div>';
+    var bCi = document.getElementById('btn-papel-ir-ctrl-inv');
+    if(bCi) bCi.addEventListener('click', function(){
       bodAudVista = 'control-manifiestos';
       bodRenderAuditoria(bodAuditoriaData);
     });
