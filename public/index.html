@@ -11528,131 +11528,250 @@ function bodRenderControlManifiestos() {
       +'</div>'
     : '';
 
+  // Formulario "Crear carga logística" con selector de manifiesto
+  var formCargaCtrl = esAud
+    ? '<div id="ctrl-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.65rem .85rem;margin-bottom:.6rem">'
+      +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">Nueva carga logística</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">PT asociado</label>'
+      +'<select id="ctrl-manif-sel" class="field-inp" style="font-size:.76rem;padding:3px 6px;max-width:150px"><option value="">Cargando PTs…</option></select></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
+      +'<input type="text" id="ctrl-furgon-inp" class="field-inp" placeholder="Ej: 1" style="width:70px;padding:3px 7px;font-size:.82rem"></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
+      +'<input type="text" id="ctrl-placa-inp" class="field-inp" placeholder="ABC-123" style="width:90px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Marchamo</label>'
+      +'<input type="text" id="ctrl-marchamo-inp" class="field-inp" placeholder="Marchamo" style="width:100px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
+      +'<input type="text" id="ctrl-lichija-inp" class="field-inp" placeholder="U25-XXXXXX" style="width:110px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">TR999</label>'
+      +'<input type="text" id="ctrl-destino-inp" class="field-inp" placeholder="TR999.001.01" style="width:110px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
+      +'<div style="flex:1;min-width:80px"><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Observación</label>'
+      +'<input type="text" id="ctrl-obs-inp" class="field-inp" placeholder="Opcional" style="width:100%;padding:3px 7px;font-size:.82rem"></div>'
+      +'<button class="btn btn-sm btn-dark" id="btn-ctrl-crear-carga" style="align-self:flex-end;font-size:.74rem">✅ Crear carga</button>'
+      +'</div>'
+      +'<div id="ctrl-carga-msg" style="font-size:.76rem;margin-top:.3rem;min-height:1em"></div>'
+      +'</div>'
+    : '';
+
   vistaEl.innerHTML =
     '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem;letter-spacing:.3px">📋 Control de Manifiestos</div>'
-    + formCrear
-    +'<div id="ctrl-man-lista"><div style="color:#888;font-size:.82rem">Cargando manifiestos…</div></div>';
+    + formCrear + formCargaCtrl
+    +'<div id="ctrl-man-lista"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
 
-  // ── Helper: ir a Papel de Trabajo con manifiesto seleccionado ─────────────
-  function _irAPapel(m) {
-    // FIX (jue 11-jun-2026): guardar objeto COMPLETO (no solo id/licencia/furgon/estado)
-    // + _sesId para que Papel de Trabajo lo use cuando bodAuditoriaData.sesion.id esté vacío
-    window._bodManifiestoSeleccionado = Object.assign({}, m, { _sesId: sesId });
-    // Registrar colaborador (y activar en_proceso si aplica)
-    bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(m.id)+'/colaborador',
-      { usuario:usuario }).catch(function(){});
-    bodAudVista = 'flujo';
-    bodRenderAuditoria(bodAuditoriaData||{sesion:{},lineas:[],_cargas:[]});
-  }
+  // ── Vista unificada: manifiestos + cargas en una sola tabla ─────────────
+  var cargasActuales = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
 
-  // ── Cargar lista de manifiestos ───────────────────────────────────────────
-  function _cargarLista() {
+  function _cargarVistaUnificada() {
     var listaEl = document.getElementById('ctrl-man-lista');
     if(!listaEl) return;
-    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control')
-      .then(function(d){
-        if(!listaEl) return;
-        if(!d.ok || !d.manifiestos || !d.manifiestos.length) {
-          listaEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin manifiestos registrados. Creá uno arriba.</div>';
-          return;
+    Promise.all([
+      bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control'),
+      bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').catch(function(){return{ok:false,cargas:[]};})
+    ]).then(function(res){
+      var dM=res[0]; var dC=res[1];
+      var manifiestos=(dM&&dM.ok&&dM.manifiestos)?dM.manifiestos:[];
+      cargasActuales=(dC&&dC.ok&&Array.isArray(dC.cargas))?dC.cargas:[];
+      if(dC&&dC.ok){
+        bodFurgonAsignaciones=Array.isArray(dC.asignaciones)?dC.asignaciones:[];
+        if(bodAuditoriaData) bodAuditoriaData._cargas=cargasActuales;
+      }
+      window._bodManifiestosControlActuales=manifiestos;
+      // Poblar selector de PT (obligatorio — no existe "Sin PT")
+      var selPT=document.getElementById('ctrl-manif-sel');
+      if(selPT){
+        var activosPT=manifiestos.filter(function(m){return m.estado!=='anulado';});
+        if(activosPT.length){
+          var optsHTML='<option value="">— Seleccioná un PT —</option>';
+          activosPT.forEach(function(m){
+            optsHTML+='<option value="'+escH(m.id)+'">'+(m.correlativo||m.id)+'</option>';
+          });
+          selPT.innerHTML=optsHTML;
+          // Preseleccionar si hay un manifiesto activo
+          if(window._bodManifiestoSeleccionado&&window._bodManifiestoSeleccionado.id) selPT.value=window._bodManifiestoSeleccionado.id;
+        } else {
+          selPT.innerHTML='<option value="">— Primero creá un PT —</option>';
         }
-        var html='<div class="tbl-wrap"><table style="width:100%;font-size:.76rem;border-collapse:collapse">'
-          +'<thead><tr style="background:#e8ecf0">'
-          +'<th style="padding:3px 6px;text-align:left">Correlativo</th>'
-          +'<th style="padding:3px 6px;text-align:center">Estado</th>'
-          +'<th style="padding:3px 6px;text-align:left">Creador</th>'
-          +'<th style="padding:3px 6px;text-align:left">Auditor líder</th>'
-          +'<th style="padding:3px 6px;text-align:left">Colaboradores</th>'
-          +'<th style="padding:3px 6px;text-align:left">Última edición</th>'
-          +'<th style="padding:3px 6px;text-align:center">Acción</th>'
-          +'</tr></thead><tbody>';
-        d.manifiestos.forEach(function(m){
-          var es    = estadoStyle[m.estado]||estadoStyle['sin_iniciar'];
-          var badge = '<span style="background:'+es.bg+';color:'+es.fg+';font-size:.72rem;padding:2px 8px;border-radius:8px">'+es.label+'</span>';
-          var cols  = Array.isArray(m.colaboradores) ? m.colaboradores.join(', ') : '';
-          var ts    = m.actualizado_en ? new Date(m.actualizado_en).toLocaleString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-          var acciones = '';
-          if(m.estado !== 'anulado') {
-            var yaCols = Array.isArray(m.colaboradores)?m.colaboradores:[];
-            // Entrar como colaborador si no es líder ni ya colaborador
-            if(m.auditor_lider !== usuario && !yaCols.includes(usuario)) {
-              acciones += '<button class="btn btn-xs ctrl-man-btn-colab" data-id="'+escH(m.id)+'" data-lic="'+escH(m.licencia_hija)+'" data-furgon="'+escH(m.furgon||'')+'" data-estado="'+escH(m.estado)+'" style="background:#e3f2fd;color:#1565c0;font-size:.71rem">Entrar como colaborador</button> ';
-            }
-            // Ver / continuar → va a Papel de Trabajo
-            acciones += '<button class="btn btn-xs ctrl-man-btn-ver" data-id="'+escH(m.id)+'" data-lic="'+escH(m.licencia_hija)+'" data-furgon="'+escH(m.furgon||'')+'" data-estado="'+escH(m.estado)+'" style="background:#e8f5e9;color:#1b5e20;font-size:.71rem">Ver / continuar</button> ';
-            if(m.estado !== 'finalizado' && esAud) {
-              acciones += '<button class="btn btn-xs ctrl-man-btn-fin" data-id="'+escH(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.71rem">Finalizar</button> ';
-            }
-            if(m.estado === 'finalizado' && (m.auditor_lider === usuario || esAud)) {
-              acciones += '<button class="btn btn-xs ctrl-man-btn-reab" data-id="'+escH(m.id)+'" style="background:#fff3e0;color:#e65100;font-size:.71rem">Reabrir</button> ';
-            }
-            if(esAud) {
-              acciones += '<button class="btn btn-xs ctrl-man-btn-anul" data-id="'+escH(m.id)+'" style="background:#fdecea;color:#c0392b;font-size:.71rem">Anular</button>';
-            }
-          }
-          html += '<tr style="border-top:1px solid #eee">'
-            +'<td style="padding:3px 6px;font-weight:700;color:#1565c0">'+escH(m.correlativo||'—')+'</td>'
-            +'<td style="padding:3px 6px;text-align:center">'+badge+'</td>'
-            +'<td style="padding:3px 6px;color:#666">'+escH(m.creado_por||'—')+'</td>'
-            +'<td style="padding:3px 6px">'+escH(m.auditor_lider||'—')+'</td>'
-            +'<td style="padding:3px 6px;color:#666">'+escH(cols||'—')+'</td>'
-            +'<td style="padding:3px 6px;font-size:.72rem;color:#888">'+escH(ts)+'</td>'
-            +'<td style="padding:3px 6px;white-space:nowrap">'+acciones+'</td>'
-            +'</tr>';
-        });
-        html += '</tbody></table></div>';
-        listaEl.innerHTML = html;
-        // FIX (jue 11-jun-2026): guardar array completo para que los wires usen el objeto real
-        window._bodManifiestosControlActuales = d.manifiestos;
-
-        function _mFullById(id) {
-          return (window._bodManifiestosControlActuales||[]).find(function(x){ return x.id === id; }) || null;
+      }
+      if(!manifiestos.length){
+        listaEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin papeles de trabajo. Creá uno arriba.</div>';
+        return;
+      }
+      var cgPorManif={};
+      cargasActuales.forEach(function(cg){if(cg.manifiesto_id)cgPorManif[cg.manifiesto_id]=cg;});
+      var html='<div class="tbl-wrap" style="overflow-x:auto">'
+        +'<table style="min-width:900px;font-size:.74rem;border-collapse:collapse">'
+        +'<thead><tr style="background:#e8ecf0">'
+        +'<th style="padding:3px 5px;white-space:nowrap">PT</th>'
+        +'<th style="padding:3px 5px;text-align:center">Estado PT</th>'
+        +'<th style="padding:3px 5px">Furgón</th>'
+        +'<th style="padding:3px 5px">Placa</th>'
+        +'<th style="padding:3px 5px">Marchamo</th>'
+        +'<th style="padding:3px 5px">Lic. hija</th>'
+        +'<th style="padding:3px 5px">TR999</th>'
+        +'<th style="padding:3px 5px">Obs.</th>'
+        +'<th style="padding:3px 5px">Creador</th>'
+        +'<th style="padding:3px 5px">Auditor</th>'
+        +'<th style="padding:3px 5px">Colab.</th>'
+        +'<th style="padding:3px 5px;text-align:center">Carga</th>'
+        +'<th style="padding:3px 5px;text-align:center;white-space:nowrap">Acción</th>'
+        +'</tr></thead><tbody>';
+      manifiestos.forEach(function(m){
+        var es=estadoStyle[m.estado]||estadoStyle['sin_iniciar'];
+        var badgePT='<span style="background:'+es.bg+';color:'+es.fg+';font-size:.7rem;padding:1px 5px;border-radius:6px">'+es.label+'</span>';
+        var cg=cgPorManif[m.id]||null;
+        var cols=Array.isArray(m.colaboradores)?m.colaboradores.join(', '):'';
+        var esCargaCerrada=cg&&cg.estado==='cerrada';
+        var badgeCarga=cg
+          ?(esCargaCerrada?'<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 5px;border-radius:6px">✅ Cerrada</span>'
+            :'<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:1px 5px;border-radius:6px">Abierta</span>')
+          :'<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">Sin carga</span>';
+        var yaCols=Array.isArray(m.colaboradores)?m.colaboradores:[];
+        var esLider=m.auditor_lider===usuario;
+        // Empezar: auditor líder en PT nuevo sin colaboradores aún
+        // Continuar: ya es líder o colaborador
+        // Unirse: nuevo colaborador
+        var labelIr = esLider && !yaCols.length ? 'Empezar'
+          : (esLider || yaCols.includes(usuario)) ? 'Continuar'
+          : 'Unirse';
+        var acciones='';
+        if(m.estado!=='anulado'){
+          acciones+='<button class="btn btn-xs ctrl-man-btn-ir" data-id="'+escH(m.id)+'" style="background:#1565c0;color:#fff;font-size:.7rem">\u25b6 '+labelIr+'</button> ';
+          if(m.estado!=='finalizado'&&esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-fin" data-id="'+escH(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem">Fin</button> ';
+          if(m.estado==='finalizado'&&(esLider||esAud)) acciones+='<button class="btn btn-xs ctrl-man-btn-reab" data-id="'+escH(m.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">Reabrir</button> ';
+          if(esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-anul" data-id="'+escH(m.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Anular</button>';
         }
-
-        // Wire: Entrar como colaborador → va a Papel de Trabajo con objeto completo
-        listaEl.querySelectorAll('.ctrl-man-btn-colab').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            var mF = _mFullById(btn.dataset.id);
-            if(!mF){ alert('Manifiesto no encontrado. Recargá la lista.'); return; }
-            _irAPapel(mF);
+        if(cg&&esAud){
+          if(!esCargaCerrada) acciones+=' <button class="btn btn-xs ctrl-carga-editar" data-id="'+escH(cg.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">\u270f</button>'
+            +' <button class="btn btn-xs ctrl-carga-eliminar" data-id="'+escH(cg.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">\ud83d\uddd1</button>'
+            +' <button class="btn btn-xs ctrl-carga-cerrar" data-id="'+escH(cg.id)+'" style="background:#e3f2fd;color:#0d47a1;font-size:.7rem">\ud83d\udd12</button>';
+          else acciones+=' <button class="btn btn-xs ctrl-carga-envham" data-id="'+escH(cg.id)+'" style="background:#1565c0;color:#fff;font-size:.7rem">\ud83d\ude80</button>'
+            +(isSup()?' <button class="btn btn-xs ctrl-carga-reabrir" data-id="'+escH(cg.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">\ud83d\udd13</button>':'');
+          acciones+=' <label class="btn btn-xs" style="cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.7rem;position:relative">\ud83d\udcc2'
+            +'<input type="file" class="ctrl-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
+            +'</label><span class="ctrl-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.7rem;margin-left:2px"></span>';
+        }
+        html+='<tr style="border-top:1px solid #eee">'
+          +'<td style="padding:3px 5px;font-weight:700;color:#1565c0;white-space:nowrap">'+escH(m.correlativo||'—')+'</td>'
+          +'<td style="padding:3px 5px;text-align:center">'+badgePT+'</td>'
+          +'<td style="padding:3px 5px;font-weight:600">'+escH(cg?cg.furgon||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px">'+escH(cg?cg.placa||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px">'+escH(cg?cg.marchamo||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px;color:#1565c0">'+escH(cg?cg.licencia_hija||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px;color:#555">'+escH(cg?cg.destino_tr999||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px;font-size:.72rem;color:#888">'+escH(cg?cg.observacion||'—':'—')+'</td>'
+          +'<td style="padding:3px 5px;color:#666">'+escH(m.creado_por||'—')+'</td>'
+          +'<td style="padding:3px 5px">'+escH(m.auditor_lider||'—')+'</td>'
+          +'<td style="padding:3px 5px;color:#666;font-size:.72rem">'+escH(cols||'—')+'</td>'
+          +'<td style="padding:3px 5px;text-align:center">'+badgeCarga+'</td>'
+          +'<td style="padding:3px 5px;white-space:nowrap">'+acciones+'</td>'
+          +'</tr>';
+      });
+      html+='</tbody></table></div>';
+      listaEl.innerHTML=html;
+      function _mById(id){return(window._bodManifiestosControlActuales||[]).find(function(x){return x.id===id;})||null;}
+      function _cgById(id){return cargasActuales.find(function(c){return c.id===id;})||null;}
+      // Ir a Papel de Trabajo
+      listaEl.querySelectorAll('.ctrl-man-btn-ir').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var mF=_mById(btn.dataset.id);if(!mF){alert('No encontrado.');return;}
+          _irAPapel(mF,cgPorManif[mF.id]||null);
+        });
+      });
+      listaEl.querySelectorAll('.ctrl-man-btn-fin').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Finalizar?'))return;
+          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/finalizar',{usuario:usuario})
+            .then(function(d){if(d.ok)_cargarVistaUnificada();else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
+        });
+      });
+      listaEl.querySelectorAll('.ctrl-man-btn-reab').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Reabrir?'))return;
+          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/reabrir',{usuario:usuario,auditor:isBodAuditor(),supervisor:isSup()})
+            .then(function(d){if(d.ok)_cargarVistaUnificada();else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
+        });
+      });
+      listaEl.querySelectorAll('.ctrl-man-btn-anul').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Anular? No se puede deshacer.'))return;
+          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/anular',{usuario:usuario})
+            .then(function(d){if(d.ok){window._bodManifiestoSeleccionado=null;_cargarVistaUnificada();}else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
+        });
+      });
+      if(esAud){
+        listaEl.querySelectorAll('.ctrl-carga-editar').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var cg=_cgById(btn.dataset.id);if(!cg)return;
+            var _p=prompt('Placa:',cg.placa||'');if(_p===null)return;var nP=_p.trim().toUpperCase();
+            _p=prompt('Marchamo:',cg.marchamo||'');if(_p===null)return;var nM=_p.trim().toUpperCase();
+            _p=prompt('Licencia hija:',cg.licencia_hija||'');if(_p===null)return;var nL=_p.trim().toUpperCase();
+            if(!nL){alert('Licencia hija requerida.');return;}
+            _p=prompt('Destino TR999:',cg.destino_tr999||'');if(_p===null)return;var nD=_p.trim().toUpperCase();
+            if(!/^TR999\.\d{3}\.\d{2}$/i.test(nD)){alert('Formato TR999.xxx.xx');return;}
+            _p=prompt('Observación:',cg.observacion||'');if(_p===null)return;var nO=_p.trim();
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cg.id),
+              {placa:nP,marchamo:nM,licencia_hija:nL,destino_tr999:nD,observacion:nO,usuario:usuario,auditor:true,supervisor:isSup()})
+              .then(function(d){if(!d.ok){alert(d.error||'Error');return;}_cargarVistaUnificada();}).catch(function(){alert('Sin conexión');});
           });
         });
-        // Wire: Ver / continuar → va a Papel de Trabajo con objeto completo
-        listaEl.querySelectorAll('.ctrl-man-btn-ver').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            var mF = _mFullById(btn.dataset.id);
-            if(!mF){ alert('Manifiesto no encontrado. Recargá la lista.'); return; }
-            _irAPapel(mF);
+        listaEl.querySelectorAll('.ctrl-carga-eliminar').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var cg=_cgById(btn.dataset.id);if(!cg||!confirm('¿Eliminar carga?'))return;
+            bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cg.id),
+              {usuario:usuario,auditor:true,supervisor:isSup()})
+              .then(function(d){if(!d.ok){alert(d.error||'Error');return;}_cargarVistaUnificada();}).catch(function(){alert('Sin conexión');});
           });
         });
-        listaEl.querySelectorAll('.ctrl-man-btn-fin').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            if(!confirm('¿Finalizar este manifiesto?')) return;
-            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/finalizar',{usuario:usuario})
-              .then(function(d){ if(d.ok) _cargarLista(); else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+        listaEl.querySelectorAll('.ctrl-carga-cerrar').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var cg=_cgById(btn.dataset.id);if(!cg||!confirm('¿Cerrar carga?'))return;
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cg.id)+'/cerrar',
+              {usuario:usuario,auditor:true,supervisor:isSup()})
+              .then(function(d){if(!d.ok){alert(d.error||'Error');return;}_cargarVistaUnificada();}).catch(function(){alert('Sin conexión');});
           });
         });
-        listaEl.querySelectorAll('.ctrl-man-btn-reab').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            if(!confirm('¿Reabrir este manifiesto?')) return;
-            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/reabrir',
-              {usuario:usuario, auditor:isBodAuditor(), supervisor:isSup()})
-              .then(function(d){ if(d.ok) _cargarLista(); else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+        listaEl.querySelectorAll('.ctrl-carga-reabrir').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var cg=_cgById(btn.dataset.id);if(!cg||!confirm('¿Reabrir carga?'))return;
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cg.id)+'/reabrir',
+              {usuario:usuario,auditor:true,supervisor:isSup()})
+              .then(function(d){if(!d.ok){alert(d.error||'Error');return;}_cargarVistaUnificada();}).catch(function(){alert('Sin conexión');});
           });
         });
-        listaEl.querySelectorAll('.ctrl-man-btn-anul').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            if(!confirm('¿Anular este manifiesto? No se puede deshacer.')) return;
-            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/anular',{usuario:usuario})
-              .then(function(d){
-                if(d.ok){ window._bodManifiestoSeleccionado=null; _cargarLista(); }
-                else alert(d.error||'Error');
-              }).catch(function(){alert('Sin conexión');});
+        listaEl.querySelectorAll('.ctrl-carga-envham').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var cg=_cgById(btn.dataset.id);if(!cg||!confirm('Enviar \u2192 Hamilton como '+cg.licencia_hija+'?'))return;
+            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cg.id)+'/enviar-hamilton',
+              {usuario:usuario,auditor:true,supervisor:isSup()})
+              .then(function(d){if(!d.ok){alert(d.error||'Error');return;}alert('Enviado. '+d.skus+' SKUs');_cargarVistaUnificada();})
+              .catch(function(){alert('Sin conexión');});
           });
         });
-      }).catch(function(){ if(listaEl) listaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error cargando manifiestos.</div>'; });
+      }
+      listaEl.querySelectorAll('.ctrl-hija-file-inp').forEach(function(inp){
+        inp.addEventListener('change',function(){
+          if(!this.files||!this.files[0])return;
+          var archivo=this.files[0];var licHija=this.dataset.lichija;var furgRelac=this.dataset.furgon;var cargaId=this.dataset.id;
+          var msgEl=listaEl.querySelector('.ctrl-hija-msg[data-id="'+cargaId+'"]');
+          if(msgEl)msgEl.innerHTML='<span style="color:#888">\u23f3\u2026</span>';
+          this.value='';
+          var fd=new FormData();
+          fd.append('file',archivo);fd.append('usuario',usuario);fd.append('licencia_id',licHija);
+          fd.append('licencia_padre',(bodAuditoriaData&&bodAuditoriaData.sesion)?bodAuditoriaData.sesion.licencia_id||'':'');
+          fd.append('furgon_relacionado',furgRelac);fd.append('tipo_licencia','hija_salida');
+          fetch('/api/bod/wms/upload',{method:'POST',body:fd})
+            .then(function(r){return r.json();})
+            .then(function(d){if(!msgEl)return;
+              msgEl.innerHTML='<span style="color:'+(d.ok?'#1e7e34':'#c0392b')+'">'+(d.ok?'\u2705 '+d.procesadas+' filas':'\u274c '+escH(d.error||'Error'))+'</span>';
+            }).catch(function(){if(msgEl)msgEl.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';});
+        });
+      });
+    }).catch(function(){
+      var liEl=document.getElementById('ctrl-man-lista');
+      if(liEl)liEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error cargando datos.</div>';
+    });
   }
-  _cargarLista();
+  _cargarVistaUnificada();
 
   // Wire: Crear papel de trabajo → guarda selección y va a Papel de Trabajo
   var btnCrear = document.getElementById('btn-ctrl-man-crear');
@@ -11663,16 +11782,49 @@ function bodRenderControlManifiestos() {
       auditor_lider:usuario, creado_por:usuario
     }).then(function(d){
       if(d.ok && d.manifiesto && d.manifiesto.id && d.manifiesto.correlativo) {
-        if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(d.manifiesto.correlativo)+'</span>';
-        _irAPapel(d.manifiesto);
-      } else if(d.ok && d.manifiesto) {
-        // Manifiesto creado pero sin correlativo en la respuesta — recargar lista
-        if(msg) msg.innerHTML='<span style="color:#e65100">⚠ Creado, recargando…</span>';
-        _cargarLista();
+        if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(d.manifiesto.correlativo)+' creado. Ahora creá la carga logística y luego presioná Empezar.</span>';
+        // FIX: quedarse en Control, refrescar y preseleccionar el PT nuevo
+        _cargarVistaUnificada();
+        // Preseleccionar en selector de carga después del refresh
+        setTimeout(function(){
+          var sel=document.getElementById('ctrl-manif-sel');
+          if(sel) sel.value=d.manifiesto.id;
+        }, 600);
       } else {
-        if(msg) msg.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
+        if(msg) msg.innerHTML='<span style="color:#c0392b">'+escH((d&&d.error)||'Error')+'</span>';
       }
     }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+  });
+
+  // Wire: Crear carga logística desde formulario
+  var btnCC = document.getElementById('btn-ctrl-crear-carga');
+  if(btnCC) btnCC.addEventListener('click', function(){
+    var manifId = (document.getElementById('ctrl-manif-sel').value||'').trim();
+    var furgon  = (document.getElementById('ctrl-furgon-inp').value||'').trim();
+    var placa   = (document.getElementById('ctrl-placa-inp').value||'').trim().toUpperCase();
+    var marcha  = (document.getElementById('ctrl-marchamo-inp').value||'').trim().toUpperCase();
+    var licHija = (document.getElementById('ctrl-lichija-inp').value||'').trim().toUpperCase();
+    var destino = (document.getElementById('ctrl-destino-inp').value||'').trim().toUpperCase();
+    var obs     = (document.getElementById('ctrl-obs-inp').value||'').trim();
+    var msgEl   = document.getElementById('ctrl-carga-msg');
+    if(!manifId){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Seleccioná un PT primero o creá uno arriba.</span>'; return; }
+    if(!furgon) { if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
+    if(!licHija){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
+    if(!destino){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
+    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino)){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Formato TR999.xxx.xx</span>'; return; }
+    if(msgEl) msgEl.innerHTML='<span style="color:#888">Creando…</span>';
+    var payload = {
+      desde_papel:true, tarimas:[], furgon:furgon, placa:placa, marchamo:marcha,
+      licencia_hija:licHija, destino_tr999:destino, observacion:obs,
+      usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
+    };
+    if(manifId) payload.manifiesto_id = manifId;
+    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', payload)
+      .then(function(d){
+        if(!d.ok){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+        if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Furgón '+escH(d.furgon)+' creado.</span>';
+        _cargarVistaUnificada();
+      }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
   });
 }
 
@@ -12555,70 +12707,7 @@ function bodRenderFlujoBolson() {
     window._bodPapelSesionId = sesIdPapel;
   }
 
-  // ── Formulario "Crear carga logística" + cargas existentes ───────────────
-  // FIX (mié 10-jun-2026): movido desde Tarimas a Papel de Trabajo
-  var formCargaPT = '';
-  var bloqueCargasPT = '';
-  if(esAud && sesId) {
-    formCargaPT = '<div id="bod-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.75rem;margin-bottom:.6rem">'
-      +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Crear carga logística</div>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
-      +'<input type="text" id="bod-furgon-input" class="field-inp" placeholder="Ej: 1" style="width:70px;padding:4px 8px;font-size:.82rem"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
-      +'<input type="text" id="bod-carga-placa" class="field-inp" placeholder="ABC-123" style="width:90px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Marchamo</label>'
-      +'<input type="text" id="bod-carga-marchamo" class="field-inp" placeholder="Marchamo" style="width:110px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
-      +'<input type="text" id="bod-carga-licencia-hija" class="field-inp" placeholder="U25-XXXXXX" style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Destino TR999</label>'
-      +'<input type="text" id="bod-carga-destino" class="field-inp" placeholder="TR999.001.01" style="width:120px;padding:4px 8px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div style="flex:1;min-width:100px"><label style="font-size:.72rem;color:#666;display:block;margin-bottom:2px">Observación</label>'
-      +'<input type="text" id="bod-carga-obs" class="field-inp" placeholder="Opcional" style="width:100%;padding:4px 8px;font-size:.82rem"></div>'
-      +'<button class="btn btn-sm btn-dark" id="btn-bod-crear-carga" style="align-self:flex-end">✅ Crear carga</button>'
-      +'</div>'
-      +'<div id="bod-carga-msg" style="font-size:.78rem;margin-top:.4rem;min-height:1.2em"></div>'
-      +'</div>';
-  }
-  if(cargas.length) {
-    bloqueCargasPT = '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin:.75rem 0 .3rem;letter-spacing:.3px">Cargas logísticas</div>';
-    cargas.forEach(function(cg){
-      var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
-      var skus = Array.isArray(cg.resumen_skus) ? cg.resumen_skus : [];
-      var esCerrada = cg.estado === 'cerrada';
-      var esSup = isSup();
-      var btnAcc;
-      if(esCerrada) {
-        var badgeEnv = cg.enviado_hamilton
-          ? '<span style="background:#1565c0;color:#fff;font-size:.71rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Enviado a Hamilton</span>'
-          : (esAud ? '<button class="btn btn-xs bod-btn-enviar-hamilton" data-id="'+escH(cg.id)+'" style="background:#1565c0;color:#fff;font-size:.72rem">🚀 Enviar a Hamilton</button>' : '');
-        btnAcc = '<span style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;padding:2px 8px;border-radius:8px;font-weight:600">✅ Cerrada</span>'+badgeEnv
-          +(esSup ? ' <button class="btn btn-xs bod-btn-reabrir-carga" data-id="'+escH(cg.id)+'" style="background:#fff3e0;color:#e65100;font-size:.72rem">🔓 Reabrir</button>' : '')
-          +'<label class="btn btn-xs" style="cursor:pointer;background:#e3f2fd;color:#1565c0;font-size:.72rem;position:relative">📂 Subir licencia'
-          +'<input type="file" class="bod-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
-          +'</label><span class="bod-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.72rem;min-height:1em"></span>';
-      } else if(esAud) {
-        btnAcc = '<button class="btn btn-xs bod-btn-editar-carga" data-id="'+escH(cg.id)+'" style="background:#fff3e0;color:#e65100;font-size:.72rem">✏ Editar</button>'
-          +'<button class="btn btn-xs bod-btn-eliminar-carga" data-id="'+escH(cg.id)+'" style="background:#fdecea;color:#c0392b;font-size:.72rem">🗑 Eliminar</button>'
-          +'<label class="btn btn-xs" style="cursor:pointer;background:#e8f5e9;color:#1b5e20;font-size:.72rem;position:relative">📂 Subir licencia'
-          +'<input type="file" class="bod-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
-          +'</label>'
-          +'<button class="btn btn-xs bod-btn-cerrar-carga" data-id="'+escH(cg.id)+'" style="background:#e3f2fd;color:#0d47a1;font-size:.72rem">🔒 Cerrar carga</button>'
-          +'<span class="bod-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.72rem;min-height:1em"></span>';
-      } else { btnAcc = ''; }
-      bloqueCargasPT += '<div style="background:'+(esCerrada?'#e8f5e9':'#e3f2fd')+';border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;font-size:.8rem">'
-        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:.25rem">'
-        +'<strong>Furgón '+escH(cg.furgon)+'</strong>'
-        +'<span style="color:#1565c0">🔒 '+escH(cg.licencia_hija||'—')+'</span>'
-        +'<span style="color:#888">→ '+escH(cg.destino_tr999||'—')+'</span>'
-        +(cg.placa ? '<span style="color:#555">🚛 '+escH(cg.placa)+'</span>' : '')
-        +(cg.marchamo ? '<span style="color:#555">🔐 '+escH(cg.marchamo)+'</span>' : '')
-        +'<span style="color:#aaa;font-size:.73rem">por '+escH(cg.cerrado_por||'—')+'</span>'
-        +btnAcc+'</div>'
-        +'<div style="color:#555;font-size:.75rem">Tarimas: '+escH(ts.join(', '))+' · '+skus.length+' SKUs · '+Number(cg.unidades_total)+' unidades'
-        +(cg.observacion ? ' · <em>'+escH(cg.observacion)+'</em>' : '')+'</div></div>';
-    });
-  }
+  // (Crear carga logística y cargas existentes ahora viven en Control de Manifiestos)
   // Cargar papel de trabajo persistido si no lo tenemos aún
   if(sesIdPapel && !Object.keys(window._bodPapelPersistido).length) {
     bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo')
@@ -12671,7 +12760,7 @@ function bodRenderFlujoBolson() {
     +'<span id="papel-add-msg" style="font-size:.76rem;align-self:center"></span>'
     +'</div>';
 
-  vistaEl.innerHTML = formCargaPT + bloqueCargasPT + headerManif + addSkuForm
+  vistaEl.innerHTML = headerManif + addSkuForm
     +'<div id="papel-tabla-cont"><div style="color:#888;font-size:.82rem;padding:.4rem 0">⏳ Cargando filas…</div></div>';
 
   // Cargar y renderizar filas del manifiesto
@@ -12700,11 +12789,11 @@ function bodRenderFlujoBolson() {
           tblEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin SKUs. Agregá filas arriba usando el campo SKU.</div>';
           return;
         }
-        // Datos logísticos desde la carga activa del manifiesto
-        var cargaAct = cargas && cargas.length ? cargas[0] : null;
-        var cargaFurg = cargaAct ? (cargaAct.furgon||'—') : '—';
-        var cargaLic  = cargaAct ? (cargaAct.licencia_hija||'—') : '—';
-        var cargaTR   = cargaAct ? (cargaAct.destino_tr999||'—') : '—';
+        // FIX (jue 11-jun-2026): usar el manifiesto seleccionado, NO cargas[0]
+        var mSel = window._bodManifiestoSeleccionado || {};
+        var cargaFurg = mSel.furgon        || '—';
+        var cargaLic  = mSel.licencia_hija || '—';
+        var cargaTR   = mSel.destino_tr999 || '—';
 
         function _calc(cant952, fisico, auditado) {
           var c952 = Number(cant952)||0;
@@ -12890,152 +12979,6 @@ function bodRenderFlujoBolson() {
   if(skuInpEl) skuInpEl.addEventListener('keydown',function(e){
     if(e.key==='Enter'&&btnAgregarSku) btnAgregarSku.click();
   });
-
-  // ── Wires: Crear carga logística (movido desde Tarimas) ──────────────────
-  if(esAud) {
-    var btnCrear = document.getElementById('btn-bod-crear-carga');
-    if(btnCrear) btnCrear.addEventListener('click', function(){
-      var furgon  = (document.getElementById('bod-furgon-input').value||'').trim();
-      var placa   = (document.getElementById('bod-carga-placa').value||'').trim().toUpperCase();
-      var marchamo= (document.getElementById('bod-carga-marchamo').value||'').trim().toUpperCase();
-      var licHija = (document.getElementById('bod-carga-licencia-hija').value||'').trim().toUpperCase();
-      var destino = (document.getElementById('bod-carga-destino').value||'').trim().toUpperCase();
-      var obs     = (document.getElementById('bod-carga-obs').value||'').trim();
-      var msgEl   = document.getElementById('bod-carga-msg');
-      if(!furgon)  { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
-      if(!licHija) { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
-      if(!destino) { msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
-      if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino)){
-        msgEl.innerHTML='<span style="color:#c0392b">Formato TR999.xxx.xx — ejemplo TR999.001.01</span>'; return; }
-      msgEl.innerHTML='<span style="color:#888">Creando carga…</span>';
-      bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', {
-        // FIX (jue 11-jun-2026): desde_papel=true → servidor no exige tarimas
-        desde_papel: true, tarimas:[], furgon:furgon, placa:placa, marchamo:marchamo,
-        licencia_hija:licHija, destino_tr999:destino, observacion:obs,
-        usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
-      }).then(function(d){
-        if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-        msgEl.innerHTML='<span style="color:#1e7e34">✅ Carga creada. Furgón: '+escH(d.furgon)+'</span>';
-        // Actualizar cargas en memoria y re-renderizar Papel de Trabajo
-        fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-          .then(function(r){ return r.json(); })
-          .then(function(f){
-            bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-            if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-            bodRenderFlujoBolson();
-          });
-      }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-    });
-
-    // Wire upload "Subir licencia"
-    vistaEl.querySelectorAll('.bod-hija-file-inp').forEach(function(inp){
-      inp.addEventListener('change', function(){
-        if(!this.files||!this.files[0]) return;
-        var archivo=this.files[0]; var licHija=this.dataset.lichija;
-        var furgRelac=this.dataset.furgon; var cargaId=this.dataset.id;
-        var msgEl=vistaEl.querySelector('.bod-hija-msg[data-id="'+cargaId+'"]');
-        if(msgEl) msgEl.innerHTML='<span style="color:#888">⏳ Subiendo…</span>';
-        this.value='';
-        var fd=new FormData();
-        fd.append('file',archivo); fd.append('usuario',usuario);
-        fd.append('licencia_id',licHija); fd.append('licencia_padre',sesion.licencia_id||'');
-        fd.append('furgon_relacionado',furgRelac); fd.append('tipo_licencia','hija_salida');
-        fetch('/api/bod/wms/upload',{method:'POST',body:fd})
-          .then(function(r){return r.json();})
-          .then(function(d){
-            if(!msgEl) return;
-            if(!d.ok){msgEl.innerHTML='<span style="color:#c0392b">❌ '+escH(d.error||'Error')+'</span>';return;}
-            var col=d.advertencia?'#e65100':'#1e7e34';
-            msgEl.innerHTML='<span style="color:'+col+'">✅ '+d.procesadas+' filas · Salidas: '+((d.salidas_tr999)||0)+(d.advertencia?' ⚠':'')+'</span>';
-          }).catch(function(){if(msgEl)msgEl.innerHTML='<span style="color:#c0392b">❌ Sin conexión</span>';});
-      });
-    });
-
-    // Wire Editar carga
-    vistaEl.querySelectorAll('.bod-btn-editar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId=btn.dataset.id; var cg=cargas.find(function(c){return c.id===cargaId;});
-        if(!cg) return;
-        var _p=prompt('Placa:',cg.placa||''); if(_p===null) return; var newPlaca=_p.trim().toUpperCase();
-        _p=prompt('Marchamo:',cg.marchamo||''); if(_p===null) return; var newMarcha=_p.trim().toUpperCase();
-        _p=prompt('Licencia hija:',cg.licencia_hija||''); if(_p===null) return; var newLicHija=_p.trim().toUpperCase();
-        if(!newLicHija){alert('La licencia hija es requerida.');return;}
-        _p=prompt('Destino TR999:',cg.destino_tr999||''); if(_p===null) return; var newDestino=_p.trim().toUpperCase();
-        if(!/^TR999\.\d{3}\.\d{2}$/i.test(newDestino)){alert('Formato TR999.xxx.xx');return;}
-        _p=prompt('Observación:',cg.observacion||''); if(_p===null) return; var newObs=_p.trim();
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId),
-          {placa:newPlaca,marchamo:newMarcha,licencia_hija:newLicHija,destino_tr999:newDestino,observacion:newObs,
-           usuario:usuario,auditor:isBodAuditor(),supervisor:isBodAuditor()})
-          .then(function(d){if(!d.ok){alert(d.error||'Error al editar');return;}
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){return r.json();})
-              .then(function(f){bodFurgonAsignaciones=(f.ok&&Array.isArray(f.asignaciones))?f.asignaciones:[];
-                if(bodAuditoriaData)bodAuditoriaData._cargas=(f.ok&&Array.isArray(f.cargas))?f.cargas:[];
-                bodRenderFlujoBolson();});
-          }).catch(function(){alert('Sin conexión');});
-      });
-    });
-    // Wire Eliminar carga
-    vistaEl.querySelectorAll('.bod-btn-eliminar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId=btn.dataset.id; var cg=cargas.find(function(c){return c.id===cargaId;});
-        if(!cg||!confirm('Eliminar carga del furgón '+cg.furgon+'?')) return;
-        bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId),
-          {usuario:usuario,auditor:isBodAuditor(),supervisor:isBodAuditor()})
-          .then(function(d){if(!d.ok){alert(d.error||'Error');return;}
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){return r.json();})
-              .then(function(f){bodFurgonAsignaciones=(f.ok&&Array.isArray(f.asignaciones))?f.asignaciones:[];
-                if(bodAuditoriaData)bodAuditoriaData._cargas=(f.ok&&Array.isArray(f.cargas))?f.cargas:[];
-                bodRenderFlujoBolson();});
-          }).catch(function(){alert('Sin conexión');});
-      });
-    });
-    // Wire Cerrar carga
-    vistaEl.querySelectorAll('.bod-btn-cerrar-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId=btn.dataset.id; var cg=cargas.find(function(c){return c.id===cargaId;});
-        if(!cg||!confirm('¿Cerrar carga del furgón '+cg.furgon+'?')) return;
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/cerrar',
-          {usuario:usuario,auditor:isBodAuditor(),supervisor:isBodAuditor()})
-          .then(function(d){if(!d.ok){alert(d.error||'Error al cerrar');return;}
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){return r.json();})
-              .then(function(f){bodFurgonAsignaciones=(f.ok&&Array.isArray(f.asignaciones))?f.asignaciones:[];
-                if(bodAuditoriaData)bodAuditoriaData._cargas=(f.ok&&Array.isArray(f.cargas))?f.cargas:[];
-                bodRenderFlujoBolson();});
-          }).catch(function(){alert('Sin conexión');});
-      });
-    });
-    // Wire Reabrir carga (supervisor)
-    vistaEl.querySelectorAll('.bod-btn-reabrir-carga').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId=btn.dataset.id; var cg=cargas.find(function(c){return c.id===cargaId;});
-        if(!cg||!confirm('¿Reabrir carga del furgón '+cg.furgon+'?')) return;
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/reabrir',
-          {usuario:usuario,supervisor:isSup()})
-          .then(function(d){if(!d.ok){alert(d.error||'Error al reabrir');return;}
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){return r.json();})
-              .then(function(f){bodFurgonAsignaciones=(f.ok&&Array.isArray(f.asignaciones))?f.asignaciones:[];
-                if(bodAuditoriaData)bodAuditoriaData._cargas=(f.ok&&Array.isArray(f.cargas))?f.cargas:[];
-                bodRenderFlujoBolson();});
-          }).catch(function(){alert('Sin conexión');});
-      });
-    });
-    // Wire Enviar a Hamilton
-    vistaEl.querySelectorAll('.bod-btn-enviar-hamilton').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var cargaId=btn.dataset.id; var cg=cargas.find(function(c){return c.id===cargaId;});
-        if(!cg||!confirm('Enviar furgón '+cg.furgon+' → Hamilton como '+cg.licencia_hija+'?')) return;
-        bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/enviar-hamilton',
-          {usuario:usuario,auditor:isBodAuditor(),supervisor:isBodAuditor()})
-          .then(function(d){if(!d.ok){alert(d.error||'Error');return;}
-            alert('Licencia '+cg.licencia_hija+' enviada a Hamilton. ('+d.skus+' SKUs)');
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').then(function(r){return r.json();})
-              .then(function(f){bodFurgonAsignaciones=(f.ok&&Array.isArray(f.asignaciones))?f.asignaciones:[];
-                if(bodAuditoriaData)bodAuditoriaData._cargas=(f.ok&&Array.isArray(f.cargas))?f.cargas:[];
-                bodRenderFlujoBolson();});
-          }).catch(function(){alert('Sin conexión');});
-      });
-    });
-  }
 
 }
 // _bodRenderFlujoTbl: helper de tabla legacy (usada por reportes internos, no por Papel de Trabajo)
