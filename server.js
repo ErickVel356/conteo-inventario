@@ -6087,18 +6087,19 @@ app.post('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
 // ── GET /api/bod/sesion/:id/papel-trabajo ─────────────────────────────────
 app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
   try {
-    var sesId   = String(req.params.id).trim();
-    var licHija = String(req.query.licencia_hija || '').trim().toUpperCase();
-    var ck = 'bod:papel:'+sesId+':'+(licHija||'*');
+    var sesId        = String(req.params.id).trim();
+    var licHija      = String(req.query.licencia_hija || '').trim().toUpperCase();
+    var manifestoId  = String(req.query.manifiesto_id || '').trim();
+    var ck = 'bod:papel:'+sesId+':'+(manifestoId||licHija||'*');
     var cached = cacheGet(ck);
     if(cached) return res.json(cached);
-
-    // FIX (mié 10-jun-2026): select=* para retornar todos los campos incluyendo nuevos
+    // FIX (jue 11-jun-2026): filtrar por manifiesto_id si se especifica
     var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc&select=*';
-    if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
+    if(manifestoId) query += '&manifiesto_id=eq.'+encodeURIComponent(manifestoId);
+    else if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
     var rows = await supabase('GET', 'bod_papel_trabajo', null, query);
     var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
-    cacheSet(ck, resp, 15000); // 15s
+    cacheSet(ck, resp, 15000);
     res.json(resp);
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
@@ -6106,23 +6107,18 @@ app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 });
 
 // ── POST /api/bod/sesion/:id/papel-trabajo ────────────────────────────────
-// FIX (mié 10-jun-2026): acepta campos extendidos: nombre, cantidad_952,
-// estado_papel, tr999, tarimas, furgon, destino
-// Body: { licencia_hija, skus: [{sku,nombre,cantidad_952,fisico_auditoria,
-//         diferencia,seguimiento,estado_papel,tr999,tarimas,furgon,destino,
-//         validado,cantidad_manifiesto,validado_por}] }
 app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
   try {
     var sesId    = String(req.params.id).trim();
-    var { licencia_hija, skus } = req.body || {};
+    var { licencia_hija, skus, manifiesto_id } = req.body || {};
     licencia_hija = String(licencia_hija || '').trim().toUpperCase();
+    manifiesto_id = manifiesto_id ? String(manifiesto_id).trim() : null;
     if(!Array.isArray(skus) || !skus.length)
       return res.status(400).json({ ok:false, error:'skus requeridos' });
 
     var now = new Date().toISOString();
     var upserts = skus.map(function(s){
       var validado = !!s.validado;
-      // FIX (mié 10-jun-2026): licencia_hija por fila si viene; fallback al body
       var licFila = String(s.licencia_hija || licencia_hija || '').trim().toUpperCase();
       var row = {
         sesion_id:           sesId,
@@ -6137,6 +6133,7 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
         validado_en:         validado ? (s.validado_en || now) : null,
         actualizado_en:      now
       };
+      if(manifiesto_id) row.manifiesto_id = manifiesto_id;
       if(s.nombre     !== undefined) row.nombre        = String(s.nombre||'');
       if(s.cantidad_952 !== undefined) row.cantidad_952 = Number(s.cantidad_952)||0;
       if(s.estado_papel !== undefined) row.estado_papel = String(s.estado_papel||'');
@@ -6144,13 +6141,17 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
       if(s.tarimas    !== undefined) row.tarimas        = String(s.tarimas||'');
       if(s.furgon     !== undefined) row.furgon         = String(s.furgon||'');
       if(s.destino    !== undefined) row.destino        = String(s.destino||'');
+      if(s.unidad     !== undefined) row.unidad         = String(s.unidad||'');
       return row;
     }).filter(function(r){ return !!r.sku; });
 
     if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
 
-    var saved = await supabase('POST', 'bod_papel_trabajo', upserts,
-      '?on_conflict=sesion_id,licencia_hija,furgon,sku');
+    // FIX (jue 11-jun-2026): usar on_conflict correcto según si hay manifiesto_id
+    var onConflict = manifiesto_id
+      ? '?on_conflict=sesion_id,manifiesto_id,sku'
+      : '?on_conflict=sesion_id,licencia_hija,furgon,sku';
+    await supabase('POST', 'bod_papel_trabajo', upserts, onConflict);
 
     cacheInvalidatePrefix('bod:papel:'+sesId+':');
     res.json({ ok:true, guardados: upserts.length });
@@ -6173,20 +6174,27 @@ app.get('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) =>
 });
 
 // POST /api/bod/sesion/:id/manifiestos-control
-// Body: { licencia_hija, furgon, auditor_lider, creado_por }
+// Body: { licencia_hija?, furgon?, auditor_lider, creado_por }
 app.post('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
     var { licencia_hija, furgon, auditor_lider, creado_por } = req.body || {};
     licencia_hija = String(licencia_hija||'').trim().toUpperCase();
     furgon        = String(furgon||'').trim();
-    if(!licencia_hija) return res.status(400).json({ ok:false, error:'licencia_hija requerida' });
+    // FIX (jue 11-jun-2026): generar correlativo PT-YYYY-MM-DD-##
+    var hoyGT = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
+    var existentes = await supabase('GET','bod_manifiestos_control',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&correlativo=like.'+encodeURIComponent('PT-'+hoyGT+'-%')+'&select=correlativo').catch(function(){return[];});
+    var nextNum = Array.isArray(existentes) ? existentes.length + 1 : 1;
+    var correlativo = 'PT-'+hoyGT+'-'+String(nextNum).padStart(2,'0');
     var now = new Date().toISOString();
     var row = {
       sesion_id:      sesId,
       licencia_hija:  licencia_hija,
       furgon:         furgon,
-      estado:         'sin_iniciar',
+      correlativo:    correlativo,
+      estado:         'en_proceso',
       auditor_lider:  String(auditor_lider||''),
       colaboradores:  [],
       creado_por:     String(creado_por||''),
@@ -6200,7 +6208,7 @@ app.post('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) =
     res.json({ ok:true, manifiesto: created });
   } catch(e) {
     if(e.message && e.message.includes('duplicate')) {
-      return res.status(409).json({ ok:false, error:'Ya existe un manifiesto activo para esa licencia hija y furgón.' });
+      return res.status(409).json({ ok:false, error:'Ya existe un manifiesto activo con ese correlativo.' });
     }
     res.status(500).json({ ok:false, error:e.message });
   }
@@ -6311,6 +6319,25 @@ app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/anular', bodGuard, async
       { estado:'anulado', anulado_por:usuario, anulado_en:now,
         actualizado_por:usuario, actualizado_en:now, historial:hist },
       '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/sesion/:id/papel-trabajo-sku ───────────────────────────
+// FIX (jue 11-jun-2026): eliminar una fila específica del Papel de Trabajo
+// Body: { manifiesto_id, sku }
+app.delete('/api/bod/sesion/:id/papel-trabajo-sku', bodGuard, async (req, res) => {
+  try {
+    var sesId       = String(req.params.id).trim();
+    var manifestoId = String((req.body||{}).manifiesto_id||'').trim();
+    var sku         = String((req.body||{}).sku||'').trim().toUpperCase();
+    if(!manifestoId || !sku)
+      return res.status(400).json({ ok:false, error:'manifiesto_id y sku requeridos' });
+    await supabase('DELETE', 'bod_papel_trabajo', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(manifestoId)
+      +'&sku=eq.'+encodeURIComponent(sku));
+    cacheInvalidatePrefix('bod:papel:'+sesId+':');
     res.json({ ok:true });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
