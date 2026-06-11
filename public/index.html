@@ -11528,35 +11528,9 @@ function bodRenderControlManifiestos() {
       +'</div>'
     : '';
 
-  // Formulario "Crear carga logística" con selector de manifiesto
-  var formCargaCtrl = esAud
-    ? '<div id="ctrl-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.65rem .85rem;margin-bottom:.6rem">'
-      +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">Nueva carga logística</div>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">PT (papel de trabajo)</label>'
-      +'<div style="display:flex;align-items:center;gap:0"><span id="ctrl-pt-prefix" style="background:#e8ecf0;color:#333;font-weight:700;font-size:.80rem;padding:3px 7px;border:1px solid #ccc;border-right:none;border-radius:4px 0 0 4px;white-space:nowrap">PT-…-</span>'
-      +'<input type="text" id="ctrl-pt-num" maxlength="2" placeholder="01" class="field-inp" style="width:40px;border-radius:0 4px 4px 0;padding:3px 7px;font-size:.82rem;text-align:center"></div></div>'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
-      +'<input type="text" id="ctrl-furgon-inp" class="field-inp" placeholder="Ej: 1" style="width:70px;padding:3px 7px;font-size:.82rem"></div>'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
-      +'<input type="text" id="ctrl-placa-inp" class="field-inp" placeholder="ABC-123" style="width:90px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Marchamo</label>'
-      +'<input type="text" id="ctrl-marchamo-inp" class="field-inp" placeholder="Marchamo" style="width:100px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Licencia hija</label>'
-      +'<input type="text" id="ctrl-lichija-inp" class="field-inp" placeholder="U25-XXXXXX" style="width:110px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">TR999</label>'
-      +'<input type="text" id="ctrl-destino-inp" class="field-inp" placeholder="TR999.001.01" style="width:110px;padding:3px 7px;font-size:.82rem;text-transform:uppercase"></div>'
-      +'<div style="flex:1;min-width:80px"><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Observación</label>'
-      +'<input type="text" id="ctrl-obs-inp" class="field-inp" placeholder="Opcional" style="width:100%;padding:3px 7px;font-size:.82rem"></div>'
-      +'<button class="btn btn-sm btn-dark" id="btn-ctrl-crear-carga" style="align-self:flex-end;font-size:.74rem">✅ Crear carga</button>'
-      +'</div>'
-      +'<div id="ctrl-carga-msg" style="font-size:.76rem;margin-top:.3rem;min-height:1em"></div>'
-      +'</div>'
-    : '';
-
   vistaEl.innerHTML =
     '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem;letter-spacing:.3px">📋 Control de Manifiestos</div>'
-    + formCrear + formCargaCtrl
+    + formCrear
     +'<div id="ctrl-man-lista"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
 
   // ── Vista unificada: manifiestos + cargas en una sola tabla ─────────────
@@ -11616,10 +11590,11 @@ function bodRenderControlManifiestos() {
         var cg=cgPorManif[m.id]||null;
         var cols=Array.isArray(m.colaboradores)?m.colaboradores.join(', '):'';
         var esCargaCerrada=cg&&cg.estado==='cerrada';
-        var badgeCarga=cg
-          ?(esCargaCerrada?'<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 5px;border-radius:6px">✅ Cerrada</span>'
-            :'<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:1px 5px;border-radius:6px">Abierta</span>')
-          :'<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">Sin carga</span>';
+        // FIX (jue 11-jun-2026, v21): Carga = count SKUs de Papel de Trabajo
+          var skuCnt = m._skuCount || 0;
+          var badgeCarga = skuCnt > 0
+            ? '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 7px;border-radius:6px;font-weight:600">'+skuCnt+' líneas</span>'
+            : '<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">0 líneas</span>';
         var yaCols=Array.isArray(m.colaboradores)?m.colaboradores:[];
         var esLider=m.auditor_lider===usuario;
         // Empezar: auditor líder en PT nuevo sin colaboradores aún
@@ -11633,7 +11608,8 @@ function bodRenderControlManifiestos() {
           acciones+='<button class="btn btn-xs ctrl-man-btn-ir" data-id="'+escH(m.id)+'" style="background:#1565c0;color:#fff;font-size:.7rem">\u25b6 '+labelIr+'</button> ';
           if(m.estado!=='finalizado'&&esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-fin" data-id="'+escH(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem">Fin</button> ';
           if(m.estado==='finalizado'&&(esLider||esAud)) acciones+='<button class="btn btn-xs ctrl-man-btn-reab" data-id="'+escH(m.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">Reabrir</button> ';
-          if(esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-anul" data-id="'+escH(m.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Anular</button>';
+          // FIX (jue 11-jun-2026, v21): 💾 Guardar reemplaza Anular
+            if(esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-save" data-id="'+escH(m.id)+'" title="Guardar cambios" style="background:#1b5e20;color:#fff;font-size:.74rem;padding:3px 8px">💾</button>';
           // FIX (jue 11-jun-2026, v21): botón borrar PT
           if(esAud) acciones+=' <button class="btn btn-xs ctrl-man-btn-borrar" data-id="'+escH(m.id)+'" title="Borrar PT y sus datos" style="background:#7b241c;color:#fff;font-size:.7rem">Borrar</button>';
         }
@@ -11647,16 +11623,16 @@ function bodRenderControlManifiestos() {
             +'<input type="file" class="ctrl-hija-file-inp" data-id="'+escH(cg.id)+'" data-lichija="'+escH(cg.licencia_hija||'')+'" data-furgon="'+escH(cg.furgon||'')+'" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
             +'</label><span class="ctrl-hija-msg" data-id="'+escH(cg.id)+'" style="font-size:.7rem;margin-left:2px"></span>';
         }
-        html+='<tr style="border-top:1px solid #eee">'
+        html+='<tr data-mid="'+escH(m.id)+'" style="border-top:1px solid #eee">'
           +'<td style="padding:3px 5px;font-weight:700;color:#1565c0;white-space:nowrap">'+escH(m.correlativo||'—')+'</td>'
           +'<td style="padding:3px 5px;text-align:center">'+badgePT+'</td>'
-          +'<td style="padding:3px 5px;font-weight:600">'+escH(cg?cg.furgon||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px">'+escH(cg?cg.placa||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px">'+escH(cg?cg.marchamo||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px;color:#1565c0">'+escH(cg?cg.licencia_hija||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px;color:#555">'+escH(cg?cg.destino_tr999||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px;font-size:.72rem;color:#888">'+escH(cg?cg.observacion||'—':'—')+'</td>'
-          +'<td style="padding:3px 5px;color:#666">'+escH(m.creado_por||'—')+'</td>'
+          +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="furgon" value="'+escH((cg?cg.furgon:m.furgon)||'')+'" placeholder="Furgón" style="width:60px;padding:2px 5px;font-size:.76rem"></td>'
+            +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="placa" value="'+escH(cg?cg.placa||'':'')+'" placeholder="Placa" style="width:80px;padding:2px 5px;font-size:.76rem;text-transform:uppercase"></td>'
+            +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="marchamo" value="'+escH(cg?cg.marchamo||'':'')+'" placeholder="Marchamo" style="width:90px;padding:2px 5px;font-size:.76rem;text-transform:uppercase"></td>'
+            +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="licencia_hija" value="'+escH((cg?cg.licencia_hija:m.licencia_hija)||'')+'" placeholder="U25-XXX" style="width:90px;padding:2px 5px;font-size:.76rem;text-transform:uppercase"></td>'
+            +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="destino_tr999" value="'+escH(cg?cg.destino_tr999||'':'')+'" placeholder="TR999.xxx.xx" style="width:100px;padding:2px 5px;font-size:.76rem;text-transform:uppercase"></td>'
+            +'<td style="padding:2px 3px"><input class="ctrl-inline-inp field-inp" data-field="observacion" value="'+escH(cg?cg.observacion||'':'')+'" placeholder="Obs." style="min-width:70px;padding:2px 5px;font-size:.76rem"></td>'
+                      +'<td style="padding:3px 5px;color:#666">'+escH(m.creado_por||'—')+'</td>'
           +'<td style="padding:3px 5px">'+escH(m.auditor_lider||'—')+'</td>'
           +'<td style="padding:3px 5px;color:#666;font-size:.72rem">'+escH(cols||'—')+'</td>'
           +'<td style="padding:3px 5px;text-align:center">'+badgeCarga+'</td>'
@@ -11708,13 +11684,37 @@ function bodRenderControlManifiestos() {
             .then(function(d){if(d.ok)_cargarVistaUnificada();else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
         });
       });
-      listaEl.querySelectorAll('.ctrl-man-btn-anul').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          if(!confirm('¿Anular? No se puede deshacer.'))return;
-          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/anular',{usuario:usuario})
-            .then(function(d){if(d.ok){window._bodManifiestoSeleccionado=null;_cargarVistaUnificada();}else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
+        // FIX (jue 11-jun-2026, v21): wire 💾 Guardar cambios (reemplaza Anular)
+        listaEl.querySelectorAll('.ctrl-man-btn-save').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var tr = btn.closest('tr');
+            if(!tr){ alert('No encontrado.'); return; }
+            var mId = tr.dataset.mid || btn.dataset.id;
+            var vals = {};
+            tr.querySelectorAll('.ctrl-inline-inp').forEach(function(inp){
+              vals[inp.dataset.field] = inp.value.trim();
+            });
+            var origText = btn.textContent;
+            btn.disabled = true; btn.textContent = '⏳';
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(mId)+'/guardar',
+              { usuario:usuario, furgon:vals.furgon||'', placa:(vals.placa||'').toUpperCase(),
+                marchamo:(vals.marchamo||'').toUpperCase(), licencia_hija:(vals.licencia_hija||'').toUpperCase(),
+                destino_tr999:(vals.destino_tr999||'').toUpperCase(), observacion:vals.observacion||'' })
+              .then(function(d){
+                if(d.ok){
+                  btn.textContent='✅'; btn.style.background='#1b5e20';
+                  setTimeout(function(){ btn.textContent=origText; btn.disabled=false; }, 1400);
+                  _cargarVistaUnificada();
+                } else {
+                  alert(d.error||'Error al guardar');
+                  btn.textContent=origText; btn.disabled=false;
+                }
+              }).catch(function(){
+                alert('Sin conexión');
+                btn.textContent=origText; btn.disabled=false;
+              });
+          });
         });
-      });
       // FIX (jue 11-jun-2026, v21): wire botón Borrar PT
       listaEl.querySelectorAll('.ctrl-man-btn-borrar').forEach(function(btn){
         btn.addEventListener('click',function(){
@@ -11813,13 +11813,6 @@ function bodRenderControlManifiestos() {
     });
   }
   _cargarVistaUnificada();
-  // FIX (jue 11-jun-2026, v21): poner fecha Guatemala en prefijo PT
-  var _ptPrefEl = document.getElementById('ctrl-pt-prefix');
-  if(_ptPrefEl) {
-    var _hoyGT2 = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
-    _ptPrefEl.textContent = 'PT-'+_hoyGT2+'-';
-  }
-
   // Wire: Crear papel de trabajo → guarda selección y va a Papel de Trabajo
   var btnCrear = document.getElementById('btn-ctrl-man-crear');
   if(btnCrear) btnCrear.addEventListener('click', function(){
@@ -11838,39 +11831,6 @@ function bodRenderControlManifiestos() {
     }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
   });
 
-  // Wire: Crear carga logística desde formulario
-  var btnCC = document.getElementById('btn-ctrl-crear-carga');
-  if(btnCC) btnCC.addEventListener('click', function(){
-    // FIX (jue 11-jun-2026, v21): leer PT desde campo compuesto
-    var _ptPfx = (document.getElementById('ctrl-pt-prefix')||{}).textContent||'';
-    var _ptN   = (document.getElementById('ctrl-pt-num') ? document.getElementById('ctrl-pt-num').value : '').trim();
-    var msgEl  = document.getElementById('ctrl-carga-msg');
-    if(!_ptN || !/^\d{1,2}$/.test(_ptN)){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el número de PT (01, 02…)</span>'; return; }
-    var correlativoInput = _ptPfx.replace(/\s/g,'')+String(_ptN).padStart(2,'0');
-    var furgon  = (document.getElementById('ctrl-furgon-inp').value||'').trim();
-    var placa   = (document.getElementById('ctrl-placa-inp').value||'').trim().toUpperCase();
-    var marcha  = (document.getElementById('ctrl-marchamo-inp').value||'').trim().toUpperCase();
-    var licHija = (document.getElementById('ctrl-lichija-inp').value||'').trim().toUpperCase();
-    var destino = (document.getElementById('ctrl-destino-inp').value||'').trim().toUpperCase();
-    var obs     = (document.getElementById('ctrl-obs-inp').value||'').trim();
-    if(!furgon) { if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
-    if(!licHija){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
-    if(!destino){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
-    if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino)){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Formato TR999.xxx.xx</span>'; return; }
-    if(msgEl) msgEl.innerHTML='<span style="color:#888">Creando…</span>';
-    var payload = {
-      desde_papel:true, tarimas:[], furgon:furgon, placa:placa, marchamo:marcha,
-      licencia_hija:licHija, destino_tr999:destino, observacion:obs,
-      usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
-    };
-    payload.correlativo = correlativoInput; // FIX v21: server busca o crea el manifiesto por correlativo
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', payload)
-      .then(function(d){
-        if(!d.ok){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
-        if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Furgón '+escH(d.furgon)+' creado.</span>';
-        _cargarVistaUnificada();
-      }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
-  });
 }
 
 function bodRenderManifiestoAuditoria() {
