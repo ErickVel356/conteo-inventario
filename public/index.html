@@ -10384,6 +10384,7 @@ var _bodDatosWms   = [];   // cache datos WMS vs App para filtros sin re-fetch
 var _bodDatosFlujo = [];   // cache datos Flujo Bolsón para filtros sin re-fetch
 window._bodTeorico952      = window._bodTeorico952      || {}; // teórico 952 cargado/persistido
 window._bodTeorico952Ultima = window._bodTeorico952Ultima || ''; // timestamp última carga
+window._bodManifiestoSeleccionado = null; // { id, licencia_hija, furgon, estado }
 window._bodPapelPersistido = window._bodPapelPersistido || {}; // papel de trabajo del server
 var _bodPapelGuardando = false; // prevenir doble POST
 var _bodDatosRem   = [];   // cache datos Remanentes para filtros sin re-fetch
@@ -10877,6 +10878,7 @@ function bodRenderAuditoria(data) {
     +'<button class="tab-pill'+(bodAudVista==='detalle'?' on':'')+'" id="bod-tab-detalle">📋 Detalle</button>'
     +'<button class="tab-pill'+(bodAudVista==='wms-app'?' on':'')+'" id="bod-tab-wms-app">📂 Carga Teórico</button>'
     +'<button class="tab-pill'+(bodAudVista==='flujo'?' on':'')+'" id="bod-tab-flujo">📝 Papel de Trabajo</button>'
+    +'<button class="tab-pill'+(bodAudVista==='control-manifiestos'?' on':'')+'" id="bod-tab-ctrl-manif">📋 Control de Manifiestos</button>'
     +'<button class="tab-pill'+(bodAudVista==='manifiesto'?' on':'')+'" id="bod-tab-manifiesto">📦 Manifiesto</button>'
     /* Remanentes oculto en Fase 1 — se re-habilita si se necesita */
     +'</div>';
@@ -10923,30 +10925,32 @@ function bodRenderAuditoria(data) {
   var btnDetalle = document.getElementById('bod-tab-detalle');
   var btnManifiesto = document.getElementById('bod-tab-manifiesto');
   function _switchTab(vista, fn) {
-    var ALL = ['bod-tab-tarimas','bod-tab-detalle','bod-tab-manifiesto','bod-tab-wms-app','bod-tab-flujo','bod-tab-remanentes'];
+    var ALL = ['bod-tab-tarimas','bod-tab-detalle','bod-tab-manifiesto','bod-tab-wms-app','bod-tab-flujo','bod-tab-remanentes','bod-tab-ctrl-manif'];
     ALL.forEach(function(id){ var b=document.getElementById(id); if(b) b.classList.remove('on'); });
     var active = document.getElementById('bod-tab-'+vista);
     if(active) active.classList.add('on');
     bodAudVista = vista;
     fn();
   }
-  ['tarimas','detalle','manifiesto','wms-app','flujo'/* remanentes oculto en Fase 1 */].forEach(function(v){
+  ['tarimas','detalle','manifiesto','wms-app','flujo','control-manifiestos'/* remanentes oculto en Fase 1 */].forEach(function(v){
     var btn = document.getElementById('bod-tab-'+v);
     if(btn) btn.addEventListener('click', function(){
       _switchTab(v, function(){
         if(v==='tarimas')    bodRenderTarimasAuditoria();
-        else if(v==='detalle')    bodRenderDetalleAuditoria(data);
-        else if(v==='manifiesto') bodRenderManifiestoAuditoria();
-        else if(v==='wms-app')   bodRenderWmsVsApp();
-        else if(v==='flujo')     bodRenderFlujoBolson();
+        else if(v==='detalle')            bodRenderDetalleAuditoria(data);
+        else if(v==='manifiesto')         bodRenderManifiestoAuditoria();
+        else if(v==='wms-app')           bodRenderWmsVsApp();
+        else if(v==='flujo')             bodRenderFlujoBolson();
+        else if(v==='control-manifiestos') bodRenderControlManifiestos();
         /* remanentes oculto en Fase 1: else if(v==='remanentes') bodRenderRemanentes(); */
       });
     });
   });
   if(bodAudVista === 'tarimas')     bodRenderTarimasAuditoria();
-  else if(bodAudVista === 'manifiesto') bodRenderManifiestoAuditoria();
-  else if(bodAudVista === 'wms-app')   bodRenderWmsVsApp();
-  else if(bodAudVista === 'flujo')     bodRenderFlujoBolson();
+  else if(bodAudVista === 'manifiesto')          bodRenderManifiestoAuditoria();
+  else if(bodAudVista === 'wms-app')            bodRenderWmsVsApp();
+  else if(bodAudVista === 'flujo')              bodRenderFlujoBolson();
+  else if(bodAudVista === 'control-manifiestos') bodRenderControlManifiestos();
   /* remanentes oculto en Fase 1 */
   else bodRenderDetalleAuditoria(data);
 }
@@ -11452,12 +11456,190 @@ if(document.readyState==='loading'){
 }
 
 // ── Vista Manifiesto ─────────────────────────────────────────────────────
+// ── Vista Control de Manifiestos ──────────────────────────────────────────
+// FIX (jue 11-jun-2026): nueva pestaña entre Papel de Trabajo y Manifiesto
+function bodRenderControlManifiestos() {
+  var vistaEl = document.getElementById('bod-aud-vista');
+  if(!vistaEl) return;
+  var sesId   = (bodAuditoriaData && bodAuditoriaData.sesion) ? bodAuditoriaData.sesion.id : '';
+  var usuario = window.currentUser ? window.currentUser.name : '';
+  var esAud   = isBodAuditor();
+  var cargas  = (bodAuditoriaData && bodAuditoriaData._cargas) || [];
+
+  // Opciones de licencia hija y furgón desde cargas logísticas
+  var licHijasSet = {};
+  cargas.forEach(function(cg){ if(cg.licencia_hija) licHijasSet[cg.licencia_hija]=cg.furgon||''; });
+  var licOpts = '<option value="">-- Licencia hija --</option>'
+    + Object.keys(licHijasSet).sort().map(function(lh){
+        return '<option value="'+escH(lh)+'" data-furgon="'+escH(licHijasSet[lh])+'">'+escH(lh)+' / Furgón '+escH(licHijasSet[lh])+'</option>';
+      }).join('');
+
+  // Estados con colores
+  var estadoStyle = {
+    'sin_iniciar':{'bg':'#f5f5f5','fg':'#666','label':'Sin iniciar'},
+    'en_proceso': {'bg':'#e3f2fd','fg':'#1565c0','label':'En proceso'},
+    'finalizado': {'bg':'#e8f5e9','fg':'#1b5e20','label':'Finalizado'},
+    'anulado':    {'bg':'#fdecea','fg':'#c0392b','label':'Anulado'}
+  };
+
+  vistaEl.innerHTML =
+    '<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem;letter-spacing:.3px">📋 Control de Manifiestos</div>'
+    // Crear manifiesto (solo auditores con sesión)
+    +(esAud && sesId && licOpts.includes('<option value="')?
+      '<div style="background:#f5f5f3;border-radius:8px;padding:.6rem .85rem;margin-bottom:.6rem;font-size:.78rem">'
+      +'<div style="font-weight:600;color:#333;margin-bottom:.35rem">Nuevo manifiesto</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+      +'<div><label style="font-size:.7rem;color:#666;display:block">Licencia hija / Furgón</label>'
+      +'<select id="ctrl-man-lic" class="field-inp" style="font-size:.76rem;padding:3px 6px;max-width:200px">'+licOpts+'</select></div>'
+      +'<button class="btn btn-sm btn-dark" id="btn-ctrl-man-crear" style="font-size:.74rem">+ Crear manifiesto</button>'
+      +'</div>'
+      +'<div id="ctrl-man-crear-msg" style="font-size:.76rem;margin-top:.3rem;min-height:1em"></div>'
+      +'</div>'
+    :'')
+    +'<div id="ctrl-man-lista"><div style="color:#888;font-size:.82rem">Cargando manifiestos…</div></div>';
+
+  // Cargar lista
+  function _cargarLista(){
+    var listaEl = document.getElementById('ctrl-man-lista');
+    if(!listaEl || !sesId) {
+      if(listaEl) listaEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin sesión activa.</div>';
+      return;
+    }
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control')
+      .then(function(d){
+        if(!listaEl) return;
+        if(!d.ok || !d.manifiestos || !d.manifiestos.length) {
+          listaEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin manifiestos registrados para esta sesión.</div>';
+          return;
+        }
+        var html='<div class="tbl-wrap"><table style="width:100%;font-size:.76rem;border-collapse:collapse">'
+          +'<thead><tr style="background:#e8ecf0">'
+          +'<th style="padding:3px 6px;text-align:left">Lic. hija</th>'
+          +'<th style="padding:3px 6px;text-align:left">Furgón</th>'
+          +'<th style="padding:3px 6px;text-align:center">Estado</th>'
+          +'<th style="padding:3px 6px;text-align:left">Auditor líder</th>'
+          +'<th style="padding:3px 6px;text-align:left">Colaboradores</th>'
+          +'<th style="padding:3px 6px;text-align:left">Última edición</th>'
+          +'<th style="padding:3px 6px;text-align:center">Acción</th>'
+          +'</tr></thead><tbody>';
+        d.manifiestos.forEach(function(m){
+          var es  = estadoStyle[m.estado] || estadoStyle['sin_iniciar'];
+          var badge='<span style="background:'+es.bg+';color:'+es.fg+';font-size:.72rem;padding:2px 8px;border-radius:8px">'+es.label+'</span>';
+          var cols = Array.isArray(m.colaboradores) ? m.colaboradores.join(', ') : '';
+          var ts   = m.actualizado_en ? new Date(m.actualizado_en).toLocaleString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+          var acciones='';
+          if(m.estado!=='anulado'){
+            // Entrar como colaborador si no es líder ni ya colaborador
+            var yaCols = Array.isArray(m.colaboradores)?m.colaboradores:[];
+            if(m.auditor_lider!==usuario && !yaCols.includes(usuario)){
+              acciones+='<button class="btn btn-xs ctrl-man-btn-colab" data-id="'+escH(m.id)+'" style="background:#e3f2fd;color:#1565c0;font-size:.71rem">Unirme</button> ';
+            }
+            // Ver/abrir manifiesto
+            acciones+='<button class="btn btn-xs ctrl-man-btn-ver" data-id="'+escH(m.id)+'" data-lic="'+escH(m.licencia_hija)+'" data-furgon="'+escH(m.furgon||'')+'" data-estado="'+escH(m.estado)+'" style="background:#e8f5e9;color:#1b5e20;font-size:.71rem">Ver manifiesto</button> ';
+            // Finalizar (auditor líder o auditor)
+            if(m.estado!=='finalizado' && esAud){
+              acciones+='<button class="btn btn-xs ctrl-man-btn-fin" data-id="'+escH(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.71rem">Finalizar</button> ';
+            }
+            // Reabrir (solo si finalizado + auditor líder o admin)
+            if(m.estado==='finalizado' && (m.auditor_lider===usuario||esAud)){
+              acciones+='<button class="btn btn-xs ctrl-man-btn-reab" data-id="'+escH(m.id)+'" style="background:#fff3e0;color:#e65100;font-size:.71rem">Reabrir</button> ';
+            }
+            // Anular (auditor)
+            if(esAud){
+              acciones+='<button class="btn btn-xs ctrl-man-btn-anul" data-id="'+escH(m.id)+'" style="background:#fdecea;color:#c0392b;font-size:.71rem">Anular</button>';
+            }
+          }
+          html+='<tr style="border-top:1px solid #eee">'
+            +'<td style="padding:3px 6px;color:#1565c0;font-weight:600">'+escH(m.licencia_hija)+'</td>'
+            +'<td style="padding:3px 6px">'+escH(m.furgon||'—')+'</td>'
+            +'<td style="padding:3px 6px;text-align:center">'+badge+'</td>'
+            +'<td style="padding:3px 6px">'+escH(m.auditor_lider||'—')+'</td>'
+            +'<td style="padding:3px 6px;color:#666">'+escH(cols||'—')+'</td>'
+            +'<td style="padding:3px 6px;font-size:.72rem;color:#888">'+escH(ts)+'</td>'
+            +'<td style="padding:3px 6px;white-space:nowrap">'+acciones+'</td>'
+            +'</tr>';
+        });
+        html+='</tbody></table></div>';
+        listaEl.innerHTML=html;
+
+        // Wire botones de acción
+        listaEl.querySelectorAll('.ctrl-man-btn-colab').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/colaborador',{usuario:usuario})
+              .then(function(d){ if(d.ok)_cargarLista(); else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+          });
+        });
+        listaEl.querySelectorAll('.ctrl-man-btn-ver').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            window._bodManifiestoSeleccionado = { id:btn.dataset.id, licencia_hija:btn.dataset.lic, furgon:btn.dataset.furgon, estado:btn.dataset.estado };
+            // Registrar entrada si no es líder
+            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/colaborador',{usuario:usuario}).catch(function(){});
+            bodAudVista='manifiesto';
+            bodRenderAuditoria(bodAuditoriaData);
+          });
+        });
+        listaEl.querySelectorAll('.ctrl-man-btn-fin').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            if(!confirm('¿Finalizar este manifiesto?')) return;
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/finalizar',{usuario:usuario})
+              .then(function(d){ if(d.ok)_cargarLista(); else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+          });
+        });
+        listaEl.querySelectorAll('.ctrl-man-btn-reab').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            if(!confirm('¿Reabrir este manifiesto?')) return;
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/reabrir',
+              {usuario:usuario, auditor:isBodAuditor(), supervisor:isSup()})
+              .then(function(d){ if(d.ok)_cargarLista(); else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+          });
+        });
+        listaEl.querySelectorAll('.ctrl-man-btn-anul').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            if(!confirm('¿Anular este manifiesto? Esta acción no se puede deshacer.')) return;
+            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/anular',{usuario:usuario})
+              .then(function(d){ if(d.ok){window._bodManifiestoSeleccionado=null;_cargarLista();}else alert(d.error||'Error'); }).catch(function(){alert('Sin conexión');});
+          });
+        });
+      }).catch(function(){ if(listaEl) listaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error cargando manifiestos.</div>'; });
+  }
+  _cargarLista();
+
+  // Wire crear
+  var btnCrear = document.getElementById('btn-ctrl-man-crear');
+  if(btnCrear) btnCrear.addEventListener('click', function(){
+    var sel  = document.getElementById('ctrl-man-lic');
+    var lic  = sel ? sel.value : '';
+    var furg = sel ? (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.furgon||'' : '') : '';
+    var msg  = document.getElementById('ctrl-man-crear-msg');
+    if(!lic){ if(msg) msg.innerHTML='<span style="color:#c0392b">Seleccioná una licencia hija.</span>'; return; }
+    if(msg) msg.innerHTML='<span style="color:#888">Creando…</span>';
+    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control',{
+      licencia_hija:lic, furgon:furg, auditor_lider:usuario, creado_por:usuario
+    }).then(function(d){
+      if(d.ok){ if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ Manifiesto creado.</span>'; _cargarLista(); }
+      else { if(msg) msg.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; }
+    }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+  });
+}
+
 function bodRenderManifiestoAuditoria() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
   var esAud = isBodAuditor();
   var sesId = bodAuditoriaData.sesion && bodAuditoriaData.sesion.id;
-  if(!sesId) { vistaEl.innerHTML = '<div style="color:#aaa;font-size:.85rem;padding:1rem">Sin sesión cargada.</div>'; return; }
+  // FIX (jue 11-jun-2026): requiere manifiesto seleccionado desde Control de Manifiestos
+  if(!window._bodManifiestoSeleccionado) {
+    vistaEl.innerHTML = '<div style="background:#fff8e1;border-radius:8px;padding:.9rem 1rem;font-size:.82rem;color:#795548">'
+      +'📋 <strong>Seleccioná un manifiesto desde Control de Manifiestos</strong> para abrirlo aquí.'
+      +'<br><button class="btn btn-sm" id="btn-manif-ir-ctrl" style="margin-top:.4rem;font-size:.75rem">Ir a Control de Manifiestos</button>'
+      +'</div>';
+    var bCtrl = document.getElementById('btn-manif-ir-ctrl');
+    if(bCtrl) bCtrl.addEventListener('click', function(){
+      bodAudVista = 'control-manifiestos';
+      bodRenderAuditoria(bodAuditoriaData);
+    });
+    return;
+  }
   // Evitar fetch simultáneo si ya hay uno en curso
   if(bodManifestLoading) return;
   // Reconstruir shell si no existe #manif-body (ej: venimos de Detalle)
@@ -12007,23 +12189,60 @@ function bodRenderWmsVsApp() {
       try {
         var wb   = await XLSX.readAsync(ev.target.result);
         var ws   = wb.Sheets[wb.SheetNames[0]];
-        var rows = XLSX.utils.sheet_to_json(ws, {defval:'', raw:false});
-        var teo  = {};
-        rows.forEach(function(row){
-          var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
-          if(!sku) return;
-          function _fv(){
-            for(var _i=0;_i<arguments.length;_i++){
-              var _v=row[arguments[_i]];
-              if(_v!==undefined&&_v!==null&&String(_v).trim()!=='') return _v;
-            } return '';
+        // FIX (jue 11-jun-2026): sheetToJson embebido SIEMPRE retorna array de arrays.
+        // Usar header:1 explícito y detectar fila de encabezados manualmente.
+        var aoa  = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+        // Normalizar encabezado: trim + uppercase + quitar acentos + quitar puntos + colapsar espacios
+        function _normH(h){
+          return String(h||'').trim().toUpperCase()
+            .replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U')
+            .replace(/Ñ/g,'N').replace(/\./g,'').replace(/\s+/g,' ').trim();
+        }
+        // Detectar fila de encabezados buscando en las primeras 20 filas
+        var hdrRowIdx = -1, hdrNorm = [], skuCol = -1;
+        for(var ri=0; ri<Math.min(20,aoa.length); ri++){
+          var nr = aoa[ri].map(_normH);
+          var si = -1;
+          for(var ci=0;ci<nr.length;ci++){
+            var n=nr[ci];
+            if(n==='SKU'||n==='CODIGO'||n==='CODIGO SKU'||n==='COD'||n==='CÓDIGO'){si=ci;break;}
           }
-          teo[bodTeoKey('', sku)] = {
-            nombre:     String(_fv('Nombre','NOMBRE','Descripción','DESCRIPCION','nombre')||''),
-            cantidad:   Number(_fv('Cant.','Cant','Cantidad','CANTIDAD','cantidad'))||0,
-            unidad:     String(_fv('Unidad','unidad','UNIDAD','Und','UND')||'U'),
-            existencia: Number(_fv('Exist.','Exist','Existencia','EXISTENCIA','existencia'))||0,
-            disponible: Number(_fv('Disp.','Disp','Disponible','DISPONIBLE','disponible'))||0
+          if(si!==-1){ hdrRowIdx=ri; hdrNorm=nr; skuCol=si; break; }
+        }
+        if(hdrRowIdx===-1){
+          // Diagnóstico: mostrar primeras filas
+          var diag=aoa.slice(0,5).map(function(r){return r.slice(0,6).join('|');}).join(' / ');
+          var mErr=document.getElementById('bod-teo952-msg');
+          if(mErr) mErr.innerHTML='<span style="color:#c0392b">❌ No se detectó columna SKU. '
+            +'Encabezados encontrados: '+escH(diag)+'</span>';
+          return;
+        }
+        // Mapear índices de columnas útiles
+        function _col(cands){
+          for(var i=0;i<cands.length;i++){
+            var idx=hdrNorm.indexOf(cands[i]);
+            if(idx!==-1) return idx;
+          }
+          return -1;
+        }
+        var iNom = _col(['NOMBRE','DESCRIPCION','DESCRIPCIÓN','PRODUCTO']);
+        var iCnt = _col(['CANT','CANTIDAD','QTY']);
+        var iUnd = _col(['UNIDAD','UND','U']);
+        var iEx  = _col(['EXIST','EXISTENCIA']);
+        var iDis = _col(['DISP','DISPONIBLE']);
+        function _get(row,i){ return i>=0&&row[i]!==undefined&&row[i]!==null ? row[i] : ''; }
+
+        var teo={};
+        aoa.slice(hdrRowIdx+1).forEach(function(row){
+          var sku=String(_get(row,skuCol)||'').trim().toUpperCase();
+          if(!sku||sku==='SKU'||sku==='CODIGO') return;
+          teo[bodTeoKey('',sku)]={
+            nombre:     String(_get(row,iNom)||''),
+            cantidad:   Number(_get(row,iCnt))||0,
+            unidad:     String(_get(row,iUnd)||'U'),
+            existencia: Number(_get(row,iEx))||0,
+            disponible: Number(_get(row,iDis))||0
           };
         });
 
