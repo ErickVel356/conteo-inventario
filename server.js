@@ -5393,30 +5393,58 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-word', bodGuard
       return '';
     }
 
-    // ── Fuente de datos: bod_lineas (misma que pantalla y PDF) ───────────────
-    // cg.resumen_skus no tiene estado de auditoría real; bod_lineas sí.
-    var bodLineasWord = await supabase('GET', 'bod_lineas', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
-    bodLineasWord = Array.isArray(bodLineasWord) ? bodLineasWord : [];
-    var asigWordRows = await supabase('GET', 'bod_tarima_furgon', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId));
-    var tarimaFurgonWord = {};
-    (Array.isArray(asigWordRows)?asigWordRows:[]).forEach(function(a){
-      tarimaFurgonWord[a.tarima] = a.furgon;
-    });
-    var porSkuWord = {};
-    bodLineasWord.forEach(function(l){
-      if(tarimaFurgonWord[l.tarima] !== furgon) return;
-      var sku=l.sku||'?', desc=l.descripcion||'';
-      if(!porSkuWord[sku]) porSkuWord[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
-      var e=porSkuWord[sku];
-      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
-      if(!l.auditado){ e.pendientes++; }
-      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
-      if(!e.descripcion&&desc) e.descripcion=desc;
-    });
-    Object.values(porSkuWord).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
-    var resSkus = Object.values(porSkuWord);
+    // ── FIX (mié 10-jun-2026): Papel de Trabajo como fuente PRIMARIA ──────────
+    // Si existe bod_papel_trabajo para esta sesión+licencia_hija → ese es el manifiesto.
+    // Si no → fallback a Tarimas (bod_lineas, lógica original).
+    var resSkus;
+    try {
+      var papelWordQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&licencia_hija=eq.'+encodeURIComponent(licId)
+        +'&furgon=eq.'+encodeURIComponent(furgon)
+        +'&select=sku,nombre,fisico_auditoria,cantidad_manifiesto,estado_papel,diferencia';
+      var papelWordRows = await supabase('GET', 'bod_papel_trabajo', null, papelWordQ);
+      papelWordRows = Array.isArray(papelWordRows) ? papelWordRows : [];
+      if(papelWordRows.length > 0) {
+        // FUENTE: Papel de Trabajo
+        resSkus = papelWordRows.map(function(p){
+          var cantM = Number(p.cantidad_manifiesto)||0;
+          var fisico = p.fisico_auditoria != null ? Number(p.fisico_auditoria) : null;
+          return {
+            sku:              p.sku,
+            descripcion:      p.nombre || '',
+            unidades:         cantM,
+            cantidad_auditada:fisico,
+            _fuente:          'PT'
+          };
+        });
+      } else {
+        throw new Error('sin_papel'); // cae al fallback
+      }
+    } catch(eP) {
+      // FALLBACK: Tarimas (lógica original)
+      var bodLineasWord = await supabase('GET', 'bod_lineas', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
+      bodLineasWord = Array.isArray(bodLineasWord) ? bodLineasWord : [];
+      var asigWordRows = await supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      var tarimaFurgonWord = {};
+      (Array.isArray(asigWordRows)?asigWordRows:[]).forEach(function(a){
+        tarimaFurgonWord[a.tarima] = a.furgon;
+      });
+      var porSkuWord = {};
+      bodLineasWord.forEach(function(l){
+        if(tarimaFurgonWord[l.tarima] !== furgon) return;
+        var sku=l.sku||'?', desc=l.descripcion||'';
+        if(!porSkuWord[sku]) porSkuWord[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0,_fuente:'TAR'};
+        var e=porSkuWord[sku];
+        e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+        if(!l.auditado){ e.pendientes++; }
+        else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+        if(!e.descripcion&&desc) e.descripcion=desc;
+      });
+      Object.values(porSkuWord).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+      resSkus = Object.values(porSkuWord);
+    }
 
     // ── Construir DOCX con librería docx ────────────────────────────────────
     var docx;
@@ -5671,27 +5699,54 @@ app.get('/api/bod/sesion/:id/carga-logistica/:cargaId/manifiesto-pdf', bodGuard,
     var recibidoPor = String(cg.recibido_por||'');
     var idCont      = String(cg.hamilton_contenedor||cg.id_contenedor||cg.contenedor||''); // NO usar licencia_hija
 
-    // ── Obtener datos reales de auditoría desde bod_lineas (igual que Word y manifiesto) ──
-    var bodLineasPdf = await supabase('GET', 'bod_lineas', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
-    bodLineasPdf = Array.isArray(bodLineasPdf) ? bodLineasPdf : [];
-    var asigPdfRows = await supabase('GET', 'bod_tarima_furgon', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId));
-    var tarimaFurgonPdf = {};
-    (Array.isArray(asigPdfRows)?asigPdfRows:[]).forEach(function(a){ tarimaFurgonPdf[a.tarima]=a.furgon; });
-    var porSkuPdf = {};
-    bodLineasPdf.forEach(function(l){
-      if(tarimaFurgonPdf[l.tarima] !== furgon) return;
-      var sku=l.sku||'?', desc=l.descripcion||'';
-      if(!porSkuPdf[sku]) porSkuPdf[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0};
-      var e=porSkuPdf[sku];
-      e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
-      if(!l.auditado){ e.pendientes++; }
-      else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
-      if(!e.descripcion&&desc) e.descripcion=desc;
-    });
-    Object.values(porSkuPdf).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
-    var resSkus = Object.values(porSkuPdf);
+    // ── FIX (mié 10-jun-2026): Papel de Trabajo como fuente PRIMARIA ──────────
+    var resSkus;
+    try {
+      var papelPdfQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&licencia_hija=eq.'+encodeURIComponent(licId)
+        +'&furgon=eq.'+encodeURIComponent(furgon)
+        +'&select=sku,nombre,fisico_auditoria,cantidad_manifiesto,estado_papel,diferencia';
+      var papelPdfRows = await supabase('GET', 'bod_papel_trabajo', null, papelPdfQ);
+      papelPdfRows = Array.isArray(papelPdfRows) ? papelPdfRows : [];
+      if(papelPdfRows.length > 0) {
+        // FUENTE: Papel de Trabajo
+        resSkus = papelPdfRows.map(function(p){
+          var cantM  = Number(p.cantidad_manifiesto)||0;
+          var fisico = p.fisico_auditoria != null ? Number(p.fisico_auditoria) : null;
+          return {
+            sku:              p.sku,
+            descripcion:      p.nombre || '',
+            unidades:         cantM,
+            cantidad_auditada:fisico,
+            _fuente:          'PT'
+          };
+        });
+      } else {
+        throw new Error('sin_papel');
+      }
+    } catch(eP) {
+      // FALLBACK: Tarimas
+      var bodLineasPdf = await supabase('GET', 'bod_lineas', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)+'&eliminada=eq.false&order=ts_captura.asc&limit=5000&select=sku,descripcion,cantidad,cantidad_audit,auditado,tarima');
+      bodLineasPdf = Array.isArray(bodLineasPdf) ? bodLineasPdf : [];
+      var asigPdfRows = await supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      var tarimaFurgonPdf = {};
+      (Array.isArray(asigPdfRows)?asigPdfRows:[]).forEach(function(a){ tarimaFurgonPdf[a.tarima]=a.furgon; });
+      var porSkuPdf = {};
+      bodLineasPdf.forEach(function(l){
+        if(tarimaFurgonPdf[l.tarima] !== furgon) return;
+        var sku=l.sku||'?', desc=l.descripcion||'';
+        if(!porSkuPdf[sku]) porSkuPdf[sku]={sku:sku,descripcion:desc,unidades:0,lineasCount:0,pendientes:0,cantidad_auditada:null,_auditSum:0,_auditCount:0,_fuente:'TAR'};
+        var e=porSkuPdf[sku];
+        e.unidades+=Number(l.cantidad)||0; e.lineasCount++;
+        if(!l.auditado){ e.pendientes++; }
+        else if(l.cantidad_audit!=null){ e._auditSum+=Number(l.cantidad_audit)||0; e._auditCount++; }
+        if(!e.descripcion&&desc) e.descripcion=desc;
+      });
+      Object.values(porSkuPdf).forEach(function(e){ if(e._auditCount>0) e.cantidad_auditada=e._auditSum; });
+      resSkus = Object.values(porSkuPdf);
+    }
 
     function fd() {
       for(var _i=0;_i<arguments.length;_i++){
@@ -6029,11 +6084,12 @@ app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
     var cached = cacheGet(ck);
     if(cached) return res.json(cached);
 
-    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc';
+    // FIX (mié 10-jun-2026): select=* para retornar todos los campos incluyendo nuevos
+    var query = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc&select=*';
     if(licHija) query += '&licencia_hija=eq.'+encodeURIComponent(licHija);
     var rows = await supabase('GET', 'bod_papel_trabajo', null, query);
     var resp = { ok:true, rows: Array.isArray(rows) ? rows : [] };
-    cacheSet(ck, resp, 15000); // 15s — cambia frecuentemente al validar
+    cacheSet(ck, resp, 15000); // 15s
     res.json(resp);
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
@@ -6041,8 +6097,11 @@ app.get('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 });
 
 // ── POST /api/bod/sesion/:id/papel-trabajo ────────────────────────────────
-// Body: { licencia_hija, skus: [{sku,fisico_auditoria,diferencia,seguimiento,
-//                                validado,cantidad_manifiesto,validado_por}] }
+// FIX (mié 10-jun-2026): acepta campos extendidos: nombre, cantidad_952,
+// estado_papel, tr999, tarimas, furgon, destino
+// Body: { licencia_hija, skus: [{sku,nombre,cantidad_952,fisico_auditoria,
+//         diferencia,seguimiento,estado_papel,tr999,tarimas,furgon,destino,
+//         validado,cantidad_manifiesto,validado_por}] }
 app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
   try {
     var sesId    = String(req.params.id).trim();
@@ -6054,9 +6113,11 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
     var now = new Date().toISOString();
     var upserts = skus.map(function(s){
       var validado = !!s.validado;
-      return {
+      // FIX (mié 10-jun-2026): licencia_hija por fila si viene; fallback al body
+      var licFila = String(s.licencia_hija || licencia_hija || '').trim().toUpperCase();
+      var row = {
         sesion_id:           sesId,
-        licencia_hija:       licencia_hija,
+        licencia_hija:       licFila,
         sku:                 String(s.sku||'').trim().toUpperCase(),
         fisico_auditoria:    Number(s.fisico_auditoria)||0,
         diferencia:          Number(s.diferencia)||0,
@@ -6067,15 +6128,22 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
         validado_en:         validado ? (s.validado_en || now) : null,
         actualizado_en:      now
       };
+      if(s.nombre     !== undefined) row.nombre        = String(s.nombre||'');
+      if(s.cantidad_952 !== undefined) row.cantidad_952 = Number(s.cantidad_952)||0;
+      if(s.estado_papel !== undefined) row.estado_papel = String(s.estado_papel||'');
+      if(s.tr999      !== undefined) row.tr999          = String(s.tr999||'');
+      if(s.tarimas    !== undefined) row.tarimas        = String(s.tarimas||'');
+      if(s.furgon     !== undefined) row.furgon         = String(s.furgon||'');
+      if(s.destino    !== undefined) row.destino        = String(s.destino||'');
+      return row;
     }).filter(function(r){ return !!r.sku; });
 
     if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
 
     var saved = await supabase('POST', 'bod_papel_trabajo', upserts,
-      '?on_conflict=sesion_id,licencia_hija,sku');
+      '?on_conflict=sesion_id,licencia_hija,furgon,sku');
 
     cacheInvalidatePrefix('bod:papel:'+sesId+':');
-
     res.json({ ok:true, guardados: upserts.length });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
