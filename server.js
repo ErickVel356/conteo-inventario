@@ -6207,13 +6207,21 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 // FIX (jue 11-jun-2026): Control de Manifiestos — Bodega CDG
 
 // GET /api/bod/sesion/:id/manifiestos-control
-// FIX (jue 11-jun-2026, server v21): excluir eliminados de la lista
+// FIX (jue 11-jun-2026, server v21): excluir eliminados + incluir _skuCount por manifiesto
 app.get('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
     var rows = await supabase('GET', 'bod_manifiestos_control', null,
       '?sesion_id=eq.'+encodeURIComponent(sesId)+'&estado=neq.eliminado&order=creado_en.desc&select=*');
-    res.json({ ok:true, manifiestos: Array.isArray(rows) ? rows : [] });
+    // Cargar conteos de SKUs en Papel de Trabajo por manifiesto
+    var ptRows = await supabase('GET','bod_papel_trabajo',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&select=manifiesto_id').catch(function(){return[];});
+    var skuCounts = {};
+    if(Array.isArray(ptRows)) ptRows.forEach(function(r){ if(r.manifiesto_id) skuCounts[r.manifiesto_id]=(skuCounts[r.manifiesto_id]||0)+1; });
+    var manifiestos = (Array.isArray(rows)?rows:[]).map(function(m){
+      return Object.assign({},m,{_skuCount: skuCounts[m.id]||0});
+    });
+    res.json({ ok:true, manifiestos: manifiestos });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
@@ -6409,6 +6417,51 @@ app.delete('/api/bod/sesion/:id/manifiestos-control/:mId', bodGuard, async (req,
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
+
+// PATCH /api/bod/sesion/:id/manifiestos-control/:mId/guardar
+// FIX (jue 11-jun-2026, server v21): guardar campos editables inline (furgon, placa, marchamo, licencia_hija, destino_tr999, observacion)
+// Actualiza bod_manifiestos_control + upsert en bod_furgon_cierres.
+app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/guardar', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var mId    = String(req.params.mId).trim();
+    var { usuario, furgon, placa, marchamo, licencia_hija, destino_tr999, observacion } = req.body || {};
+    usuario       = String(usuario||''  ).trim();
+    furgon        = String(furgon||''  ).trim();
+    placa         = String(placa||''   ).trim().toUpperCase();
+    marchamo      = String(marchamo||''  ).trim().toUpperCase();
+    licencia_hija = String(licencia_hija||''  ).trim().toUpperCase();
+    destino_tr999 = String(destino_tr999||''  ).trim().toUpperCase();
+    observacion   = String(observacion||''  ).trim();
+    var now = new Date().toISOString();
+    // 1. Actualizar bod_manifiestos_control con furgon + licencia_hija
+    await supabase('PATCH','bod_manifiestos_control',
+      { furgon:furgon, licencia_hija:licencia_hija, actualizado_por:usuario, actualizado_en:now },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    // 2. Upsert bod_furgon_cierres por manifiesto_id (crear si no existe, actualizar si existe)
+    var existing = await supabase('GET','bod_furgon_cierres',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&manifiesto_id=eq.'+encodeURIComponent(mId)+'&limit=1&select=id').catch(function(){return[];});
+    if(Array.isArray(existing)&&existing[0]&&existing[0].id) {
+      // Actualizar carga existente
+      await supabase('PATCH','bod_furgon_cierres',
+        { furgon:furgon, placa:placa, marchamo:marchamo, licencia_hija:licencia_hija,
+          destino_tr999:destino_tr999, observacion:observacion,
+          actualizado_por:usuario, actualizado_en:now },
+        '?id=eq.'+encodeURIComponent(existing[0].id));
+    } else {
+      // Crear carga nueva vinculada al manifiesto
+      await supabase('POST','bod_furgon_cierres',
+        [{ sesion_id:sesId, manifiesto_id:mId, furgon:furgon, placa:placa, marchamo:marchamo,
+           licencia_hija:licencia_hija, destino_tr999:destino_tr999, observacion:observacion,
+           estado:'abierta', desde_papel:true, tarimas:[],
+           creado_por:usuario, creado_en:now, actualizado_por:usuario, actualizado_en:now }],
+        '?select=id').catch(function(){});
+    }
+    invalidarCacheSesion(sesId);
+    console.log('BOD guardar-campos manif: '+mId+' por '+usuario);
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
 // PATCH /api/bod/sesion/:id/manifiestos-control/:mId/anular
 app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/anular', bodGuard, async (req, res) => {
   try {
