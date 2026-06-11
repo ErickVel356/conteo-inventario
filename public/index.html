@@ -11464,13 +11464,13 @@ function bodRenderControlManifiestos() {
   var usuario = window.currentUser ? window.currentUser.name : '';
   var esAud   = isBodAuditor();
 
-  // FIX (jue 11-jun-2026): obtener sesId robusto — bodAuditoriaData O cache de sesiones activas
+  // FIX (jue 11-jun-2026): obtener sesId robusto — bodAuditoriaData → cache → fetch directo
   var sesId = (bodAuditoriaData && bodAuditoriaData.sesion) ? bodAuditoriaData.sesion.id : '';
   var sesionNombre = sesId
     ? ((bodAuditoriaData.sesion.licencia_id||'')+' · '+(bodAuditoriaData.sesion.fecha_trabajo||''))
     : '';
 
-  // Si no hay sesId local, intentar usar la primera sesión del cache de Tarimas
+  // Intento 1: cache de sesiones activas (sin fetch extra)
   if(!sesId && window._bodSesionesActivasCacheCliente) {
     var cacheSes = window._bodSesionesActivasCacheCliente.data && window._bodSesionesActivasCacheCliente.data.sesiones;
     if(cacheSes && cacheSes.length) {
@@ -11479,30 +11479,41 @@ function bodRenderControlManifiestos() {
     }
   }
 
-  // Estados con colores
+  // Intento 2: si todavía no hay sesId, hacer fetch y re-renderizar
+  if(!sesId) {
+    vistaEl.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.5rem">⏳ Buscando sesión activa…</div>';
+    bodFetch('GET', '/api/bod/sesiones-activas')
+      .then(function(d) {
+        if(d.ok && Array.isArray(d.sesiones) && d.sesiones.length) {
+          window._bodSesionesActivasCacheCliente = { data:d, ts:Date.now() };
+          bodRenderControlManifiestos(); // re-render con sesId disponible
+        } else {
+          vistaEl.innerHTML =
+            '<div style="background:#fdecea;border-radius:8px;padding:.9rem 1rem;font-size:.82rem;color:#c0392b">'
+            +'⚠ No hay sesión base abierta para crear manifiestos hoy.'
+            +'<br><span style="font-size:.76rem;color:#888">Abrí una sesión desde Tarimas primero.</span>'
+            +'<br><button class="btn btn-sm" id="btn-ctrl-ir-tarimas" style="margin-top:.4rem;font-size:.75rem">Ir a Tarimas</button>'
+            +'</div>';
+          var bT2=document.getElementById('btn-ctrl-ir-tarimas');
+          if(bT2) bT2.addEventListener('click',function(){
+            bodAudVista='tarimas';
+            bodRenderAuditoria(bodAuditoriaData||{sesion:{},lineas:[],_cargas:[]});
+          });
+        }
+      })
+      .catch(function(){
+        vistaEl.innerHTML='<div style="color:#c0392b;font-size:.82rem;padding:.5rem">Error al buscar sesiones activas.</div>';
+      });
+    return;
+  }
+
+  // FIX: crear manifiesto: solo pide correlativo automático, no licencia_hija/furgon
   var estadoStyle = {
     'sin_iniciar':{'bg':'#f5f5f5','fg':'#666','label':'Sin iniciar'},
     'en_proceso': {'bg':'#e3f2fd','fg':'#1565c0','label':'En proceso'},
     'finalizado': {'bg':'#e8f5e9','fg':'#1b5e20','label':'Finalizado'},
     'anulado':    {'bg':'#fdecea','fg':'#c0392b','label':'Anulado'}
   };
-
-  if(!sesId) {
-    // Sin sesión: guiar al usuario a Tarimas
-    vistaEl.innerHTML =
-      '<div style="background:#fff8e1;border-radius:8px;padding:.9rem 1rem;font-size:.82rem;color:#795548">'
-      +'📋 <strong>Seleccioná una licencia desde Tarimas</strong> para crear o continuar un manifiesto.'
-      +'<br><button class="btn btn-sm" id="btn-ctrl-ir-tarimas" style="margin-top:.4rem;font-size:.75rem">Ir a Tarimas</button>'
-      +'</div>';
-    var bT = document.getElementById('btn-ctrl-ir-tarimas');
-    if(bT) bT.addEventListener('click', function(){
-      bodAudVista = 'tarimas';
-      bodRenderAuditoria(bodAuditoriaData||{sesion:{},lineas:[],_cargas:[]});
-    });
-    return;
-  }
-
-  // FIX: crear manifiesto: solo pide correlativo automático, no licencia_hija/furgon
   var formCrear = esAud
     ? '<div style="background:#f5f5f3;border-radius:8px;padding:.6rem .85rem;margin-bottom:.6rem;font-size:.78rem">'
       +'<div style="font-weight:600;color:#333;margin-bottom:.35rem">Nuevo papel de trabajo / manifiesto'
@@ -11521,12 +11532,9 @@ function bodRenderControlManifiestos() {
 
   // ── Helper: ir a Papel de Trabajo con manifiesto seleccionado ─────────────
   function _irAPapel(m) {
-    window._bodManifiestoSeleccionado = {
-      id:           m.id,
-      licencia_hija:m.licencia_hija,
-      furgon:       m.furgon||'',
-      estado:       m.estado
-    };
+    // FIX (jue 11-jun-2026): guardar objeto COMPLETO (no solo id/licencia/furgon/estado)
+    // + _sesId para que Papel de Trabajo lo use cuando bodAuditoriaData.sesion.id esté vacío
+    window._bodManifiestoSeleccionado = Object.assign({}, m, { _sesId: sesId });
     // Registrar colaborador (y activar en_proceso si aplica)
     bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(m.id)+'/colaborador',
       { usuario:usuario }).catch(function(){});
@@ -12494,7 +12502,10 @@ function bodRenderFlujoBolson() {
   var cargas   = (bodAuditoriaData._cargas) || [];
   var lineas   = bodAuditoriaData.lineas || [];
   var esAud    = isBodAuditor();
-  var sesIdPapel = (bodAuditoriaData.sesion||{}).id||'';
+  // FIX (jue 11-jun-2026): usar _sesId del manifiesto cuando bodAuditoriaData no tiene sesión
+  var sesIdPapel = (bodAuditoriaData.sesion||{}).id
+                || (window._bodManifiestoSeleccionado && window._bodManifiestoSeleccionado._sesId)
+                || '';
   var sesId    = sesIdPapel;
   var sesion   = bodAuditoriaData.sesion || {};
   var usuario  = window.currentUser ? window.currentUser.name : '';
@@ -12634,7 +12645,20 @@ function bodRenderFlujoBolson() {
   // Cargar y renderizar filas del manifiesto
   function _cargarFilasPapel() {
     var tblEl = document.getElementById('papel-tabla-cont');
-    if(!tblEl || !sesIdPapel || !m.id) return;
+    if(!tblEl) return;
+    // FIX (jue 11-jun-2026): validar antes de fetch — no dejar "Cargando" infinito
+    if(!sesIdPapel || !m.id) {
+      tblEl.innerHTML = '<div style="background:#fdecea;border-radius:6px;padding:.5rem .8rem;font-size:.8rem;color:#c0392b">'
+        +'⚠ Manifiesto no válido. Volvé a Control de Manifiestos.'
+        +' <button class="btn btn-xs" id="btn-papel-volver-ctrl2" style="margin-left:4px;font-size:.71rem">Volver</button>'
+        +'</div>';
+      var bV=document.getElementById('btn-papel-volver-ctrl2');
+      if(bV) bV.addEventListener('click',function(){
+        bodAudVista='control-manifiestos';
+        bodRenderAuditoria(bodAuditoriaData||{sesion:{},lineas:[],_cargas:[]});
+      });
+      return;
+    }
     bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)
       +'/papel-trabajo?manifiesto_id='+encodeURIComponent(m.id))
       .then(function(d) {
