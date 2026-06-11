@@ -10853,24 +10853,33 @@ function bodRenderAuditoria(data) {
   var el = document.getElementById('bod-aud-contenido');
   if(!el) return;
   var sesion = (data && data.sesion) || {};
-  // Construir badge de licencias adicionales para mostrar en el header
-  var licAdicBadges = bodLicenciasAdicionales.length
-    ? ' <span style="font-size:.7rem;background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px">+'+bodLicenciasAdicionales.join(', +')+'</span>' : '';
-  var header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem">'
-    +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">'
-    +'<span>Sesión <strong>'+escH(sesion.id||'')+'</strong>'
-    +' · '+escH(sesion.licencia_id||'')+licAdicBadges+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
-    +'<button class="btn btn-xs" id="bod-btn-consolidado" style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;margin-left:auto">📥 Consolidado Excel</button>'
-    +'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-    +'<label style="font-size:.73rem;color:#888">+ Licencia bolsón:</label>'
-    +'<input type="text" id="bod-adic-licencia" class="field-inp" placeholder="Ej: U25-162300"'
-    +' style="width:130px;padding:3px 7px;font-size:.78rem;text-transform:uppercase">'
-    +'<button class="btn btn-xs" id="bod-btn-adic-add" style="background:#e3f2fd;color:#1565c0;font-size:.72rem">Añadir</button>'
-    +'<span id="bod-adic-lista" style="font-size:.73rem;color:#555"></span>'
-    +'<span id="bod-adic-msg" style="font-size:.73rem;margin-left:4px"></span>'
-    +'</div>'
-    +'</div>';
+  // FIX (mié 10-jun-2026): header condicional — solo mostrar cuando hay sesión real
+  var header;
+  if(sesion.id) {
+    // Construir badge de licencias adicionales para mostrar en el header
+    var licAdicBadges = bodLicenciasAdicionales.length
+      ? ' <span style="font-size:.7rem;background:#e3f2fd;color:#1565c0;padding:1px 6px;border-radius:8px">+'+bodLicenciasAdicionales.join(', +')+'</span>' : '';
+    header = '<div style="font-size:.8rem;color:#666;margin-bottom:.4rem">'
+      +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">'
+      +'<span>Sesión <strong>'+escH(sesion.id||'')+'</strong>'
+      +' · '+escH(sesion.licencia_id||'')+licAdicBadges+' · '+escH(sesion.fecha_trabajo||'')+' · <strong>'+escH(sesion.estado||'')+'</strong></span>'
+      +'<button class="btn btn-xs" id="bod-btn-consolidado" style="background:#e8f5e9;color:#1b5e20;font-size:.72rem;margin-left:auto">📥 Consolidado Excel</button>'
+      +'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+      +'<label style="font-size:.73rem;color:#888">+ Licencia bolsón:</label>'
+      +'<input type="text" id="bod-adic-licencia" class="field-inp" placeholder="Ej: U25-162300"'
+      +' style="width:130px;padding:3px 7px;font-size:.78rem;text-transform:uppercase">'
+      +'<button class="btn btn-xs" id="bod-btn-adic-add" style="background:#e3f2fd;color:#1565c0;font-size:.72rem">Añadir</button>'
+      +'<span id="bod-adic-lista" style="font-size:.73rem;color:#555"></span>'
+      +'<span id="bod-adic-msg" style="font-size:.73rem;margin-left:4px"></span>'
+      +'</div>'
+      +'</div>';
+  } else {
+    // Sin sesión cargada: header mínimo (la lista en Tarimas sirve para abrir una)
+    header = '<div style="font-size:.8rem;color:#aaa;margin-bottom:.4rem;font-style:italic">'
+      +'Seleccioná una licencia bolsón desde la lista en Tarimas para comenzar.'
+      +'</div>';
+  }
   // Tabs
   var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
     +'<button class="tab-pill'+(bodAudVista==='tarimas'?' on':'')+'" id="bod-tab-tarimas">🗂 Tarimas</button>'
@@ -11111,9 +11120,9 @@ function bodRenderTarimasAuditoria() {
   });
   if(!filas) filas='<tr><td colspan="'+(5+(esAud?2:0))+'" style="color:#aaa;font-size:.82rem;padding:10px">Sin tarimas'+(filtFechaDesde||filtFechaHasta?' para el rango de fechas seleccionado.':'.')+'</td></tr>';
 
-  // Formulario "Crear carga logística" (solo si auditor)
+  // Formulario "Crear carga logística" (solo si auditor Y hay sesión activa)
   var formCarga = '';
-  if(esAud) {
+  if(esAud && sesId) {
     formCarga = '<div id="bod-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.75rem;margin-bottom:.6rem">'
       +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">Crear carga logística</div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
@@ -11762,32 +11771,15 @@ if(smBodCaptura) smBodCaptura.addEventListener('click', function(){
 var smBodAuditoria = document.getElementById('sm-bod-auditoria');
 if(smBodAuditoria) smBodAuditoria.addEventListener('click', function(){
   if(typeof navTo==='function') navTo('pg-bod-auditoria','🔍 Auditar sesión');
-  // Mostrar formulario de búsqueda con fecha de hoy por defecto
+  // FIX (mié 10-jun-2026): abrir directamente en Tarimas sin pantalla de búsqueda
+  // Si ya hay contenido renderizado (sesión activa), no destruir la vista
   var contenido = document.getElementById('bod-aud-contenido');
-  if(!contenido || contenido.innerHTML.trim()) return; // ya tiene contenido
-  var hoy = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
-  var filHtml = '<div style="background:#f8f9fa;border-radius:8px;padding:.8rem 1rem;margin-bottom:.6rem">'
-    +'<div style="font-size:.82rem;font-weight:700;color:#555;margin-bottom:.5rem">🔍 Buscar sesiones</div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;font-size:.78rem">'
-    +'<div><label style="font-size:.72rem;color:#888;display:block">Licencia</label>'
-    +'<input type="text" id="bod-fil-licencia" class="field-inp" placeholder="Todas"'
-    +' autocomplete="off" style="text-transform:uppercase;width:120px;padding:3px 7px"></div>'
-    +'<div><label style="font-size:.72rem;color:#888;display:block">Desde</label>'
-    +'<input type="date" id="bod-fil-desde" class="field-inp" value="'+escH(hoy)+'" style="padding:3px 7px"></div>'
-    +'<div><label style="font-size:.72rem;color:#888;display:block">Hasta</label>'
-    +'<input type="date" id="bod-fil-hasta" class="field-inp" value="'+escH(hoy)+'" style="padding:3px 7px"></div>'
-    +'<div><label style="font-size:.72rem;color:#888;display:block">Estado</label>'
-    +'<select id="bod-fil-estado" class="field-inp" style="font-size:.8rem;padding:4px 6px">'
-    +'<option value="">Todos</option><option value="abierta">Abierta</option><option value="cerrada">Cerrada</option>'
-    +'</select></div>'
-    +'<button class="btn btn-sm" id="bod-fil-buscar" style="font-size:.78rem">🔍 Buscar</button>'
-    +'</div><div id="bod-fil-msg" style="font-size:.76rem;margin-top:.2rem"></div></div>';
-  contenido.innerHTML = filHtml;
-  var btnBus = document.getElementById('bod-fil-buscar');
-  if(btnBus && !btnBus._w) { btnBus._w=true; btnBus.addEventListener('click', bodBuscarMultiSesiones); }
-  // Auto-buscar con fecha de hoy
-  bodAudFiltros = { lic:'', desde:hoy, hasta:hoy, estado:'' };
-  bodCargarMultiSesiones('', hoy, hoy, '');
+  if(contenido && contenido.innerHTML.trim()) return;
+  // Sin sesión activa: inicializar estado vacío y renderizar tabs+Tarimas
+  bodAudVista = 'tarimas';
+  if(!bodAuditoriaData) bodAuditoriaData = { sesion:{}, lineas:[], _cargas:[] };
+  if(!bodFurgonAsignaciones) bodFurgonAsignaciones = [];
+  bodRenderAuditoria(bodAuditoriaData);
 });
 
 // ── Catálogo barra-SKU ────────────────────────────────────────────────────
