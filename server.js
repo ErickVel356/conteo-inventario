@@ -4186,10 +4186,13 @@ app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
     if(!destino_tr999) return res.status(400).json({ ok:false, error:'falta destino_tr999' });
     if(!/^TR999\.\d{3}\.\d{2}$/i.test(destino_tr999))
       return res.status(400).json({ ok:false, error:'El destino debe tener formato TR999.xxx.xx (ej: TR999.001.01). Recibido: '+destino_tr999 });
-    if(!Array.isArray(tarimas) || !tarimas.length)
+
+    // FIX (jue 11-jun-2026): desde Papel de Trabajo NO se exigen tarimas
+    var desdeP = !!req.body.desde_papel;
+    if(!desdeP && (!Array.isArray(tarimas) || !tarimas.length))
       return res.status(400).json({ ok:false, error:'Debe seleccionar al menos una tarima.' });
 
-    var tarimasNorm = tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean);
+    var tarimasNorm = desdeP ? [] : (Array.isArray(tarimas) ? tarimas.map(function(t){ return bodNormTarima(t); }).filter(Boolean) : []);
 
     // Verificar sesión
     var sesRows = await supabase('GET', 'bod_sesiones', null, '?id=eq.'+encodeURIComponent(sesId)+'&limit=1');
@@ -4206,42 +4209,46 @@ app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
       }
     } catch(e) { /* tabla puede no existir — continuar */ }
 
-    // Verificar que las tarimas no estén ya en otro furgón diferente
-    var asigExist = await supabase('GET', 'bod_tarima_furgon', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId));
-    asigExist = Array.isArray(asigExist) ? asigExist : [];
-    var asigMap = {};
-    asigExist.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
-    var bloqueadas = tarimasNorm.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
-    if(bloqueadas.length)
-      return res.status(409).json({ ok:false, error:'Tarimas ya en otro furgón: '+bloqueadas.join(', '), bloqueadas:bloqueadas });
-
-    // 1. Asignar tarimas al furgón en bod_tarima_furgon
     var now = new Date().toISOString();
-    var nuevas = tarimasNorm.filter(function(t){ return !asigMap[t]; });
-    for(var i=0; i<nuevas.length; i++) {
-      await supabase('POST', 'bod_tarima_furgon',
-        { id:'btf-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
-          sesion_id:sesId, tarima:nuevas[i], furgon:furgon,
-          asignado_por:usuario, ts_asignacion:now },
-        '');
+    var resumenSkus   = [];
+    var totalUnidades = 0;
+
+    if(!desdeP && tarimasNorm.length) {
+      // Verificar que las tarimas no estén ya en otro furgón diferente
+      var asigExist = await supabase('GET', 'bod_tarima_furgon', null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId));
+      asigExist = Array.isArray(asigExist) ? asigExist : [];
+      var asigMap = {};
+      asigExist.forEach(function(a){ asigMap[a.tarima] = a.furgon; });
+      var bloqueadas = tarimasNorm.filter(function(t){ return asigMap[t] && asigMap[t] !== furgon; });
+      if(bloqueadas.length)
+        return res.status(409).json({ ok:false, error:'Tarimas ya en otro furgón: '+bloqueadas.join(', '), bloqueadas:bloqueadas });
+
+      // 1. Asignar tarimas al furgón en bod_tarima_furgon
+      var nuevas = tarimasNorm.filter(function(t){ return !asigMap[t]; });
+      for(var i=0; i<nuevas.length; i++) {
+        await supabase('POST', 'bod_tarima_furgon',
+          { id:'btf-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
+            sesion_id:sesId, tarima:nuevas[i], furgon:furgon,
+            asignado_por:usuario, ts_asignacion:now },
+          '');
+      }
+
+      // 2. Leer líneas de esas tarimas para resumen SKU
+      var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&tarima=in.('+tarimasNorm.map(encodeURIComponent).join(',')+')'
+        +'&eliminada=eq.false';
+      var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
+      lineas = Array.isArray(lineas) ? lineas : [];
+      var skuMap = {};
+      lineas.forEach(function(l){
+        var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
+        if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
+        skuMap[l.sku].unidades += cant;
+      });
+      resumenSkus   = Object.values(skuMap);
+      totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
     }
-
-    // 2. Leer líneas de esas tarimas para resumen SKU
-    var tarimasQ = '?sesion_id=eq.'+encodeURIComponent(sesId)
-      +'&tarima=in.('+tarimasNorm.map(encodeURIComponent).join(',')+')'
-      +'&eliminada=eq.false';
-    var lineas = await supabase('GET', 'bod_lineas', null, tarimasQ);
-    lineas = Array.isArray(lineas) ? lineas : [];
-
-    var skuMap = {};
-    lineas.forEach(function(l){
-      var cant = (l.auditado && l.cantidad_audit != null) ? Number(l.cantidad_audit) : Number(l.cantidad);
-      if(!skuMap[l.sku]) skuMap[l.sku] = { sku:l.sku, descripcion:l.descripcion||'', unidades:0 };
-      skuMap[l.sku].unidades += cant;
-    });
-    var resumenSkus  = Object.values(skuMap);
-    var totalUnidades = resumenSkus.reduce(function(s,x){ return s+x.unidades; }, 0);
 
     // 3. Crear carga logística en bod_furgon_cierres
     var cierre = {
