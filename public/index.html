@@ -10875,10 +10875,8 @@ function bodRenderAuditoria(data) {
       +'</div>'
       +'</div>';
   } else {
-    // Sin sesión cargada: header mínimo (la lista en Tarimas sirve para abrir una)
-    header = '<div style="font-size:.8rem;color:#aaa;margin-bottom:.4rem;font-style:italic">'
-      +'Seleccioná una licencia bolsón desde la lista en Tarimas para comenzar.'
-      +'</div>';
+    // Sin sesión: no mostrar mensaje, el bloque de Licencias en Tarimas ya orienta al usuario
+    header = '';
   }
   // Tabs
   var tabs = '<div class="tab-pills" style="margin-bottom:.6rem">'
@@ -10985,9 +10983,8 @@ function bodRenderTarimasAuditoria() {
     ts.forEach(function(t){ tarimaCargaMap[t] = cg; });
   });
 
-  // Resumen de tarimas + fecha de creación (primer ts_captura de la tarima)
+  // Resumen de tarimas (para formCarga — tarimas disponibles vs asignadas)
   var resumenes = {};
-  var tarimaPrimerTs = {};
   if(data.resumenTarimas && data.resumenTarimas.length) {
     data.resumenTarimas.forEach(function(r){ resumenes[r.tarima] = { lineas:r.lineas, unidades:r.unidades }; });
   } else {
@@ -10998,127 +10995,12 @@ function bodRenderTarimasAuditoria() {
       resumenes[t].unidades += Number(l.cantidad)||0;
     });
   }
-  // Calcular primer timestamp por tarima para mostrar Fecha creada
-  lineas.forEach(function(l){
-    var t = l.tarima||'?'; var ts = l.ts_captura||l.ts_creacion||'';
-    if(ts && (!tarimaPrimerTs[t] || ts < tarimaPrimerTs[t])) tarimaPrimerTs[t] = ts;
-  });
-  var tarimaKeys = bodSortTarimas(Object.keys(resumenes));
+  // resumenes y tarimaCargaMap se usan en formCarga para tarima checkboxes
+  // (cálculo de tarimas disponibles vs ya asignadas)
 
-  // ── FILTROS DE FECHA ──────────────────────────────────────────────────────
+  // ── FILTROS DE FECHA (valores actuales para re-render) ───────────────────
   var filtFechaDesde = (document.getElementById('bod-tar-fecha-desde')||{}).value || '';
   var filtFechaHasta = (document.getElementById('bod-tar-fecha-hasta')||{}).value || '';
-
-  // Agrupar tarimas por fecha (YYYY-MM-DD Guatemala)
-  var tarimaFechaMap = {};  // tarima → fecha YYYY-MM-DD
-  Object.keys(tarimaPrimerTs).forEach(function(t){
-    var ts = tarimaPrimerTs[t];
-    var fecha = '';
-    if(ts) {
-      try { fecha = new Date(ts).toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}); } catch(e){}
-    }
-    tarimaFechaMap[t] = fecha || '—';
-  });
-
-  // Filtrar tarimaKeys por rango de fecha
-  var tarimaKeysFiltradas = tarimaKeys.filter(function(t){
-    var f = tarimaFechaMap[t];
-    if(filtFechaDesde && f < filtFechaDesde) return false;
-    if(filtFechaHasta && f > filtFechaHasta) return false;
-    return true;
-  });
-
-  // Estado de colapso por fecha (persiste entre re-renders)
-  if(!window._bodFechasColapsadas) window._bodFechasColapsadas = {};
-
-  // Agrupar keys filtradas por fecha
-  var porFechaOrdenado = [];
-  var gruposFecha = {};
-  tarimaKeysFiltradas.forEach(function(t){
-    var f = tarimaFechaMap[t];
-    if(!gruposFecha[f]) { gruposFecha[f]=[]; porFechaOrdenado.push(f); }
-    gruposFecha[f].push(t);
-  });
-  // Ordenar fechas descendente
-  porFechaOrdenado.sort(function(a,b){ return b.localeCompare(a); });
-
-  // ── BLOQUE A: Tarimas disponibles ──────────────────────────────────────
-  var thead = '<thead><tr>'
-    +(esAud ? '<th></th>' : '')
-    +'<th>Tarima</th><th class="tc">Líneas</th><th class="tc">Unidades</th>'
-    +'<th class="tc">Fecha creada</th>'
-    +'<th>Estado</th>'
-    +(esAud ? '<th></th>' : '')
-    +'</tr></thead>';
-
-  // Construir filas agrupadas por fecha
-  var filas = '';
-  porFechaOrdenado.forEach(function(fecha){
-    var grupo = gruposFecha[fecha];
-    var colapsado = !!window._bodFechasColapsadas[fecha];
-    // Calcular totales del grupo
-    var totLineas=0, totUnidades=0;
-    grupo.forEach(function(t){ totLineas+=resumenes[t].lineas; totUnidades+=resumenes[t].unidades; });
-    var fechaDisplay = fecha==='—' ? 'Sin fecha' : fecha;
-    // Encabezado del grupo
-    filas += '<tr class="bod-fecha-grupo" data-fecha="'+escH(fecha)+'"'
-      +' style="background:#eef2f7;cursor:pointer;user-select:none">'
-      +(esAud?'<td></td>':'')
-      +'<td colspan="'+(3+(esAud?2:0))+'" style="padding:4px 6px;font-size:.78rem;font-weight:700;color:#333">'
-      +'<span style="font-size:.8rem">'+(colapsado?'▶':'▼')+'</span> '
-      +'📅 '+escH(fechaDisplay)
-      +' <span style="font-weight:400;font-size:.73rem;color:#666;margin-left:8px">'
-      +grupo.length+' tarimas · '+totLineas+' líneas · '+totUnidades+' unidades'
-      +'</span></td>'
-      +'<td></td>'+(esAud?'<td></td>':'')
-      +'</tr>';
-    // Filas de tarimas del grupo
-    if(!colapsado) {
-      grupo.forEach(function(t){
-        var r = resumenes[t];
-        var carga = tarimaCargaMap[t];
-        var furg  = asigMap[t];
-        var isChecked = bodTarimasSeleccionadasDraft[t] ? ' checked' : '';
-        var checkCell = '', estadoCell = '';
-        if(carga){
-          estadoCell = '<span style="background:#e3f2fd;color:#1565c0;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-            +'🔒 Carga '+escH(carga.furgon)+'</span>';
-          checkCell = esAud ? '<td></td>' : '';
-        } else if(furg){
-          var btnLiberar = esAud
-            ? '<button class="btn btn-xs bod-btn-liberar-herencia" data-tarima="'+escH(t)+'" data-furgon="'+escH(furg)+'"'
-              +' style="background:#fdecea;color:#c0392b;font-size:.71rem;margin-left:4px">Liberar</button>'
-            : '';
-          estadoCell = '<span style="background:#e8eaf6;color:#3949ab;font-size:.73rem;padding:2px 7px;border-radius:8px">'
-            +'Furgón '+escH(furg)+' (herencia)</span>'+btnLiberar;
-          checkCell = esAud ? '<td></td>' : '';
-        } else {
-          estadoCell = '<span style="background:#f5f5f3;color:#888;font-size:.73rem;padding:2px 7px;border-radius:8px">Disponible</span>';
-          checkCell = esAud
-            ? '<td class="tc"><input type="checkbox" class="bod-tarima-chk" data-tarima="'+escH(t)+'"'+isChecked+'></td>'
-            : '';
-        }
-        var tsRaw = tarimaPrimerTs[t] || '';
-        var tsFmt = '';
-        if(tsRaw) {
-          try { var dd=new Date(tsRaw); tsFmt=dd.toLocaleDateString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'2-digit'})+' '+dd.toLocaleTimeString('es-GT',{timeZone:'America/Guatemala',hour:'2-digit',minute:'2-digit'}); } catch(e){}
-        }
-        var btnAuditar = esAud
-          ? '<button class="btn btn-xs bod-btn-auditar-tarima" data-tarima="'+escH(t)+'"'
-            +' style="background:#f3e5f5;color:#6a1b9a;font-size:.72rem">🔍 Auditar</button>'
-          : '';
-        filas += '<tr>'+checkCell
-          +'<td style="font-weight:700">'+escH(t)+'</td>'
-          +'<td class="tc" style="font-size:.82rem">'+r.lineas+'</td>'
-          +'<td class="tc" style="font-size:.82rem">'+r.unidades+'</td>'
-          +'<td class="tc" style="font-size:.75rem;color:#888">'+tsFmt+'</td>'
-          +'<td>'+estadoCell+'</td>'
-          +(esAud ? '<td>'+btnAuditar+'</td>' : '')
-          +'</tr>';
-      });
-    }
-  });
-  if(!filas) filas='<tr><td colspan="'+(5+(esAud?2:0))+'" style="color:#aaa;font-size:.82rem;padding:10px">Sin tarimas'+(filtFechaDesde||filtFechaHasta?' para el rango de fechas seleccionado.':'.')+'</td></tr>';
 
   // Formulario "Crear carga logística" (solo si auditor Y hay sesión activa)
   var formCarga = '';
@@ -11209,7 +11091,8 @@ function bodRenderTarimasAuditoria() {
     });
   }
 
-  // FIX (mié 10-jun-2026): Licencias bolsón activas — movidas desde menú principal
+  // FIX (mié 10-jun-2026): orden correcto — filtros → licencias → formCarga → cargas logísticas
+  // NO hay tabla TARIMAS separada; las tarimas viven dentro de "Licencias bolsón activas"
   var licActiHtml = '<div id="bod-sesiones-activas-wrap-tar"'
     +' style="margin-bottom:.9rem;background:#f8f9fa;border-radius:8px;padding:.65rem .8rem">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">'
@@ -11219,12 +11102,12 @@ function bodRenderTarimasAuditoria() {
     +'<button id="btn-bod-nueva-licencia-tar" class="btn btn-xs"'
     +' style="font-size:.72rem;background:#1565c0;color:#fff;padding:2px 10px;margin-left:auto">+ Nueva licencia bolsón</button>'
     +'</div>'
-    +'<div id="bod-sesiones-activas-list-tar" style="font-size:.78rem;color:#888">Cargando…</div>'
+    +'<div id="bod-sesiones-activas-list-tar"></div>'
     +'</div>';
 
-  vistaEl.innerHTML = licActiHtml
-    + formCarga
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
+  vistaEl.innerHTML =
+    // A) Filtros de fecha
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label style="font-weight:600;color:#555">📅 Filtrar fechas:</label>'
     +'<input type="date" id="bod-tar-fecha-desde" class="field-inp"'
     +' style="padding:3px 7px;font-size:.76rem;max-width:130px"'
@@ -11235,14 +11118,20 @@ function bodRenderTarimasAuditoria() {
     +' value="'+escH(filtFechaHasta)+'" title="Hasta">'
     +'<button class="btn btn-xs" id="btn-tar-filtro-limpiar" style="font-size:.72rem">Limpiar</button>'
     +'</div>'
-    +'<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.3rem;letter-spacing:.3px">Tarimas</div>'
-    +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>'
-    +bloqueCargasHtml;
+    // B) Licencias bolsón activas
+    + licActiHtml
+    // C) Crear carga logística (solo con sesión activa)
+    + formCarga
+    // D) Cargas logísticas existentes
+    + bloqueCargasHtml;
 
   // ── Wire: licencias bolsón activas dentro de Tarimas ────────────────────
   var _tarOpts = { targetId:'bod-sesiones-activas-list-tar', modoAuditoria:true };
   var _tarRef = document.getElementById('btn-bod-refresh-activas-tar');
-  if(_tarRef) _tarRef.addEventListener('click', function(){ bodCargarSesionesActivas(_tarOpts); });
+  if(_tarRef) _tarRef.addEventListener('click', function(){
+    window._bodSesionesActivasCacheCliente = null; // forzar recarga
+    bodCargarSesionesActivas(_tarOpts);
+  });
   var _tarNueva = document.getElementById('btn-bod-nueva-licencia-tar');
   if(_tarNueva) _tarNueva.addEventListener('click', function(){
     var licInp = document.getElementById('bod-licencia');
@@ -11254,7 +11143,7 @@ function bodRenderTarimasAuditoria() {
     navTo('pg-bod-captura');
     setTimeout(function(){ if(licInp) licInp.focus(); }, 80);
   });
-  // Auto-cargar lista al mostrar la pestaña Tarimas
+  // Cargar lista (usa cache si disponible → sin parpadeo)
   bodCargarSesionesActivas(_tarOpts);
 
   // Wire: filtros de fecha re-renderizan Tarimas
@@ -11269,28 +11158,10 @@ function bodRenderTarimasAuditoria() {
     bodRenderTarimasAuditoria();
   }); }
 
-  // Wire: colapso/expansión de grupos por fecha
-  vistaEl.querySelectorAll('.bod-fecha-grupo').forEach(function(row){
-    row.addEventListener('click', function(){
-      var fecha=row.dataset.fecha;
-      window._bodFechasColapsadas[fecha] = !window._bodFechasColapsadas[fecha];
-      bodRenderTarimasAuditoria();
-    });
-  });
-
   // Restaurar bodFurgonDraft
   var furgonInpNew = document.getElementById('bod-furgon-input');
   if(furgonInpNew && bodFurgonDraft) furgonInpNew.value = bodFurgonDraft;
   if(furgonInpNew) furgonInpNew.addEventListener('input', function(){ bodFurgonDraft = this.value; });
-
-  // Wire checkboxes
-  vistaEl.querySelectorAll('.bod-tarima-chk').forEach(function(chk){
-    chk.addEventListener('change', function(){
-      bodUltimaInteraccionTarimas = Date.now();
-      if(this.checked) bodTarimasSeleccionadasDraft[this.dataset.tarima] = true;
-      else             delete bodTarimasSeleccionadasDraft[this.dataset.tarima];
-    });
-  });
 
   // Wire upload "Subir licencia" por cada carga logística
   if(esAud) {
@@ -11520,18 +11391,6 @@ function bodRenderTarimasAuditoria() {
     });
   }
 
-  // Wire: botón 🔍 Auditar tarima → navegar a Detalle con filtro por tarima
-  vistaEl.querySelectorAll('.bod-btn-auditar-tarima').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tarima = btn.dataset.tarima;
-      bodAudVista = 'detalle';
-      if(bodAuditoriaData) bodRenderAuditoria(bodAuditoriaData);
-      setTimeout(function(){
-        var fTar = document.getElementById('filtro-det-tarima');
-        if(fTar){ fTar.value = tarima; fTar.dispatchEvent(new Event('input')); }
-      }, 80);
-    });
-  });
 }
 
 // ── Vista Detalle (lógica original de auditoría por línea) ────────────────
@@ -13210,153 +13069,243 @@ function bodLicQuery(licBase) {
 // bodExportarManifiestoWord eliminada — reemplazada por endpoint /manifiesto-word en server.js
 
 // ── Vista: Licencias bolsón activas ────────────────────────────────────────
-// FIX (mié 10-jun-2026): acepta opts = { targetId, modoAuditoria }
-// targetId       — ID del div donde renderizar (default: 'bod-sesiones-activas-list')
-// modoAuditoria  — true: clic abre sesión en vista auditoría; false (default): navega a captura
+// FIX (mié 10-jun-2026): cache cliente para evitar parpadeo en re-renders
+window._bodSesionesActivasCacheCliente = null; // { data, ts }
+
+// opts = { targetId, modoAuditoria, forzar }
 function bodCargarSesionesActivas(opts) {
   opts = opts || {};
   var targetId      = opts.targetId      || 'bod-sesiones-activas-list';
   var modoAuditoria = !!opts.modoAuditoria;
+  var forzar        = !!opts.forzar;
   var listEl = document.getElementById(targetId);
   if(!listEl) return;
-  listEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+
+  var ahora = Date.now();
+  var cacheValido = !forzar
+    && window._bodSesionesActivasCacheCliente
+    && (ahora - window._bodSesionesActivasCacheCliente.ts < 30000);
+
+  if(cacheValido) {
+    // Renderizar instantáneamente desde cache — sin "Cargando..." (evita parpadeo)
+    bodRenderSesActivasList(listEl, window._bodSesionesActivasCacheCliente.data, modoAuditoria, opts);
+    return;
+  }
+  // Solo mostrar "Cargando..." si la lista está vacía (primera carga)
+  if(!listEl.innerHTML.trim()) {
+    listEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+  }
   fetch('/api/bod/sesiones-activas')
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.ok || !d.sesiones || !d.sesiones.length) {
-        listEl.innerHTML = '<span style="color:#aaa;font-style:italic">No hay licencias bolsón activas en este momento.</span>';
-        return;
-      }
-      var html = '<table style="width:100%;border-collapse:collapse;font-size:.76rem">'
-        +'<thead><tr style="background:#e8ecf0">'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Licencia</th>'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Fecha</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Estado</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">SKUs</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Audit.</th>'
-        +'<th style="padding:3px 6px;text-align:center;font-weight:600">Furgones</th>'
-        +'<th style="padding:3px 6px;text-align:left;font-weight:600">Creado por</th>'
-        +'</tr></thead><tbody>';
-      d.sesiones.forEach(function(s){
-        var esAbierta = s.estado === 'abierta';
-        var estadoBadge = esAbierta
-          ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px">Abierta</span>'
-          : '<span style="background:#eeeeee;color:#555;padding:1px 6px;border-radius:8px">Cerrada</span>';
-        var rowBg = esAbierta ? '' : 'background:#fafafa;opacity:.7';
-        var licLink = esAbierta
-          ? '<button class="bod-btn-abrir-sesion-activa" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
-            +' style="background:none;border:none;color:#1565c0;cursor:pointer;font-size:.76rem;font-weight:600;padding:0;text-decoration:underline">'
-            +escH(s.licencia_id)+'</button>'
-          : '<span>'+escH(s.licencia_id)+'</span>';
-        var esErick = window.currentUser && window.currentUser.name === 'Erick Vela';
-        var btnBorrar = esErick
-          ? ' <button class="bod-btn-borrar-sesion" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'"'
-            +' style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:.72rem;padding:0;margin-left:4px" title="Eliminar sesión">🗑</button>'
-          : '';
-        html += '<tr style="border-top:1px solid #e8e8e8;'+rowBg+'">'
-          +'<td style="padding:3px 6px">'+licLink+btnBorrar+'</td>'
-          +'<td style="padding:3px 6px">'+escH(s.fecha_trabajo||'—')+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+estadoBadge+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.total_skus+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
-          +'<td style="padding:3px 6px;text-align:center">'+s.total_furgones+'</td>'
-          +'<td style="padding:3px 6px;color:#666">'+escH(s.creado_por||'—')+'</td>'
-          +'</tr>';
-      });
-      html += '</tbody></table>';
-      listEl.innerHTML = html;
-
-      // Wire: clic en licencia — comportamiento según contexto
-      listEl.querySelectorAll('.bod-btn-abrir-sesion-activa').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          var fecha = btn.dataset.fecha;
-          if(modoAuditoria) {
-            // ── Abrir en vista auditoría (misma lógica que bod-btn-cargar-sesion-listado) ──
-            var mEl = document.getElementById('bod-aud-msg') || {innerHTML:''};
-            mEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
-            var hidLic   = document.getElementById('bod-aud-licencia');
-            var hidDesde = document.getElementById('bod-aud-fecha-desde');
-            if(hidLic)   hidLic.value   = lic;
-            if(hidDesde) hidDesde.value = fecha;
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
-              .then(function(r){ return r.json(); })
-              .then(function(sd){
-                if(!sd.ok || !sd.sesion){
-                  mEl.innerHTML = '<span style="color:#c0392b">'+escH(sd.error||'Error al cargar sesión')+'</span>'; return;
-                }
-                mEl.innerHTML = '';
-                bodAuditoriaData = sd; bodAudLastRefresh = Date.now();
-                fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
-                  .then(function(r){ return r.json(); })
-                  .then(function(f){
-                    bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
-                    if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
-                    bodRenderAuditoria(sd);
-                  });
-              })
-              .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
-          } else {
-            // ── Modo captura: navegar a pg-bod-captura (comportamiento original) ──
-            var licInp = document.getElementById('bod-licencia');
-            var fecInp = document.getElementById('bod-fecha');
-            if(licInp) licInp.value = lic;
-            if(fecInp) fecInp.value = fecha;
-            navTo('pg-bod-captura');
-            var msgEl = document.getElementById('bod-sesion-msg');
-            if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
-            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
-              .then(function(r){ return r.json(); })
-              .then(function(sd){
-                if(!sd.ok || !sd.sesion){
-                  if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(sd.error||'Error al cargar sesión')+'</span>'; return;
-                }
-                bodSesionActual = sd.sesion;
-                if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(sd.sesion.licencia_id)+'</span>';
-                var infoEl = document.getElementById('bod-sesion-info');
-                if(infoEl) infoEl.textContent = 'Sesión: '+sd.sesion.id+' · '+sd.sesion.estado;
-                var formEl = document.getElementById('bod-form-captura');
-                if(formEl) formEl.style.display = '';
-                bodPoblarTarimas(); bodCargarLineas(sd.sesion.id);
-                var barraEl = document.getElementById('bod-barra');
-                if(barraEl) barraEl.focus();
-              })
-              .catch(function(){
-                if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
-              });
-          }
-        });
-      });
-
-      // Wire: borrar sesión (solo Erick Vela — refresca la misma lista)
-      listEl.querySelectorAll('.bod-btn-borrar-sesion').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          if(window.currentUser && window.currentUser.name !== 'Erick Vela') {
-            alert('Solo Erick Vela puede eliminar sesiones.'); return;
-          }
-          if(!confirm('⚠️ BORRAR SESIÓN BOLSÓN\n\nLicencia: '+lic+'\n\nEsto eliminará:\n• Todas las líneas capturadas\n• Asignaciones de tarimas\n• Cargas logísticas del manifiesto\n\n¿Estás seguro?')) return;
-          if(!confirm('Segunda confirmación.\n¿Borrar definitivamente la sesión '+lic+'?')) return;
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId), {
-            method:'DELETE',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ usuario: window.currentUser ? window.currentUser.name : '' })
-          })
-            .then(function(r){ return r.json(); })
-            .then(function(sd){
-              if(!sd.ok){ alert('Error al borrar: '+(sd.error||'Error desconocido')); return; }
-              alert('✅ Sesión '+lic+' eliminada.');
-              bodCargarSesionesActivas(opts); // refrescar la misma lista con los mismos opts
-            })
-            .catch(function(){ alert('Sin conexión al intentar borrar.'); });
-        });
-      });
+      window._bodSesionesActivasCacheCliente = { data:d, ts:Date.now() };
+      bodRenderSesActivasList(listEl, d, modoAuditoria, opts);
     })
     .catch(function(){
       listEl.innerHTML = '<span style="color:#c0392b;font-size:.75rem">No se pudo cargar la lista.</span>';
     });
+}
+
+// Renderiza la tabla expandida de sesiones activas (una fila por tarima)
+function bodRenderSesActivasList(listEl, d, modoAuditoria, opts) {
+  if(!d || !d.ok || !d.sesiones || !d.sesiones.length) {
+    listEl.innerHTML = '<span style="color:#aaa;font-style:italic">No hay licencias bolsón activas en este momento.</span>';
+    return;
+  }
+  var html = '<div class="tbl-wrap"><table style="width:100%;border-collapse:collapse;font-size:.76rem">'
+    +'<thead><tr style="background:#e8ecf0">'
+    +'<th style="padding:3px 6px;text-align:left">Licencia</th>'
+    +'<th style="padding:3px 6px;text-align:left">Fecha</th>'
+    +'<th style="padding:3px 6px;text-align:center">Estado</th>'
+    +'<th style="padding:3px 6px;text-align:center">SKUs</th>'
+    +'<th style="padding:3px 6px;text-align:center">Audit.</th>'
+    +'<th style="padding:3px 6px;text-align:center">Furgones</th>'
+    +'<th style="padding:3px 6px;text-align:left">Creado por</th>'
+    +'<th style="padding:3px 6px;text-align:left">Tarima</th>'
+    +'<th style="padding:3px 6px;text-align:center">Líneas</th>'
+    +'<th style="padding:3px 6px;text-align:center">Unidades</th>'
+    +'<th style="padding:3px 6px;text-align:center">Acción</th>'
+    +'</tr></thead><tbody>';
+
+  d.sesiones.forEach(function(s){
+    var esAbierta   = s.estado === 'abierta';
+    var estadoBadge = esAbierta
+      ? '<span style="background:#e8f5e9;color:#1b5e20;padding:1px 6px;border-radius:8px;white-space:nowrap">Abierta</span>'
+      : '<span style="background:#eeeeee;color:#555;padding:1px 6px;border-radius:8px;white-space:nowrap">Cerrada</span>';
+    var rowBg = esAbierta ? '' : 'opacity:.72';
+    var esErick = window.currentUser && window.currentUser.name === 'Erick Vela';
+    var btnBorrar = esErick
+      ? ' <button class="bod-btn-borrar-sesion" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'"'
+        +' style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:.72rem;padding:0;margin-left:2px" title="Eliminar sesión">🗑</button>'
+      : '';
+
+    // Abrir sesión (nombre cliclable)
+    var licLink = esAbierta
+      ? '<button class="bod-btn-abrir-sesion-activa" data-id="'+escH(s.id)+'" data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
+        +' style="background:none;border:none;color:#1565c0;cursor:pointer;font-size:.76rem;font-weight:600;padding:0;text-decoration:underline">'
+        +escH(s.licencia_id)+'</button>'
+      : '<span style="font-size:.76rem;font-weight:600">'+escH(s.licencia_id)+'</span>';
+
+    var tarimas = Array.isArray(s.tarimas) && s.tarimas.length ? s.tarimas : [];
+    var nRows = tarimas.length || 1;
+
+    if(tarimas.length === 0) {
+      // Sin tarimas: una fila resumen
+      html += '<tr style="border-top:1px solid #eee;'+rowBg+'">'
+        +'<td style="padding:3px 6px">'+licLink+btnBorrar+'</td>'
+        +'<td style="padding:3px 6px">'+escH(s.fecha_trabajo||'—')+'</td>'
+        +'<td style="padding:3px 6px;text-align:center">'+estadoBadge+'</td>'
+        +'<td style="padding:3px 6px;text-align:center">'+s.total_skus+'</td>'
+        +'<td style="padding:3px 6px;text-align:center">'+s.lineas_auditadas+'/'+s.total_lineas+'</td>'
+        +'<td style="padding:3px 6px;text-align:center">'+s.total_furgones+'</td>'
+        +'<td style="padding:3px 6px;color:#666">'+escH(s.creado_por||'—')+'</td>'
+        +'<td style="padding:3px 6px;color:#aaa">—</td>'
+        +'<td style="padding:3px 6px;text-align:center;color:#aaa">—</td>'
+        +'<td style="padding:3px 6px;text-align:center;color:#aaa">—</td>'
+        +'<td style="padding:3px 6px;text-align:center;color:#aaa">—</td>'
+        +'</tr>';
+    } else {
+      tarimas.forEach(function(t, ti) {
+        var isFirst = (ti === 0);
+        var btnAuditar = esAbierta
+          ? '<button class="bod-btn-auditar-desde-lista" data-sesid="'+escH(s.id)+'" data-tarima="'+escH(t.tarima)+'" data-lic="'+escH(s.licencia_id)+'" data-fecha="'+escH(s.fecha_trabajo||'')+'"'
+            +' style="background:#e3f2fd;color:#1565c0;border:none;border-radius:4px;padding:2px 8px;font-size:.72rem;cursor:pointer">Auditar</button>'
+          : '<span style="color:#aaa;font-size:.72rem">Cerrada</span>';
+        html += '<tr style="border-top:1px solid #eee;'+rowBg+'">'
+          +'<td style="padding:3px 6px">'+(isFirst ? licLink+btnBorrar : '')+'</td>'
+          +'<td style="padding:3px 6px">'+(isFirst ? escH(s.fecha_trabajo||'—') : '')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+(isFirst ? estadoBadge : '')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+(isFirst ? s.total_skus : '')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+(isFirst ? s.lineas_auditadas+'/'+s.total_lineas : '')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+(isFirst ? s.total_furgones : '')+'</td>'
+          +'<td style="padding:3px 6px;color:#666">'+(isFirst ? escH(s.creado_por||'—') : '')+'</td>'
+          +'<td style="padding:3px 6px;font-weight:600">'+escH(t.tarima)+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+t.lineas+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+t.unidades.toLocaleString('es-GT')+'</td>'
+          +'<td style="padding:3px 6px;text-align:center">'+btnAuditar+'</td>'
+          +'</tr>';
+      });
+    }
+  });
+  html += '</tbody></table></div>';
+  listEl.innerHTML = html;
+
+  // Wire: abrir sesión (clic en nombre de licencia)
+  listEl.querySelectorAll('.bod-btn-abrir-sesion-activa').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var sesId = btn.dataset.id;
+      var lic   = btn.dataset.lic;
+      var fecha = btn.dataset.fecha;
+      if(modoAuditoria) {
+        var mEl = document.getElementById('bod-aud-msg') || {innerHTML:''};
+        mEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+        var hidLic   = document.getElementById('bod-aud-licencia');
+        var hidDesde = document.getElementById('bod-aud-fecha-desde');
+        if(hidLic)   hidLic.value   = lic;
+        if(hidDesde) hidDesde.value = fecha;
+        fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+          .then(function(r){ return r.json(); })
+          .then(function(sd){
+            if(!sd.ok || !sd.sesion){
+              mEl.innerHTML = '<span style="color:#c0392b">'+escH(sd.error||'Error')+'</span>'; return;
+            }
+            mEl.innerHTML = '';
+            bodAuditoriaData = sd; bodAudLastRefresh = Date.now();
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+              .then(function(r){ return r.json(); })
+              .then(function(f){
+                bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+                if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+                bodRenderAuditoria(sd);
+              });
+          })
+          .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
+      } else {
+        var licInp = document.getElementById('bod-licencia');
+        var fecInp = document.getElementById('bod-fecha');
+        if(licInp) licInp.value = lic;
+        if(fecInp) fecInp.value = fecha;
+        navTo('pg-bod-captura');
+        var msgEl = document.getElementById('bod-sesion-msg');
+        if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+        fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+          .then(function(r){ return r.json(); })
+          .then(function(sd){
+            if(!sd.ok || !sd.sesion){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(sd.error||'Error')+'</span>'; return; }
+            bodSesionActual = sd.sesion;
+            if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(sd.sesion.licencia_id)+'</span>';
+            var infoEl = document.getElementById('bod-sesion-info');
+            if(infoEl) infoEl.textContent = 'Sesión: '+sd.sesion.id+' · '+sd.sesion.estado;
+            var formEl = document.getElementById('bod-form-captura');
+            if(formEl) formEl.style.display = '';
+            bodPoblarTarimas(); bodCargarLineas(sd.sesion.id);
+            var barraEl = document.getElementById('bod-barra');
+            if(barraEl) barraEl.focus();
+          })
+          .catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+      }
+    });
+  });
+
+  // Wire: Auditar tarima → cargar sesión + Detalle + filtro tarima (FIX: carga sesión fresca)
+  listEl.querySelectorAll('.bod-btn-auditar-desde-lista').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var sesId  = btn.dataset.sesid;
+      var tarima = btn.dataset.tarima;
+      var mEl = document.getElementById('bod-aud-msg') || {innerHTML:''};
+      mEl.innerHTML = '<span style="color:#888">Cargando…</span>';
+      fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+        .then(function(r){ return r.json(); })
+        .then(function(sd){
+          if(!sd.ok || !sd.sesion){
+            mEl.innerHTML = '<span style="color:#c0392b">'+escH(sd.error||'Error')+'</span>'; return;
+          }
+          bodAuditoriaData = sd; bodAudLastRefresh = Date.now();
+          return fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+            .then(function(r){ return r.json(); })
+            .then(function(f){
+              bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+              if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+              mEl.innerHTML = '';
+              bodAudVista = 'detalle';
+              bodRenderAuditoria(bodAuditoriaData);
+              // Aplicar filtro de tarima tras render
+              setTimeout(function(){
+                var fTar = document.getElementById('filtro-det-tarima');
+                if(fTar){ fTar.value = tarima; fTar.dispatchEvent(new Event('input')); }
+              }, 80);
+            });
+        })
+        .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
+    });
+  });
+
+  // Wire: borrar sesión — solo Erick Vela
+  listEl.querySelectorAll('.bod-btn-borrar-sesion').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var sesId = btn.dataset.id;
+      var lic   = btn.dataset.lic;
+      if(window.currentUser && window.currentUser.name !== 'Erick Vela') {
+        alert('Solo Erick Vela puede eliminar sesiones.'); return;
+      }
+      if(!confirm('⚠️ BORRAR SESIÓN BOLSÓN\n\nLicencia: '+lic+'\n\nEsto eliminará:\n• Todas las líneas capturadas\n• Asignaciones de tarimas\n• Cargas logísticas del manifiesto\n\n¿Estás seguro?')) return;
+      if(!confirm('Segunda confirmación.\n¿Borrar definitivamente la sesión '+lic+'?')) return;
+      fetch('/api/bod/sesion/'+encodeURIComponent(sesId), {
+        method:'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ usuario: window.currentUser ? window.currentUser.name : '' })
+      })
+        .then(function(r){ return r.json(); })
+        .then(function(sd){
+          if(!sd.ok){ alert('Error al borrar: '+(sd.error||'Error desconocido')); return; }
+          alert('✅ Sesión '+lic+' eliminada.');
+          // Invalidar cache y refrescar
+          window._bodSesionesActivasCacheCliente = null;
+          bodCargarSesionesActivas(opts);
+        })
+        .catch(function(){ alert('Sin conexión al intentar borrar.'); });
+    });
+  });
 }
 
 // Cargar al entrar a pg-bod-menu y al presionar el botón ↻
