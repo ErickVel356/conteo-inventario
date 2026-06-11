@@ -3658,11 +3658,9 @@ app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
     var results = await Promise.all(sesiones.map(async function(ses){
       var [lineas, cierres] = await Promise.all([
         supabase('GET', 'bod_lineas', null,
-          // RIESGO: limit=5000 — si una sesión supera 5000 líneas, los totales se truncarán.
-          // En uso normal (bodega Guatemala) una sesión tiene 100-500 líneas por sesión.
-          // Aumentar o paginar si se detecta truncamiento (sesión con exactamente 5000 lineas).
           '?sesion_id=eq.'+encodeURIComponent(ses.id)
-          +'&eliminada=eq.false&select=sku,auditado&limit=5000'
+          // FIX (mié 10-jun-2026): agregar tarima+cantidad para calcular tarimas por sesión
+          +'&eliminada=eq.false&select=sku,auditado,tarima,cantidad&limit=5000'
         ).catch(function(){ return []; }),
         supabase('GET', 'bod_furgon_cierres', null,
           '?sesion_id=eq.'+encodeURIComponent(ses.id)+'&select=furgon,estado,licencia_hija'
@@ -3672,7 +3670,17 @@ app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
       cierres = Array.isArray(cierres) ? cierres : [];
 
       var skusUnicos = {};
-      lineas.forEach(function(l){ if(l.sku) skusUnicos[l.sku]=true; });
+      var tarimasMap = {};
+      lineas.forEach(function(l){
+        if(l.sku) skusUnicos[l.sku] = true;
+        var t = l.tarima || '?';
+        if(!tarimasMap[t]) tarimasMap[t] = { tarima:t, lineas:0, unidades:0 };
+        tarimasMap[t].lineas++;
+        tarimasMap[t].unidades += Number(l.cantidad)||0;
+      });
+      var tarimasArr = Object.values(tarimasMap).sort(function(a,b){
+        return a.tarima.localeCompare(b.tarima, undefined, { numeric:true });
+      });
 
       return {
         id:              ses.id,
@@ -3686,7 +3694,8 @@ app.get('/api/bod/sesiones-activas', bodGuard, async (req, res) => {
         total_skus:      Object.keys(skusUnicos).length,
         lineas_auditadas: lineas.filter(function(l){ return l.auditado; }).length,
         total_furgones:  cierres.length,
-        furgones:        cierres.map(function(c){ return { furgon:c.furgon, estado:c.estado, licencia_hija:c.licencia_hija }; })
+        furgones:        cierres.map(function(c){ return { furgon:c.furgon, estado:c.estado, licencia_hija:c.licencia_hija }; }),
+        tarimas:         tarimasArr   // FIX: [{tarima,lineas,unidades}]
       };
     }));
 
