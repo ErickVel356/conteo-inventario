@@ -6158,3 +6158,159 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
     res.status(500).json({ ok:false, error:e.message });
   }
 });
+
+// ── bod_manifiestos_control endpoints ─────────────────────────────────────
+// FIX (jue 11-jun-2026): Control de Manifiestos — Bodega CDG
+
+// GET /api/bod/sesion/:id/manifiestos-control
+app.get('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var rows = await supabase('GET', 'bod_manifiestos_control', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=creado_en.desc&select=*');
+    res.json({ ok:true, manifiestos: Array.isArray(rows) ? rows : [] });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// POST /api/bod/sesion/:id/manifiestos-control
+// Body: { licencia_hija, furgon, auditor_lider, creado_por }
+app.post('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var { licencia_hija, furgon, auditor_lider, creado_por } = req.body || {};
+    licencia_hija = String(licencia_hija||'').trim().toUpperCase();
+    furgon        = String(furgon||'').trim();
+    if(!licencia_hija) return res.status(400).json({ ok:false, error:'licencia_hija requerida' });
+    var now = new Date().toISOString();
+    var row = {
+      sesion_id:      sesId,
+      licencia_hija:  licencia_hija,
+      furgon:         furgon,
+      estado:         'sin_iniciar',
+      auditor_lider:  String(auditor_lider||''),
+      colaboradores:  [],
+      creado_por:     String(creado_por||''),
+      creado_en:      now,
+      actualizado_por:String(creado_por||''),
+      actualizado_en: now,
+      historial:      [{ accion:'creado', usuario:String(creado_por||''), ts:now }]
+    };
+    var saved = await supabase('POST', 'bod_manifiestos_control', [row], '?select=*');
+    var created = Array.isArray(saved) ? saved[0] : null;
+    res.json({ ok:true, manifiesto: created });
+  } catch(e) {
+    if(e.message && e.message.includes('duplicate')) {
+      return res.status(409).json({ ok:false, error:'Ya existe un manifiesto activo para esa licencia hija y furgón.' });
+    }
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// POST /api/bod/sesion/:id/manifiestos-control/:mId/colaborador
+// Body: { usuario }
+app.post('/api/bod/sesion/:id/manifiestos-control/:mId/colaborador', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mId).trim();
+    var { usuario } = req.body || {};
+    usuario = String(usuario||'').trim();
+    var rows = await supabase('GET', 'bod_manifiestos_control', null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=*');
+    var m = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if(!m) return res.status(404).json({ ok:false, error:'Manifiesto no encontrado' });
+    var cols = Array.isArray(m.colaboradores) ? m.colaboradores : [];
+    if(!cols.includes(usuario)) cols.push(usuario);
+    var now  = new Date().toISOString();
+    var hist = Array.isArray(m.historial) ? m.historial : [];
+    hist.push({ accion:'colaborador_unido', usuario:usuario, ts:now });
+    // FIX (jue 11-jun-2026): activar en_proceso si estaba sin_iniciar
+    var nuevoEstado = m.estado === 'sin_iniciar' ? 'en_proceso' : m.estado;
+    if(m.estado === 'sin_iniciar') {
+      hist.push({ accion:'iniciado', usuario:usuario, ts:now });
+    }
+    await supabase('PATCH', 'bod_manifiestos_control',
+      { colaboradores: cols, estado: nuevoEstado,
+        actualizado_por: usuario, actualizado_en: now, historial: hist },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// PATCH /api/bod/sesion/:id/manifiestos-control/:mId/finalizar
+// Body: { usuario }
+app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/finalizar', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mId).trim();
+    var { usuario } = req.body || {};
+    usuario = String(usuario||'').trim();
+    var rows = await supabase('GET', 'bod_manifiestos_control', null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=historial');
+    var m = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if(!m) return res.status(404).json({ ok:false, error:'Manifiesto no encontrado' });
+    var now = new Date().toISOString();
+    var hist = Array.isArray(m.historial) ? m.historial : [];
+    hist.push({ accion:'finalizado', usuario:usuario, ts:now });
+    await supabase('PATCH', 'bod_manifiestos_control',
+      { estado:'finalizado', finalizado_por:usuario, finalizado_en:now,
+        actualizado_por:usuario, actualizado_en:now, historial:hist },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// PATCH /api/bod/sesion/:id/manifiestos-control/:mId/reabrir
+// Body: { usuario }
+app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/reabrir', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mId).trim();
+    var { usuario, auditor, supervisor } = req.body || {};
+    usuario  = String(usuario||'').trim();
+    // FIX (jue 11-jun-2026): validación de permisos en servidor
+    // Solo auditor_lider del manifiesto O usuario con rol auditor/supervisor
+    var rows = await supabase('GET', 'bod_manifiestos_control', null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=historial,auditor_lider,estado');
+    var m = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if(!m) return res.status(404).json({ ok:false, error:'Manifiesto no encontrado' });
+    var esLider = m.auditor_lider === usuario;
+    var esAutoriz = !!auditor || !!supervisor;
+    if(!esLider && !esAutoriz) {
+      return res.status(403).json({ ok:false, error:'Solo el auditor líder o un auditor autorizado puede reabrir este manifiesto.' });
+    }
+    if(m.estado !== 'finalizado') {
+      return res.status(400).json({ ok:false, error:'Solo se pueden reabrir manifiestos finalizados.' });
+    }
+    var now  = new Date().toISOString();
+    var hist = Array.isArray(m.historial) ? m.historial : [];
+    hist.push({ accion:'reabierto', usuario:usuario, ts:now });
+    await supabase('PATCH', 'bod_manifiestos_control',
+      { estado:'en_proceso', reabierto_por:usuario, reabierto_en:now,
+        actualizado_por:usuario, actualizado_en:now, historial:hist },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// PATCH /api/bod/sesion/:id/manifiestos-control/:mId/anular
+// Body: { usuario }
+app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/anular', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mId).trim();
+    var { usuario } = req.body || {};
+    usuario = String(usuario||'').trim();
+    var rows = await supabase('GET', 'bod_manifiestos_control', null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=historial');
+    var m = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if(!m) return res.status(404).json({ ok:false, error:'Manifiesto no encontrado' });
+    var now = new Date().toISOString();
+    var hist = Array.isArray(m.historial) ? m.historial : [];
+    hist.push({ accion:'anulado', usuario:usuario, ts:now });
+    await supabase('PATCH', 'bod_manifiestos_control',
+      { estado:'anulado', anulado_por:usuario, anulado_en:now,
+        actualizado_por:usuario, actualizado_en:now, historial:hist },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
