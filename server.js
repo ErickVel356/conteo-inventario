@@ -4268,8 +4268,42 @@ app.post('/api/bod/sesion/:id/carga-logistica', bodGuard, async (req, res) => {
       estado:         'finalizado',
       ts_cierre:      now
     };
-    // FIX (jue 11-jun-2026): vincular al manifiesto/PT si se envió manifiesto_id
-    if(req.body.manifiesto_id) cierre.manifiesto_id = String(req.body.manifiesto_id).trim();
+    // FIX (jue 11-jun-2026, server v21): vincular al manifiesto/PT
+    // Acepta manifiesto_id directo O correlativo (PT-YYYY-MM-DD-NN).
+    // Si se recibe correlativo, busca el manifiesto en esta sesión; si no existe lo crea.
+    var manifestoIdFinal = req.body.manifiesto_id ? String(req.body.manifiesto_id).trim() : null;
+    if(!manifestoIdFinal && req.body.correlativo) {
+      var corrParam = String(req.body.correlativo).trim().toUpperCase();
+      if(/^PT-\d{4}-\d{2}-\d{2}-\d{2}$/.test(corrParam)) {
+        var mRows = await supabase('GET','bod_manifiestos_control',null,
+          '?sesion_id=eq.'+encodeURIComponent(sesId)
+          +'&correlativo=eq.'+encodeURIComponent(corrParam)
+          +'&estado=neq.eliminado&limit=1&select=id').catch(function(){return[];});
+        if(Array.isArray(mRows)&&mRows.length) {
+          manifestoIdFinal = mRows[0].id;
+        } else {
+          // Crear manifiesto automáticamente con ese correlativo
+          var mNow = new Date().toISOString();
+          var mRow = {
+            sesion_id:      sesId,
+            correlativo:    corrParam,
+            estado:         'en_proceso',
+            auditor_lider:  usuario,
+            colaboradores:  [],
+            creado_por:     usuario,
+            creado_en:      mNow,
+            actualizado_por:usuario,
+            actualizado_en: mNow,
+            historial:      [{ accion:'creado_auto_desde_carga', usuario:usuario, ts:mNow }]
+          };
+          var mSaved = await supabase('POST','bod_manifiestos_control',[mRow],'?select=id').catch(function(e2){
+            throw new Error('No se pudo crear manifiesto automático: '+e2.message);
+          });
+          if(Array.isArray(mSaved)&&mSaved[0]&&mSaved[0].id) manifestoIdFinal = mSaved[0].id;
+        }
+      }
+    }
+    if(manifestoIdFinal) cierre.manifiesto_id = manifestoIdFinal;
     await supabase('POST', 'bod_furgon_cierres', cierre, '');
 
     invalidarCacheSesion(sesId);
@@ -6173,30 +6207,48 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 // FIX (jue 11-jun-2026): Control de Manifiestos — Bodega CDG
 
 // GET /api/bod/sesion/:id/manifiestos-control
+// FIX (jue 11-jun-2026, server v21): excluir eliminados de la lista
 app.get('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
     var rows = await supabase('GET', 'bod_manifiestos_control', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=creado_en.desc&select=*');
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&estado=neq.eliminado&order=creado_en.desc&select=*');
     res.json({ ok:true, manifiestos: Array.isArray(rows) ? rows : [] });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
 // POST /api/bod/sesion/:id/manifiestos-control
-// Body: { licencia_hija?, furgon?, auditor_lider, creado_por }
+// Body: { correlativo?, licencia_hija?, furgon?, auditor_lider, creado_por }
+// FIX (jue 11-jun-2026, server v21): acepta correlativo manual PT-YYYY-MM-DD-NN
+//   Si se omite, lo genera automáticamente.
 app.post('/api/bod/sesion/:id/manifiestos-control', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
-    var { licencia_hija, furgon, auditor_lider, creado_por } = req.body || {};
+    var { licencia_hija, furgon, auditor_lider, creado_por, correlativo: corr } = req.body || {};
     licencia_hija = String(licencia_hija||'').trim().toUpperCase();
     furgon        = String(furgon||'').trim();
-    // FIX (jue 11-jun-2026): generar correlativo PT-YYYY-MM-DD-##
     var hoyGT = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
-    var existentes = await supabase('GET','bod_manifiestos_control',null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)
-      +'&correlativo=like.'+encodeURIComponent('PT-'+hoyGT+'-%')+'&select=correlativo').catch(function(){return[];});
-    var nextNum = Array.isArray(existentes) ? existentes.length + 1 : 1;
-    var correlativo = 'PT-'+hoyGT+'-'+String(nextNum).padStart(2,'0');
+    var correlativo;
+    if(corr && String(corr).trim()) {
+      // Validar formato PT-YYYY-MM-DD-NN
+      correlativo = String(corr).trim().toUpperCase();
+      if(!/^PT-\d{4}-\d{2}-\d{2}-\d{2}$/.test(correlativo))
+        return res.status(400).json({ ok:false, error:'Formato de correlativo inválido. Esperado: PT-YYYY-MM-DD-NN (ej: PT-2026-06-11-01).' });
+      // Verificar que no exista ya en esta sesión (activos, no eliminados)
+      var dup = await supabase('GET','bod_manifiestos_control',null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&correlativo=eq.'+encodeURIComponent(correlativo)
+        +'&estado=neq.eliminado&limit=1&select=id').catch(function(){return[];});
+      if(Array.isArray(dup)&&dup.length)
+        return res.status(409).json({ ok:false, error:'Ya existe un PT activo con correlativo '+correlativo+' en esta sesión.' });
+    } else {
+      // Auto-generar
+      var existentes = await supabase('GET','bod_manifiestos_control',null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&correlativo=like.'+encodeURIComponent('PT-'+hoyGT+'-%')+'&select=correlativo').catch(function(){return[];});
+      var nextNum = Array.isArray(existentes) ? existentes.length + 1 : 1;
+      correlativo = 'PT-'+hoyGT+'-'+String(nextNum).padStart(2,'0');
+    }
     var now = new Date().toISOString();
     var row = {
       sesion_id:      sesId,
@@ -6309,8 +6361,55 @@ app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/reabrir', bodGuard, asyn
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
 
+// DELETE /api/bod/sesion/:id/manifiestos-control/:mId
+// FIX (jue 11-jun-2026, server v21): borrar PT + carga logística + papel de trabajo relacionados.
+// Body: { usuario, forzar? }
+// Si tiene líneas en Papel de Trabajo y forzar !== true → { ok:false, tieneLineas:true, count:N }
+// Si forzar===true o no hay líneas → soft-delete manifiesto + hard-delete carga y papel.
+app.delete('/api/bod/sesion/:id/manifiestos-control/:mId', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var mId    = String(req.params.mId).trim();
+    var { usuario, auditor, supervisor, forzar } = req.body || {};
+    usuario = String(usuario||'').trim();
+    var esAud = auditor === true || supervisor === true;
+    if(!esAud) return res.status(403).json({ ok:false, error:'Solo auditores pueden borrar manifiestos.' });
+    // Verificar que el manifiesto existe en esta sesión
+    var rows = await supabase('GET','bod_manifiestos_control',null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=id,correlativo,estado');
+    var m = Array.isArray(rows)&&rows[0] ? rows[0] : null;
+    if(!m) return res.status(404).json({ ok:false, error:'Manifiesto no encontrado.' });
+    // Verificar líneas en Papel de Trabajo
+    var ptRows = await supabase('GET','bod_papel_trabajo',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(mId)+'&select=sku&limit=200').catch(function(){return[];});
+    var ptCount = Array.isArray(ptRows) ? ptRows.length : 0;
+    if(ptCount > 0 && forzar !== true) {
+      return res.json({ ok:false, tieneLineas:true, count:ptCount, correlativo:m.correlativo||mId });
+    }
+    var now = new Date().toISOString();
+    // 1. Soft-delete del manifiesto (queda en BD para auditoría pero no aparece en UI)
+    await supabase('PATCH','bod_manifiestos_control',
+      { estado:'eliminado', actualizado_por:usuario, actualizado_en:now },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    // 2. Hard-delete cargas logísticas vinculadas (bod_furgon_cierres)
+    await supabase('DELETE','bod_furgon_cierres',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(mId)).catch(function(){});
+    // 3. Hard-delete líneas de Papel de Trabajo vinculadas
+    if(ptCount > 0) {
+      await supabase('DELETE','bod_papel_trabajo',null,
+        '?sesion_id=eq.'+encodeURIComponent(sesId)
+        +'&manifiesto_id=eq.'+encodeURIComponent(mId)).catch(function(){});
+    }
+    cacheInvalidatePrefix('bod:papel:'+sesId+':');
+    invalidarCacheSesion(sesId);
+    console.log('BOD manifiesto borrado: '+mId+' ('+m.correlativo+') por '+usuario);
+    res.json({ ok:true, correlativo:m.correlativo||mId, ptBorradas:ptCount });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
 // PATCH /api/bod/sesion/:id/manifiestos-control/:mId/anular
-// Body: { usuario }
 app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/anular', bodGuard, async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
