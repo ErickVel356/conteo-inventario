@@ -11135,9 +11135,17 @@ function _bodCargarDetalleMulti(callback) {
   })).then(function(results) {
     var allLineas      = [];
     var tarimaLicHija  = {};
-    results.forEach(function(r) {
+    results.forEach(function(r, idx) {
       if(!r) return;
-      allLineas = allLineas.concat(r.lineas || []);
+      var ses = sesiones[idx] || {};
+      // FIX (mié 10-jun-2026): adjuntar campos de sesión padre por línea
+      var lineas = (r.lineas || []).map(function(l) {
+        return Object.assign({}, l, {
+          _licencia_padre: ses.licencia_id || '',
+          _fecha_trabajo:  ses.fecha_trabajo || ''
+        });
+      });
+      allLineas = allLineas.concat(lineas);
       (r.cargas || []).forEach(function(cg) {
         var ts = Array.isArray(cg.tarimas) ? cg.tarimas : [];
         ts.forEach(function(t){ tarimaLicHija[t] = cg.licencia_hija || ''; });
@@ -11198,6 +11206,7 @@ function _bodRenderDetalleTabla(vistaEl, lineas, tarimaLicHija) {
     html += '<div style="color:#aaa;font-size:.82rem;padding:.5rem 0">Sin resultados.</div>';
   } else {
     html += '<div class="tbl-wrap"><table><thead><tr>'
+      +'<th>Licencia bolsón</th><th>Fecha</th>'
       +'<th>Tarima</th><th>Lic. hija</th><th>SKU</th><th>Descripción</th>'
       +'<th class="tc">Cant. captura</th><th class="tc">Cant. auditoría</th>'
       +'<th class="tc">Dif.</th><th>Estado</th><th>Operador</th><th>Auditado</th>'
@@ -11238,6 +11247,8 @@ function _bodRenderDetalleTabla(vistaEl, lineas, tarimaLicHija) {
       }
 
       html += '<tr>'
+        +'<td style="font-size:.76rem;color:#555;white-space:nowrap">'+escH(l._licencia_padre||'—')+'</td>'
+        +'<td style="font-size:.73rem;color:#888;white-space:nowrap">'+escH(l._fecha_trabajo||'—')+'</td>'
         +'<td style="font-size:.78rem;font-weight:700">'+escH(l.tarima||'—')+'</td>'
         +'<td style="font-size:.73rem;color:#1565c0">'+escH(licHijaTar)+'</td>'
         +'<td style="font-weight:600">'+escH(l.sku||'—')+'</td>'
