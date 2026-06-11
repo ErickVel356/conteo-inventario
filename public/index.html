@@ -12700,41 +12700,135 @@ function bodRenderFlujoBolson() {
           tblEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin SKUs. Agregá filas arriba usando el campo SKU.</div>';
           return;
         }
-        var html='<div class="tbl-wrap"><table><thead><tr>'
-          +'<th>SKU</th><th>Nombre</th><th class="tc">952</th><th class="tc">Unidad</th>'
-          +'<th class="tc">Exist.</th><th class="tc">Disp.</th>'
-          +'<th class="tc">Estado</th><th class="tc">Acción</th>'
+        // Datos logísticos desde la carga activa del manifiesto
+        var cargaAct = cargas && cargas.length ? cargas[0] : null;
+        var cargaFurg = cargaAct ? (cargaAct.furgon||'—') : '—';
+        var cargaLic  = cargaAct ? (cargaAct.licencia_hija||'—') : '—';
+        var cargaTR   = cargaAct ? (cargaAct.destino_tr999||'—') : '—';
+
+        function _calc(cant952, fisico, auditado) {
+          var c952 = Number(cant952)||0;
+          var fis  = Number(fisico)||0;
+          var diff = c952 - fis;
+          var seg  = diff > 0 ? 'Se queda en Bolsón' : diff === 0 ? 'OK' : 'Solicitar traslado a la 952';
+          var segC = diff > 0 ? '#e65100' : diff === 0 ? '#1e7e34' : '#c0392b';
+          var difPost = auditado ? 0 : diff;
+          var difPostC = difPost < 0 ? '#c0392b' : difPost > 0 ? '#e65100' : '#1e7e34';
+          var cantManif = auditado ? fis : c952;
+          return { diff:diff, seg:seg, segC:segC, difPost:difPost, difPostC:difPostC, cantManif:cantManif };
+        }
+
+        var html='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:900px"><thead><tr>'
+          +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">Estado</th>'
+          +'<th class="tc">952</th><th class="tc">Físico s/Aud.</th>'
+          +'<th class="tc">Diferencia</th><th>Seguimiento</th>'
+          +'<th class="tc">TR999</th><th class="tc">Dif. post-valid.</th>'
+          +'<th>Tarimas</th><th>Furgón</th><th>Lic. hija</th>'
+          +'<th class="tc">Cant. Manifiesto</th><th class="tc">Acción</th>'
           +'</tr></thead><tbody>';
-        filas.forEach(function(f) {
-          var est = f.estado_papel||'No auditado';
-          html+='<tr>'
-            +'<td style="font-weight:600;font-size:.8rem">'+escH(f.sku||'')+'</td>'
+
+        filas.forEach(function(f, idx) {
+          var est     = f.estado_papel||'No auditado';
+          var aud     = (est === 'Auditado') || !!f.validado;
+          var cant952 = Number(f.cantidad_952)||0;
+          var fisico  = Number(f.fisico_auditoria)||0;
+          var cv      = _calc(cant952, fisico, aud);
+          var sku     = f.sku||'';
+
+          html+='<tr data-sku="'+escH(sku)+'" data-cant952="'+cant952+'">'
+            +'<td style="font-weight:600;font-size:.8rem">'+escH(sku)+'</td>'
             +'<td style="font-size:.78rem">'+escH(f.nombre||'—')+'</td>'
-            +'<td class="tc">'+escH(String(f.cantidad_952||0))+'</td>'
-            +'<td class="tc" style="font-size:.75rem;color:#555">'+escH(f.unidad||'U')+'</td>'
-            +'<td class="tc">'+escH(String(f.existencia||0))+'</td>'
-            +'<td class="tc">'+escH(String(f.disponible||0))+'</td>'
-            +'<td class="tc"><select class="papel-estado-sel field-inp" data-sku="'+escH(f.sku)+'" style="font-size:.72rem;padding:2px 4px">'
+            +'<td class="tc" style="font-size:.73rem;color:#888">AI-'+(idx+1)+'</td>'
+            // Estado editable
+            +'<td class="tc"><select class="papel-estado-sel field-inp" data-sku="'+escH(sku)+'" style="font-size:.72rem;padding:2px 4px">'
               +'<option value="No auditado"'+(est==='No auditado'?' selected':'')+'>No auditado</option>'
               +'<option value="Auditado"'+(est==='Auditado'?' selected':'')+'>Auditado</option>'
             +'</select></td>'
-            +'<td class="tc"><button class="btn btn-xs papel-btn-quitar" data-sku="'+escH(f.sku)+'" style="background:#fdecea;color:#c0392b;font-size:.71rem">Quitar</button></td>'
+            // 952
+            +'<td class="tc">'+cant952+'</td>'
+            // Físico s/Aud. editable
+            +'<td class="tc"><input type="number" class="papel-fisico-inp field-inp" data-sku="'+escH(sku)+'" data-cant952="'+cant952+'" value="'+fisico+'" min="0" step="1" style="width:58px;padding:2px 4px;font-size:.78rem;text-align:center"></td>'
+            // Diferencia
+            +'<td class="tc p-dif" style="font-weight:600;color:'+cv.segC+'">'+cv.diff+'</td>'
+            // Seguimiento
+            +'<td class="p-seg" style="font-size:.76rem;color:'+cv.segC+'">'+escH(cv.seg)+'</td>'
+            // TR999
+            +'<td class="tc" style="font-size:.73rem">'+escH(cargaTR)+'</td>'
+            // Dif. post-valid.
+            +'<td class="tc p-difpost" style="font-weight:600;color:'+cv.difPostC+'">'+cv.difPost+'</td>'
+            // Tarimas
+            +'<td style="font-size:.73rem;color:#888">—</td>'
+            // Furgón
+            +'<td style="font-size:.73rem">'+escH(cargaFurg)+'</td>'
+            // Lic. hija
+            +'<td style="font-size:.73rem">'+escH(cargaLic)+'</td>'
+            // Cant. Manifiesto
+            +'<td class="tc p-cantmanif" style="font-weight:600">'+cv.cantManif+'</td>'
+            // Acción
+            +'<td class="tc"><button class="btn btn-xs papel-btn-quitar" data-sku="'+escH(sku)+'" style="background:#fdecea;color:#c0392b;font-size:.71rem">Quitar</button></td>'
             +'</tr>';
         });
         html+='</tbody></table></div>';
         tblEl.innerHTML=html;
 
-        // Wire: cambio de estado por fila → guarda en servidor
+        // Wire: cambio de estado → guardar + recalcular cantManif
         tblEl.querySelectorAll('.papel-estado-sel').forEach(function(sel) {
           sel.addEventListener('change', function() {
-            var sku=sel.dataset.sku; var nuevoEst=sel.value;
-            bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo', {
-              manifiesto_id: m.id,
-              skus:[{ sku:sku, estado_papel:nuevoEst,
-                validado:nuevoEst==='Auditado',
-                validado_por:nuevoEst==='Auditado'?usuario:'' }]
-            }).then(function(d){ if(!d.ok) alert(d.error||'Error al guardar estado'); })
-              .catch(function(){ alert('Sin conexión'); });
+            var sku=sel.dataset.sku;
+            var tr=sel.closest('tr');
+            var nuevoEst=sel.value;
+            var aud2=nuevoEst==='Auditado';
+            var c952=Number(tr.dataset.cant952)||0;
+            var fis2=Number(tr.querySelector('.papel-fisico-inp').value)||0;
+            var cv2=_calc(c952,fis2,aud2);
+            tr.querySelector('.p-dif').textContent=cv2.diff;
+            tr.querySelector('.p-dif').style.color=cv2.segC;
+            tr.querySelector('.p-seg').textContent=cv2.seg;
+            tr.querySelector('.p-seg').style.color=cv2.segC;
+            tr.querySelector('.p-difpost').textContent=cv2.difPost;
+            tr.querySelector('.p-difpost').style.color=cv2.difPostC;
+            tr.querySelector('.p-cantmanif').textContent=cv2.cantManif;
+            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo',{
+              manifiesto_id:m.id,
+              skus:[{sku:sku,estado_papel:nuevoEst,validado:aud2,validado_por:aud2?usuario:'',
+                fisico_auditoria:fis2,diferencia:cv2.diff,seguimiento:cv2.seg,cantidad_manifiesto:cv2.cantManif}]
+            }).then(function(d){if(!d.ok)alert(d.error||'Error al guardar estado');})
+              .catch(function(){alert('Sin conexión');});
+          });
+        });
+
+        // Wire: cambio de Físico s/Aud. → recalcular inline + guardar
+        tblEl.querySelectorAll('.papel-fisico-inp').forEach(function(inp) {
+          // Recalcular al vuelo sin esperar servidor
+          inp.addEventListener('input', function() {
+            var tr=inp.closest('tr');
+            var c952=Number(inp.dataset.cant952)||0;
+            var fis=Number(inp.value)||0;
+            var aud=tr.querySelector('.papel-estado-sel').value==='Auditado';
+            var cv3=_calc(c952,fis,aud);
+            tr.querySelector('.p-dif').textContent=cv3.diff;
+            tr.querySelector('.p-dif').style.color=cv3.segC;
+            tr.querySelector('.p-seg').textContent=cv3.seg;
+            tr.querySelector('.p-seg').style.color=cv3.segC;
+            tr.querySelector('.p-difpost').textContent=cv3.difPost;
+            tr.querySelector('.p-difpost').style.color=cv3.difPostC;
+            tr.querySelector('.p-cantmanif').textContent=cv3.cantManif;
+          });
+          // Guardar al servidor cuando el campo pierde foco
+          inp.addEventListener('change', function() {
+            var sku=inp.dataset.sku;
+            var tr=inp.closest('tr');
+            var c952=Number(inp.dataset.cant952)||0;
+            var fis=Number(inp.value)||0;
+            var aud=tr.querySelector('.papel-estado-sel').value==='Auditado';
+            var cv4=_calc(c952,fis,aud);
+            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo',{
+              manifiesto_id:m.id,
+              skus:[{sku:sku,fisico_auditoria:fis,diferencia:cv4.diff,seguimiento:cv4.seg,
+                cantidad_manifiesto:cv4.cantManif,
+                validado:aud,validado_por:aud?usuario:''}]
+            }).then(function(d){if(!d.ok)alert(d.error||'Error al guardar físico');})
+              .catch(function(){alert('Sin conexión');});
           });
         });
 
@@ -12815,7 +12909,8 @@ function bodRenderFlujoBolson() {
         msgEl.innerHTML='<span style="color:#c0392b">Formato TR999.xxx.xx — ejemplo TR999.001.01</span>'; return; }
       msgEl.innerHTML='<span style="color:#888">Creando carga…</span>';
       bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', {
-        tarimas:[], furgon:furgon, placa:placa, marchamo:marchamo,
+        // FIX (jue 11-jun-2026): desde_papel=true → servidor no exige tarimas
+        desde_papel: true, tarimas:[], furgon:furgon, placa:placa, marchamo:marchamo,
         licencia_hija:licHija, destino_tr999:destino, observacion:obs,
         usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
       }).then(function(d){
