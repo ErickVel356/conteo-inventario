@@ -11909,32 +11909,33 @@ var bodWmsUploading = false;
 
 function bodRenderWmsVsApp() {
   var vistaEl = document.getElementById('bod-aud-vista');
-  if(!vistaEl || !bodAuditoriaData) return;
-  var sesion  = bodAuditoriaData.sesion || {};
-  // Cargar teórico persistido si window._bodTeorico952 está vacío
-  var sesId952c = sesion.id || '';
-  if(sesId952c && !Object.keys(window._bodTeorico952).length) {
-    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId952c)+'/teorico-952')
+  if(!vistaEl) return;
+  // FIX (jue 11-jun-2026): permitir render aunque no haya sesión (teórico en memoria)
+  var sesion  = (bodAuditoriaData && bodAuditoriaData.sesion) || {};
+  var sesId   = sesion.id || '';
+
+  // Cargar teórico persistido desde Supabase solo si memoria vacía Y hay sesión
+  if(sesId && !Object.keys(window._bodTeorico952).length) {
+    bodFetch('GET', '/api/bod/sesion/'+encodeURIComponent(sesId)+'/teorico-952')
       .then(function(d){
         if(d && d.ok && d.rows && d.rows.length) {
           d.rows.forEach(function(r){
             var teoKey = bodTeoKey(r.licencia_hija||'', r.sku);
             window._bodTeorico952[teoKey] = {
               nombre: r.nombre||'', cantidad: r.cantidad_952||0,
-              unidades: r.unidades||0, existencia: r.existencia||0, disponible: r.disponible||0
+              unidad: r.unidad||'U', existencia: r.existencia||0, disponible: r.disponible||0
             };
           });
-          bodRenderWmsVsApp(); // re-render con datos cargados
+          bodRenderWmsVsApp();
         }
       }).catch(function(){});
   }
-  var licId   = sesion.licencia_id || '';
-  var sesId   = sesion.id || '';
-  var usuario = window.currentUser ? window.currentUser.name : '';
 
-  var teo952 = window._bodTeorico952 || {};
-  var teoCount = Object.keys(teo952).length;
+  var teo952       = window._bodTeorico952 || {};
+  var teoCount     = Object.keys(teo952).length;
   var teo952Ultima = window._bodTeorico952Ultima || '';
+
+  // ── Banner de estado ─────────────────────────────────────────────────────
   var teo952Html = teoCount > 0
     ? '<div style="background:#e8f5e9;border-radius:6px;padding:5px 10px;font-size:.76rem;color:#2e7d32;margin-bottom:.4rem">'
       +'✅ Teórico 952 cargado: <strong>'+teoCount+'</strong> SKUs'
@@ -11942,7 +11943,7 @@ function bodRenderWmsVsApp() {
       +' <button class="btn btn-xs" id="btn-ver-teo952" style="font-size:.7rem;margin-left:6px">Ver tabla</button>'
       +'<button class="btn btn-xs" id="btn-limpiar-teo952" style="font-size:.7rem;margin-left:4px;background:#fdecea;color:#c0392b">Limpiar</button>'
       +'</div>'
-      // FIX (jue 11-jun-2026): tabla con columnas Origen | Bodega | SKU | Nombre | Cant. | Unidad | Exist. | Disp.
+      // Tabla Origen | Bodega | SKU | Nombre | Cant. | Unidad | Exist. | Disp.
       +'<div id="bod-teo952-tabla" style="display:none;margin-bottom:.4rem">'
       +'<div class="tbl-wrap"><table><thead><tr>'
       +'<th>Origen</th><th>Bodega</th><th>SKU</th><th>Nombre</th>'
@@ -11968,6 +11969,7 @@ function bodRenderWmsVsApp() {
       +'📌 Sin teórico 952. Subí el archivo Excel de la ubicación 952.006.001.'
       +'</div>';
 
+  // ── Render (sin WMS vs App ni #bod-wms-app-tabla) ─────────────────────────
   vistaEl.innerHTML = teo952Html
     +'<div style="margin-bottom:.4rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<label class="btn btn-sm" style="cursor:pointer;background:#f3e5f5;color:#6a1b9a;font-size:.75rem;position:relative">'
@@ -11975,140 +11977,135 @@ function bodRenderWmsVsApp() {
     +'<input type="file" id="bod-teo952-inp" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">'
     +'</label>'
     +'<span id="bod-teo952-msg" style="font-size:.78rem"></span>'
-    +'</div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
-    +'<label>Filtrar:</label>'
-    +(function(){
-      var licHijasW={};
-      var cargasW=(bodAuditoriaData&&bodAuditoriaData._cargas)||[];
-      cargasW.forEach(function(cg){if(cg.licencia_hija)licHijasW[cg.licencia_hija]=true;});
-      var optsW='<option value="">Todas</option>'+Object.keys(licHijasW).sort().map(function(lh){
-        return '<option value="'+escH(lh)+'">'+escH(lh)+'</option>';
-      }).join('');
-      return '<select id="filtro-wms-lichija" class="field-inp" style="padding:3px 6px;font-size:.76rem;max-width:130px">'+optsW+'</select>';
-    })()
-    +'<input type="text" id="filtro-wms-sku" class="field-inp" placeholder="SKU" style="width:80px;padding:3px 7px;font-size:.76rem">'
-    +'<button class="btn btn-xs" id="btn-wms-filtrar"'
-    +' style="background:#e3f2fd;color:#1565c0;font-size:.73rem">Filtrar</button>'
-    +'<button class="btn btn-xs" id="btn-wms-limpiar" style="font-size:.73rem">Limpiar</button>'
-    +'</div>'
-    +'<div id="bod-wms-app-tabla"><div style="color:#888;font-size:.82rem">Cargando Carga Teórico…</div></div>';
+    +'</div>';
 
-  // Wire: ver/ocultar tabla de teórico 952
+  // ── Wires ─────────────────────────────────────────────────────────────────
   var btnVerT = document.getElementById('btn-ver-teo952');
   if(btnVerT) btnVerT.addEventListener('click', function(){
-    var t=document.getElementById('bod-teo952-tabla');
-    if(t) t.style.display = t.style.display==='none' ? '' : 'none';
+    var t = document.getElementById('bod-teo952-tabla');
+    if(t) t.style.display = t.style.display === 'none' ? '' : 'none';
   });
   var btnLimpT = document.getElementById('btn-limpiar-teo952');
   if(btnLimpT) btnLimpT.addEventListener('click', function(){
-    window._bodTeorico952 = {}; bodRenderWmsVsApp();
+    window._bodTeorico952 = {};
+    window._bodTeorico952Ultima = '';
+    bodRenderWmsVsApp();
   });
 
-  // Wire: upload teórico 952 (columnas: SKU, Nombre, 952, Unidades, Exist., Disp.)
+  // ── Wire upload teórico 952 ───────────────────────────────────────────────
   var inp952 = document.getElementById('bod-teo952-inp');
   if(inp952) inp952.addEventListener('change', function(){
-    if(!this.files||!this.files[0]) return;
+    if(!this.files || !this.files[0]) return;
     var archivo = this.files[0];
-    var msgEl = document.getElementById('bod-teo952-msg');
-    if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Leyendo '+escH(archivo.name)+'…</span>';
     this.value = '';
+    // Mostrar "leyendo" en el msgEl actual (antes del re-render)
+    var msgElPre = document.getElementById('bod-teo952-msg');
+    if(msgElPre) msgElPre.innerHTML = '<span style="color:#888">⏳ Leyendo '+escH(archivo.name)+'…</span>';
+
     var reader = new FileReader();
-    // Fix 1: leer licHija952 ANTES de que reader.onload se ejecute
-    var licHija952 = (document.getElementById('filtro-wms-lichija')||{}).value || '';
-    // FIX (mié 10-jun-2026): XLSX.read no existe en la lib embebida; usar readAsync
     reader.onload = async function(ev){
       try {
-        var wb = await XLSX.readAsync(ev.target.result);
-        var ws = wb.Sheets[wb.SheetNames[0]];
+        var wb   = await XLSX.readAsync(ev.target.result);
+        var ws   = wb.Sheets[wb.SheetNames[0]];
         var rows = XLSX.utils.sheet_to_json(ws, {defval:'', raw:false});
-        var teo = {};
+        var teo  = {};
         rows.forEach(function(row){
           var sku = String(row['SKU']||row['Código']||row['CODIGO']||row['sku']||'').trim().toUpperCase();
           if(!sku) return;
-          // Columnas reales del archivo 952.006.001: SKU | Nombre | Cant. | Unidad | Exist. | Disp.
-          // Helper: primer valor no-vacío de los candidatos dados
-          function _fv() {
+          function _fv(){
             for(var _i=0;_i<arguments.length;_i++){
               var _v=row[arguments[_i]];
               if(_v!==undefined&&_v!==null&&String(_v).trim()!=='') return _v;
             } return '';
           }
-          var cantRaw  = _fv('Cant.','Cant','Cantidad','952','Cantidad 952','CANTIDAD','cantidad');
-          var unidRaw  = _fv('Unidad','unidad','UNIDAD','Und','UND');
-          var existRaw = _fv('Exist.','Exist','Existencia','EXISTENCIA','existencia');
-          var dispRaw  = _fv('Disp.','Disp','Disponible','DISPONIBLE','disponible');
-          var teoParseKey = bodTeoKey(licHija952, sku);
-          teo[teoParseKey] = {
-            nombre:     String(_fv('Nombre','NOMBRE','Descripción','DESCRIPCION','nombre','descripcion')||''),
-            cantidad:   isNaN(Number(cantRaw))  ? 0 : Number(cantRaw),
-            unidad:     String(unidRaw||'U'),     // guardar como texto ('U', 'KG', etc.)
-            existencia: isNaN(Number(existRaw)) ? 0 : Number(existRaw),
-            disponible: isNaN(Number(dispRaw))  ? 0 : Number(dispRaw)
+          teo[bodTeoKey('', sku)] = {
+            nombre:     String(_fv('Nombre','NOMBRE','Descripción','DESCRIPCION','nombre')||''),
+            cantidad:   Number(_fv('Cant.','Cant','Cantidad','CANTIDAD','cantidad'))||0,
+            unidad:     String(_fv('Unidad','unidad','UNIDAD','Und','UND')||'U'),
+            existencia: Number(_fv('Exist.','Exist','Existencia','EXISTENCIA','existencia'))||0,
+            disponible: Number(_fv('Disp.','Disp','Disponible','DISPONIBLE','disponible'))||0
           };
         });
-        // Confirmar reemplazo si ya hay datos para esta lic.hija
-        var prefixCheck = licHija952 ? (licHija952+':') : ':';
-        var tienePrevio = Object.keys(window._bodTeorico952).some(function(k){
-          return k.slice(0, prefixCheck.length) === prefixCheck;
-        });
-        if(tienePrevio) {
-          var licLabel = licHija952 || '(global)';
-          if(!confirm('Ya existe teórico 952 para la licencia "'+licLabel+'".\n\n'
+
+        if(!Object.keys(teo).length) {
+          // Mostrar error sin re-render (para que el mensaje sea visible)
+          var mErr = document.getElementById('bod-teo952-msg');
+          if(mErr) mErr.innerHTML = '<span style="color:#c0392b">❌ No se encontraron filas con columna SKU en el archivo.</span>';
+          return;
+        }
+
+        // Confirmar reemplazo si ya hay datos
+        if(Object.keys(window._bodTeorico952).length) {
+          if(!confirm('Ya existe teórico 952 cargado.\n\n'
             +'¿Reemplazar con el nuevo archivo?\n'
             +'(Las validaciones del Papel de Trabajo se conservan)')) {
-            if(msgEl) msgEl.innerHTML='';
+            var mCan = document.getElementById('bod-teo952-msg');
+            if(mCan) mCan.innerHTML = '';
             return;
           }
         }
-        // Merge selectivo: borrar solo las claves de la licencia hija que se está subiendo,
-        // conservar claves de otras licencias hijas intactas.
-        // Clave con lic.hija: "LICENCIA:SKU" — prefijo = "LICENCIA:"
-        // Clave global (sin lic.hija): ":SKU" — prefijo = ":"
-        var prefixTeo = licHija952 ? (licHija952+':') : ':';
-        Object.keys(window._bodTeorico952).forEach(function(k){
-          if(k.slice(0, prefixTeo.length) === prefixTeo) delete window._bodTeorico952[k];
-        });
-        Object.assign(window._bodTeorico952, teo);
-        if(msgEl) msgEl.innerHTML = '<span style="color:#888">⏳ Guardando en servidor…</span>';
-        // Guardar en Supabase
-        var sesId952 = bodAuditoriaData && bodAuditoriaData.sesion ? bodAuditoriaData.sesion.id : '';
-        // licHija952 ya está declarada fuera del onload (Fix 1)
+
+        // Actualizar memoria
+        window._bodTeorico952 = teo;
+
+        // FIX (jue 11-jun-2026): re-render PRIMERO, luego capturar el msgEl fresco
+        bodRenderWmsVsApp();
+
+        // Mostrar la tabla automáticamente
+        var tblDiv = document.getElementById('bod-teo952-tabla');
+        if(tblDiv) tblDiv.style.display = '';
+
+        var msgElFresh = document.getElementById('bod-teo952-msg');
+
+        // Guardar en Supabase si hay sesión
+        var sesId952 = (bodAuditoriaData && bodAuditoriaData.sesion) ? bodAuditoriaData.sesion.id : '';
         if(sesId952) {
+          if(msgElFresh) msgElFresh.innerHTML = '<span style="color:#888">⏳ Guardando en servidor…</span>';
           bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesId952)+'/teorico-952', {
-            licencia_hija: licHija952,
+            licencia_hija: '',
             skus: Object.entries(teo).map(function(kv){
               var parts = bodSplitTeoKey(kv[0]);
               return Object.assign({ sku: parts.sku }, kv[1]);
             }),
             creado_por: window.currentUser ? window.currentUser.name : ''
           }).then(function(d){
-            // FIX (jue 11-jun-2026): mensaje claro con cantidad + fecha/hora
-            var ahora = new Date();
+            var ahora  = new Date();
             var fFecha = ahora.toLocaleDateString('es-GT',{timeZone:'America/Guatemala',day:'2-digit',month:'2-digit',year:'numeric'});
             var fHora  = ahora.toLocaleTimeString('es-GT',{timeZone:'America/Guatemala',hour:'2-digit',minute:'2-digit'});
             var tsFmt  = fFecha+' '+fHora;
             if(d.ok) {
               window._bodTeorico952Ultima = tsFmt;
-              if(msgEl) msgEl.innerHTML = '<span style="color:#1e7e34">✅ Teórico 952 cargado: '
+              // Re-render para actualizar el badge con la última carga
+              bodRenderWmsVsApp();
+              // Mantener tabla visible y mostrar mensaje en el elemento fresco
+              var tblD2 = document.getElementById('bod-teo952-tabla');
+              if(tblD2) tblD2.style.display = '';
+              var mFin = document.getElementById('bod-teo952-msg');
+              if(mFin) mFin.innerHTML = '<span style="color:#1e7e34">✅ Teórico 952 cargado: '
                 +Object.keys(teo).length+' SKUs · Última carga: '+escH(tsFmt)+'</span>';
             } else {
-              if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">Error guardando: '+escH(d.error||'')+'</span>';
+              var mErr2 = document.getElementById('bod-teo952-msg');
+              if(mErr2) mErr2.innerHTML = '<span style="color:#c0392b">Error guardando: '+escH(d.error||'')+'</span>';
             }
-          }).catch(function(){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión</span>'; });
+          }).catch(function(){
+            var mErrC = document.getElementById('bod-teo952-msg');
+            if(mErrC) mErrC.innerHTML = '<span style="color:#c0392b">❌ Sin conexión al guardar.</span>';
+          });
         } else {
-          if(msgEl) msgEl.innerHTML = '';
+          // Sin sesión — solo en memoria
+          if(msgElFresh) msgElFresh.innerHTML = '<span style="color:#e65100">⚠ Teórico cargado en esta pantalla. Para persistirlo, abrí una sesión.</span>';
+          if(msgElFresh) msgElFresh.innerHTML += ' <strong>'+Object.keys(teo).length+' SKUs</strong>';
         }
-        bodRenderWmsVsApp();
-        // También refrescar Papel de Trabajo si está activo
       } catch(err) {
-        if(msgEl) msgEl.innerHTML = '<span style="color:#c0392b">Error leyendo archivo: '+escH(err.message)+'</span>';
+        // FIX: mostrar error visible sin dejar la vista "cargando"
+        bodRenderWmsVsApp();
+        var mEx = document.getElementById('bod-teo952-msg');
+        if(mEx) mEx.innerHTML = '<span style="color:#c0392b">❌ Error leyendo archivo: '+escH(err.message)+'</span>';
       }
     };
     reader.readAsArrayBuffer(archivo);
   });
-
-  if(licId) bodCargarWmsVsApp(licId, sesId);
+  // FIX: ya NO llamar bodCargarWmsVsApp(licId, sesId) — causaba "Cargando Carga Teórico…"
 }
 
 function _bodRenderWmsTbl() {
