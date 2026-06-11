@@ -501,14 +501,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
     ──────────────────────────────────────────────────────── -->
     <div id="pg-bod-menu" class="page">
       <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
-      <!-- Lista de licencias bolsón activas -->
-      <div id="bod-sesiones-activas-wrap" style="margin-bottom:1rem;background:#f8f9fa;border-radius:8px;padding:.65rem .8rem">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">
-          <span style="font-weight:600;font-size:.82rem;color:#333">📋 Licencias bolsón activas</span>
-          <button id="btn-bod-refresh-activas" class="btn btn-xs" style="font-size:.72rem;background:#e8f4ff;color:#1565c0;padding:2px 8px">↻</button>
-          <button id="btn-bod-nueva-licencia" class="btn btn-xs" style="font-size:.72rem;background:#1565c0;color:#fff;padding:2px 10px;margin-left:auto">+ Nueva licencia bolsón</button>
-        </div>
-        <div id="bod-sesiones-activas-list" style="font-size:.78rem;color:#888">Cargando…</div>
+      <!-- Lista de licencias bolsón activas — ocultada del menú principal,
+           ahora visible en Auditar sesión → Tarimas -->
+      <div id="bod-sesiones-activas-wrap" style="display:none">
+        <button id="btn-bod-refresh-activas" style="display:none"></button>
+        <button id="btn-bod-nueva-licencia"  style="display:none"></button>
+        <div id="bod-sesiones-activas-list"></div>
       </div>
       <div class="submenu-list">
           <div class="si-icon">📦</div>
@@ -11202,7 +11200,21 @@ function bodRenderTarimasAuditoria() {
     });
   }
 
-  vistaEl.innerHTML = formCarga
+  // FIX (mié 10-jun-2026): Licencias bolsón activas — movidas desde menú principal
+  var licActiHtml = '<div id="bod-sesiones-activas-wrap-tar"'
+    +' style="margin-bottom:.9rem;background:#f8f9fa;border-radius:8px;padding:.65rem .8rem">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:.4rem">'
+    +'<span style="font-weight:600;font-size:.82rem;color:#333">📋 Licencias bolsón activas</span>'
+    +'<button id="btn-bod-refresh-activas-tar" class="btn btn-xs"'
+    +' style="font-size:.72rem;background:#e8f4ff;color:#1565c0;padding:2px 8px">↻ Refrescar</button>'
+    +'<button id="btn-bod-nueva-licencia-tar" class="btn btn-xs"'
+    +' style="font-size:.72rem;background:#1565c0;color:#fff;padding:2px 10px;margin-left:auto">+ Nueva licencia bolsón</button>'
+    +'</div>'
+    +'<div id="bod-sesiones-activas-list-tar" style="font-size:.78rem;color:#888">Cargando…</div>'
+    +'</div>';
+
+  vistaEl.innerHTML = licActiHtml
+    + formCarga
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:.4rem;font-size:.78rem">'
     +'<label style="font-weight:600;color:#555">📅 Filtrar fechas:</label>'
     +'<input type="date" id="bod-tar-fecha-desde" class="field-inp"'
@@ -11217,6 +11229,24 @@ function bodRenderTarimasAuditoria() {
     +'<div style="font-size:.77rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.3rem;letter-spacing:.3px">Tarimas</div>'
     +'<div class="tbl-wrap"><table>'+thead+'<tbody>'+filas+'</tbody></table></div>'
     +bloqueCargasHtml;
+
+  // ── Wire: licencias bolsón activas dentro de Tarimas ────────────────────
+  var _tarOpts = { targetId:'bod-sesiones-activas-list-tar', modoAuditoria:true };
+  var _tarRef = document.getElementById('btn-bod-refresh-activas-tar');
+  if(_tarRef) _tarRef.addEventListener('click', function(){ bodCargarSesionesActivas(_tarOpts); });
+  var _tarNueva = document.getElementById('btn-bod-nueva-licencia-tar');
+  if(_tarNueva) _tarNueva.addEventListener('click', function(){
+    var licInp = document.getElementById('bod-licencia');
+    var fecInp = document.getElementById('bod-fecha');
+    if(licInp) licInp.value = '';
+    if(fecInp) fecInp.value = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
+    var msgEl = document.getElementById('bod-sesion-msg');
+    if(msgEl) msgEl.innerHTML = '';
+    navTo('pg-bod-captura');
+    setTimeout(function(){ if(licInp) licInp.focus(); }, 80);
+  });
+  // Auto-cargar lista al mostrar la pestaña Tarimas
+  bodCargarSesionesActivas(_tarOpts);
 
   // Wire: filtros de fecha re-renderizan Tarimas
   ['bod-tar-fecha-desde','bod-tar-fecha-hasta'].forEach(function(id){
@@ -13188,8 +13218,14 @@ function bodLicQuery(licBase) {
 // bodExportarManifiestoWord eliminada — reemplazada por endpoint /manifiesto-word en server.js
 
 // ── Vista: Licencias bolsón activas ────────────────────────────────────────
-function bodCargarSesionesActivas() {
-  var listEl = document.getElementById('bod-sesiones-activas-list');
+// FIX (mié 10-jun-2026): acepta opts = { targetId, modoAuditoria }
+// targetId       — ID del div donde renderizar (default: 'bod-sesiones-activas-list')
+// modoAuditoria  — true: clic abre sesión en vista auditoría; false (default): navega a captura
+function bodCargarSesionesActivas(opts) {
+  opts = opts || {};
+  var targetId      = opts.targetId      || 'bod-sesiones-activas-list';
+  var modoAuditoria = !!opts.modoAuditoria;
+  var listEl = document.getElementById(targetId);
   if(!listEl) return;
   listEl.innerHTML = '<span style="color:#888">Cargando…</span>';
   fetch('/api/bod/sesiones-activas')
@@ -13237,45 +13273,71 @@ function bodCargarSesionesActivas() {
       });
       html += '</tbody></table>';
       listEl.innerHTML = html;
-      // Wire: clic en licencia abre la sesión directamente sin pasar por el buscador
+
+      // Wire: clic en licencia — comportamiento según contexto
       listEl.querySelectorAll('.bod-btn-abrir-sesion-activa').forEach(function(btn){
         btn.addEventListener('click', function(){
           var sesId = btn.dataset.id;
           var lic   = btn.dataset.lic;
           var fecha = btn.dataset.fecha;
-          // Rellenar el buscador (para contexto visual)
-          var licInp = document.getElementById('bod-licencia');
-          var fecInp = document.getElementById('bod-fecha');
-          if(licInp) licInp.value = lic;
-          if(fecInp) fecInp.value = fecha;
-          // Navegar a captura y cargar la sesión por ID
-          navTo('pg-bod-captura');
-          var msgEl = document.getElementById('bod-sesion-msg');
-          if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
-          fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-              if(!d.ok || !d.sesion){
-                if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error al cargar sesión')+'</span>';
-                return;
-              }
-              bodSesionActual = d.sesion;
-              if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(d.sesion.licencia_id)+'</span>';
-              var infoEl = document.getElementById('bod-sesion-info');
-              if(infoEl) infoEl.textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
-              var formEl = document.getElementById('bod-form-captura');
-              if(formEl) formEl.style.display = '';
-              bodPoblarTarimas();
-              bodCargarLineas(d.sesion.id);
-              var barraEl = document.getElementById('bod-barra');
-              if(barraEl) barraEl.focus();
-            })
-            .catch(function(){
-              if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
-            });
+          if(modoAuditoria) {
+            // ── Abrir en vista auditoría (misma lógica que bod-btn-cargar-sesion-listado) ──
+            var mEl = document.getElementById('bod-aud-msg') || {innerHTML:''};
+            mEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+            var hidLic   = document.getElementById('bod-aud-licencia');
+            var hidDesde = document.getElementById('bod-aud-fecha-desde');
+            if(hidLic)   hidLic.value   = lic;
+            if(hidDesde) hidDesde.value = fecha;
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+              .then(function(r){ return r.json(); })
+              .then(function(sd){
+                if(!sd.ok || !sd.sesion){
+                  mEl.innerHTML = '<span style="color:#c0392b">'+escH(sd.error||'Error al cargar sesión')+'</span>'; return;
+                }
+                mEl.innerHTML = '';
+                bodAuditoriaData = sd; bodAudLastRefresh = Date.now();
+                fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones')
+                  .then(function(r){ return r.json(); })
+                  .then(function(f){
+                    bodFurgonAsignaciones = (f.ok && Array.isArray(f.asignaciones)) ? f.asignaciones : [];
+                    if(bodAuditoriaData) bodAuditoriaData._cargas = (f.ok && Array.isArray(f.cargas)) ? f.cargas : [];
+                    bodRenderAuditoria(sd);
+                  });
+              })
+              .catch(function(){ mEl.innerHTML = '<span style="color:#c0392b">Sin conexión.</span>'; });
+          } else {
+            // ── Modo captura: navegar a pg-bod-captura (comportamiento original) ──
+            var licInp = document.getElementById('bod-licencia');
+            var fecInp = document.getElementById('bod-fecha');
+            if(licInp) licInp.value = lic;
+            if(fecInp) fecInp.value = fecha;
+            navTo('pg-bod-captura');
+            var msgEl = document.getElementById('bod-sesion-msg');
+            if(msgEl) msgEl.innerHTML = '<span style="color:#888">Cargando sesión…</span>';
+            fetch('/api/bod/sesion/'+encodeURIComponent(sesId))
+              .then(function(r){ return r.json(); })
+              .then(function(sd){
+                if(!sd.ok || !sd.sesion){
+                  if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(sd.error||'Error al cargar sesión')+'</span>'; return;
+                }
+                bodSesionActual = sd.sesion;
+                if(msgEl) msgEl.innerHTML='<span style="color:#1e7e34">✅ Sesión cargada: '+escH(sd.sesion.licencia_id)+'</span>';
+                var infoEl = document.getElementById('bod-sesion-info');
+                if(infoEl) infoEl.textContent = 'Sesión: '+sd.sesion.id+' · '+sd.sesion.estado;
+                var formEl = document.getElementById('bod-form-captura');
+                if(formEl) formEl.style.display = '';
+                bodPoblarTarimas(); bodCargarLineas(sd.sesion.id);
+                var barraEl = document.getElementById('bod-barra');
+                if(barraEl) barraEl.focus();
+              })
+              .catch(function(){
+                if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>';
+              });
+          }
         });
       });
-      // Wire borrar sesión — solo Erick Vela (validado también en backend)
+
+      // Wire: borrar sesión (solo Erick Vela — refresca la misma lista)
       listEl.querySelectorAll('.bod-btn-borrar-sesion').forEach(function(btn){
         btn.addEventListener('click', function(){
           var sesId = btn.dataset.id;
@@ -13291,10 +13353,10 @@ function bodCargarSesionesActivas() {
             body: JSON.stringify({ usuario: window.currentUser ? window.currentUser.name : '' })
           })
             .then(function(r){ return r.json(); })
-            .then(function(d){
-              if(!d.ok){ alert('Error al borrar: '+(d.error||'Error desconocido')); return; }
+            .then(function(sd){
+              if(!sd.ok){ alert('Error al borrar: '+(sd.error||'Error desconocido')); return; }
               alert('✅ Sesión '+lic+' eliminada.');
-              bodCargarSesionesActivas();
+              bodCargarSesionesActivas(opts); // refrescar la misma lista con los mismos opts
             })
             .catch(function(){ alert('Sin conexión al intentar borrar.'); });
         });
