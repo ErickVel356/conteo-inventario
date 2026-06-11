@@ -12699,17 +12699,10 @@ function bodRenderFlujoBolson() {
   var vistaEl = document.getElementById('bod-aud-vista');
   if(!vistaEl || !bodAuditoriaData) return;
 
-  // FIX (jue 11-jun-2026): Papel de Trabajo requiere manifiesto seleccionado
+  // FIX (jue 11-jun-2026, v21): sin manifiesto → redirigir silenciosamente a Control
   if(!window._bodManifiestoSeleccionado) {
-    vistaEl.innerHTML = '<div style="background:#fff8e1;border-radius:8px;padding:.9rem 1rem;font-size:.82rem;color:#795548">'
-      +'📋 <strong>Seleccioná o creá un manifiesto desde Control de Manifiestos</strong> para trabajar el Papel de Trabajo.'
-      +'<br><button class="btn btn-sm" id="btn-papel-ir-ctrl" style="margin-top:.4rem;font-size:.75rem">Ir a Control de Manifiestos</button>'
-      +'</div>';
-    var bC = document.getElementById('btn-papel-ir-ctrl');
-    if(bC) bC.addEventListener('click', function(){
-      bodAudVista = 'control-manifiestos';
-      bodRenderAuditoria(bodAuditoriaData);
-    });
+    bodAudVista = 'control-manifiestos';
+    bodRenderAuditoria(bodAuditoriaData);
     return;
   }
   // FIX (jue 11-jun-2026): validar que el manifiesto tenga id y correlativo reales
@@ -12796,14 +12789,25 @@ function bodRenderFlujoBolson() {
     +'<button class="btn btn-xs" id="btn-papel-recargar" style="margin-left:auto;font-size:.71rem;background:#e8f4ff;color:#1565c0">↻ Recargar</button>'
     +'</div>';
 
-  // Formulario agregar SKU
-  var addSkuForm = '<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:.5rem;flex-wrap:wrap">'
-    +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">SKU</label>'
+  // FIX (jue 11-jun-2026, v21): formulario CDG v2 style — SKU + Descripción auto + Cantidad + Costo auto
+  var addSkuForm = '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
+    +'<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.45rem">+ Agregar l\xednea</div>'
+    +'<div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap">'
+    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">SKU</label>'
     +'<input type="text" id="papel-add-sku" class="field-inp" placeholder="Ej: 100227"'
-    +' style="width:130px;padding:4px 8px;font-size:.82rem" inputmode="numeric" autocomplete="off"></div>'
-    +'<button class="btn btn-sm" id="btn-papel-agregar-sku" style="background:#1565c0;color:#fff;font-size:.74rem;align-self:flex-end">+ Agregar SKU</button>'
+    +' style="width:110px;padding:4px 8px;font-size:.82rem" inputmode="numeric" autocomplete="off"></div>'
+    +'<div style="flex:1;min-width:140px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label>'
+    +'<input type="text" id="papel-add-desc" class="field-inp" placeholder="Ingres\xe1 el SKU primero"'
+    +' style="width:100%;padding:4px 8px;font-size:.78rem;background:#f0f0f0;color:#555" readonly></div>'
+    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Cantidad</label>'
+    +'<input type="number" id="papel-add-cant" class="field-inp" value="0" min="0" step="1"'
+    +' style="width:72px;padding:4px 7px;font-size:.82rem;text-align:center"></div>'
+    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Costo unit.</label>'
+    +'<input type="text" id="papel-add-costo" class="field-inp" placeholder="Auto"'
+    +' style="width:72px;padding:4px 7px;font-size:.78rem;background:#f0f0f0;color:#555;text-align:center" readonly></div>'
+    +'<button class="btn btn-sm" id="btn-papel-agregar-sku" style="background:#1565c0;color:#fff;font-size:.76rem;align-self:flex-end;padding:5px 14px">+ Agregar</button>'
     +'<span id="papel-add-msg" style="font-size:.76rem;align-self:center"></span>'
-    +'</div>';
+    +'</div></div>';
 
   vistaEl.innerHTML = headerManif + addSkuForm
     +'<div id="papel-tabla-cont"><div style="color:#888;font-size:.82rem;padding:.4rem 0">⏳ Cargando filas…</div></div>';
@@ -12985,44 +12989,82 @@ function bodRenderFlujoBolson() {
   var btnRecPapel=document.getElementById('btn-papel-recargar');
   if(btnRecPapel) btnRecPapel.addEventListener('click',_cargarFilasPapel);
 
-  // Wire: agregar SKU
-  var btnAgregarSku=document.getElementById('btn-papel-agregar-sku');
+  // Wire: SKU input → autocomplete descripción + costo desde sku_catalog
+  // FIX (jue 11-jun-2026, v21): lookup al escribir SKU
+  var _skuLookupTimer = null;
+  function _lookupSkuCatalog(sku) {
+    bodFetch('GET','/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(sku))
+      .then(function(d) {
+        var descEl  = document.getElementById('papel-add-desc');
+        var costoEl = document.getElementById('papel-add-costo');
+        if(d && d.ok && d.resultados && d.resultados.length) {
+          var r = d.resultados.find(function(x){ return String(x.sku)===sku; }) || d.resultados[0];
+          if(descEl)  descEl.value  = r.descripcion || '';
+          if(costoEl && r.costo) costoEl.value = 'Q '+Number(r.costo).toLocaleString('es-GT',{maximumFractionDigits:0});
+          else if(costoEl) costoEl.value = '';
+        } else {
+          if(descEl)  descEl.value  = '';
+          if(costoEl) costoEl.value = '';
+        }
+      }).catch(function(){});
+  }
+  var skuInpEl = document.getElementById('papel-add-sku');
+  if(skuInpEl) {
+    skuInpEl.addEventListener('blur', function(){
+      var v = skuInpEl.value.trim().toUpperCase();
+      if(v) _lookupSkuCatalog(v);
+    });
+    skuInpEl.addEventListener('input', function(){
+      clearTimeout(_skuLookupTimer);
+      var v = skuInpEl.value.trim().toUpperCase();
+      if(v.length >= 4) _skuLookupTimer = setTimeout(function(){ _lookupSkuCatalog(v); }, 600);
+    });
+  }
+
+  // Wire: agregar SKU (v21 — incluye cantidad manual + descripción auto)
+  var btnAgregarSku = document.getElementById('btn-papel-agregar-sku');
   if(btnAgregarSku) btnAgregarSku.addEventListener('click', function(){
-    var skuInp=document.getElementById('papel-add-sku');
-    var msg   =document.getElementById('papel-add-msg');
-    var sku   =(skuInp?skuInp.value:'').trim().toUpperCase();
-    if(!sku){ if(msg)msg.innerHTML='<span style="color:#c0392b">Ingresá un SKU.</span>'; return; }
-    // Lookup en teórico 952 en memoria
-    var teoKey=bodTeoKey('',sku);
-    var teoRow=window._bodTeorico952 ? window._bodTeorico952[teoKey] : null;
-    if(msg)msg.innerHTML='<span style="color:#888">Guardando…</span>';
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo',{
+    var skuInp  = document.getElementById('papel-add-sku');
+    var cantInp = document.getElementById('papel-add-cant');
+    var descInp = document.getElementById('papel-add-desc');
+    var costoInp= document.getElementById('papel-add-costo');
+    var msg     = document.getElementById('papel-add-msg');
+    var sku     = (skuInp ? skuInp.value : '').trim().toUpperCase();
+    var cantRaw = cantInp ? (Number(cantInp.value) || 0) : 0;
+    var descVal = descInp ? descInp.value : '';
+    if(!sku) { if(msg) msg.innerHTML = '<span style="color:#c0392b">Ingres\xe1 un SKU.</span>'; return; }
+    var teoKey  = bodTeoKey('', sku);
+    var teoRow  = window._bodTeorico952 ? window._bodTeorico952[teoKey] : null;
+    var nombreFinal = descVal || (teoRow ? (teoRow.nombre || '') : '');
+    var cant952     = teoRow ? (teoRow.cantidad || 0) : 0;
+    if(msg) msg.innerHTML = '<span style="color:#888">Guardando\u2026</span>';
+    bodFetch('POST', '/api/bod/sesion/'+encodeURIComponent(sesIdPapel)+'/papel-trabajo', {
       manifiesto_id: m.id,
-      skus:[{
-        sku:          sku,
-        nombre:       teoRow?(teoRow.nombre||''):'',
-        cantidad_952: teoRow?(teoRow.cantidad||0):0,
-        unidad:       teoRow?(teoRow.unidad||'U'):'U',
-        existencia:   teoRow?(teoRow.existencia||0):0,
-        disponible:   teoRow?(teoRow.disponible||0):0,
-        estado_papel: 'No auditado',
-        validado:     false,
-        cantidad_manifiesto: teoRow?(teoRow.cantidad||0):0
+      skus: [{
+        sku:                 sku,
+        nombre:              nombreFinal,
+        cantidad_952:        cant952,
+        unidad:              teoRow ? (teoRow.unidad || 'U') : 'U',
+        estado_papel:        'No auditado',
+        validado:            false,
+        cantidad_manifiesto: cantRaw
       }]
     }).then(function(d){
-      if(d.ok){
-        if(msg)msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(sku)+(teoRow?'':' (sin teórico 952)')+'</span>';
-        if(skuInp){skuInp.value='';skuInp.focus();}
+      if(d.ok) {
+        if(msg) msg.innerHTML = '<span style="color:#1e7e34">\u2705 '+escH(sku)+(teoRow ? '' : ' (sin te\xf3rico 952)')+'</span>';
+        if(skuInp)   { skuInp.value = ''; skuInp.focus(); }
+        if(cantInp)    cantInp.value = '0';
+        if(descInp)    descInp.value = '';
+        if(costoInp)   costoInp.value = '';
         _cargarFilasPapel();
       } else {
-        if(msg)msg.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>';
+        if(msg) msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error || 'Error')+'</span>';
       }
-    }).catch(function(){ if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexión</span>'; });
+    }).catch(function(){ if(msg) msg.innerHTML = '<span style="color:#c0392b">Sin conexi\xf3n</span>'; });
   });
-  // Enter en el input agrega
-  var skuInpEl=document.getElementById('papel-add-sku');
-  if(skuInpEl) skuInpEl.addEventListener('keydown',function(e){
-    if(e.key==='Enter'&&btnAgregarSku) btnAgregarSku.click();
+  // Enter en SKU → agregar
+  if(skuInpEl) skuInpEl.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && btnAgregarSku) btnAgregarSku.click();
   });
 
 }
