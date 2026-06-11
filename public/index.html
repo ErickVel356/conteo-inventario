@@ -11533,8 +11533,9 @@ function bodRenderControlManifiestos() {
     ? '<div id="ctrl-carga-form" style="background:#f5f5f3;border-radius:8px;padding:.65rem .85rem;margin-bottom:.6rem">'
       +'<div style="font-size:.78rem;font-weight:700;color:#333;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.3px">Nueva carga logística</div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">PT asociado</label>'
-      +'<select id="ctrl-manif-sel" class="field-inp" style="font-size:.76rem;padding:3px 6px;max-width:150px"><option value="">Cargando PTs…</option></select></div>'
+      +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">PT (papel de trabajo)</label>'
+      +'<div style="display:flex;align-items:center;gap:0"><span id="ctrl-pt-prefix" style="background:#e8ecf0;color:#333;font-weight:700;font-size:.80rem;padding:3px 7px;border:1px solid #ccc;border-right:none;border-radius:4px 0 0 4px;white-space:nowrap">PT-…-</span>'
+      +'<input type="text" id="ctrl-pt-num" maxlength="2" placeholder="01" class="field-inp" style="width:40px;border-radius:0 4px 4px 0;padding:3px 7px;font-size:.82rem;text-align:center"></div></div>'
       +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Furgón</label>'
       +'<input type="text" id="ctrl-furgon-inp" class="field-inp" placeholder="Ej: 1" style="width:70px;padding:3px 7px;font-size:.82rem"></div>'
       +'<div><label style="font-size:.7rem;color:#666;display:block;margin-bottom:2px">Placa</label>'
@@ -11576,24 +11577,18 @@ function bodRenderControlManifiestos() {
         if(bodAuditoriaData) bodAuditoriaData._cargas=cargasActuales;
       }
       window._bodManifiestosControlActuales=manifiestos;
-      // Poblar selector de PT (obligatorio — no existe "Sin PT")
-      var selPT=document.getElementById('ctrl-manif-sel');
-      if(selPT){
-        var activosPT=manifiestos.filter(function(m){return m.estado!=='anulado';});
-        if(activosPT.length){
-          var optsHTML='<option value="">— Seleccioná un PT —</option>';
-          activosPT.forEach(function(m){
-            optsHTML+='<option value="'+escH(m.id)+'">'+(m.correlativo||m.id)+'</option>';
-          });
-          selPT.innerHTML=optsHTML;
-          // Preseleccionar si hay un manifiesto activo
-          if(window._bodManifiestoSeleccionado&&window._bodManifiestoSeleccionado.id) selPT.value=window._bodManifiestoSeleccionado.id;
-        } else {
-          selPT.innerHTML='<option value="">— Primero creá un PT —</option>';
-        }
-      }
-      if(!manifiestos.length){
+      // FIX (jue 11-jun-2026, v21): ocultar anulados por defecto
+      var _mostAnul = (listaEl.dataset.mostrarAnulados === 'true');
+      var manifActivos = manifiestos.filter(function(m){ return _mostAnul || m.estado !== 'anulado'; });
+      if(!manifActivos.length && !manifiestos.length){
         listaEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin papeles de trabajo. Creá uno arriba.</div>';
+        return;
+      }
+      if(!manifActivos.length){
+        listaEl.innerHTML='<div style="color:#888;font-size:.82rem;padding:.4rem 0">Solo hay manifiestos anulados. '
+          +'<button class="btn btn-xs" id="btn-tog-anulados-2" style="font-size:.7rem">Mostrar anulados</button></div>';
+        var _b2=document.getElementById('btn-tog-anulados-2');
+        if(_b2) _b2.addEventListener('click',function(){ listaEl.dataset.mostrarAnulados='true'; _cargarVistaUnificada(); });
         return;
       }
       var cgPorManif={};
@@ -11615,7 +11610,7 @@ function bodRenderControlManifiestos() {
         +'<th style="padding:3px 5px;text-align:center">Carga</th>'
         +'<th style="padding:3px 5px;text-align:center;white-space:nowrap">Acción</th>'
         +'</tr></thead><tbody>';
-      manifiestos.forEach(function(m){
+      manifActivos.forEach(function(m){
         var es=estadoStyle[m.estado]||estadoStyle['sin_iniciar'];
         var badgePT='<span style="background:'+es.bg+';color:'+es.fg+';font-size:.7rem;padding:1px 5px;border-radius:6px">'+es.label+'</span>';
         var cg=cgPorManif[m.id]||null;
@@ -11639,6 +11634,8 @@ function bodRenderControlManifiestos() {
           if(m.estado!=='finalizado'&&esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-fin" data-id="'+escH(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem">Fin</button> ';
           if(m.estado==='finalizado'&&(esLider||esAud)) acciones+='<button class="btn btn-xs ctrl-man-btn-reab" data-id="'+escH(m.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">Reabrir</button> ';
           if(esAud) acciones+='<button class="btn btn-xs ctrl-man-btn-anul" data-id="'+escH(m.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Anular</button>';
+          // FIX (jue 11-jun-2026, v21): botón borrar PT
+          if(esAud) acciones+=' <button class="btn btn-xs ctrl-man-btn-borrar" data-id="'+escH(m.id)+'" title="Borrar PT y sus datos" style="background:#7b241c;color:#fff;font-size:.7rem">Borrar</button>';
         }
         if(cg&&esAud){
           if(!esCargaCerrada) acciones+=' <button class="btn btn-xs ctrl-carga-editar" data-id="'+escH(cg.id)+'" style="background:#fff3e0;color:#e65100;font-size:.7rem">\u270f</button>'
@@ -11670,6 +11667,26 @@ function bodRenderControlManifiestos() {
       listaEl.innerHTML=html;
       function _mById(id){return(window._bodManifiestosControlActuales||[]).find(function(x){return x.id===id;})||null;}
       function _cgById(id){return cargasActuales.find(function(c){return c.id===id;})||null;}
+      // FIX (jue 11-jun-2026, v21): _irAPapel — carga seleccionado + navega a Papel de Trabajo
+      function _irAPapel(m, cg) {
+        window._bodManifiestoSeleccionado = {
+          id:            m.id,
+          correlativo:   m.correlativo,
+          estado:        m.estado,
+          _sesId:        sesId,
+          carga_id:      cg ? cg.id             : null,
+          furgon:        cg ? (cg.furgon        ||null) : null,
+          placa:         cg ? (cg.placa         ||null) : null,
+          marchamo:      cg ? (cg.marchamo      ||null) : null,
+          licencia_hija: cg ? (cg.licencia_hija ||null) : null,
+          destino_tr999: cg ? (cg.destino_tr999 ||null) : null,
+          observacion:   cg ? (cg.observacion   ||null) : null,
+          auditor_lider: m.auditor_lider,
+          colaboradores: Array.isArray(m.colaboradores) ? m.colaboradores : []
+        };
+        bodAudVista = 'flujo';
+        bodRenderAuditoria(bodAuditoriaData);
+      }
       // Ir a Papel de Trabajo
       listaEl.querySelectorAll('.ctrl-man-btn-ir').forEach(function(btn){
         btn.addEventListener('click',function(){
@@ -11696,6 +11713,30 @@ function bodRenderControlManifiestos() {
           if(!confirm('¿Anular? No se puede deshacer.'))return;
           bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/anular',{usuario:usuario})
             .then(function(d){if(d.ok){window._bodManifiestoSeleccionado=null;_cargarVistaUnificada();}else alert(d.error||'Error');}).catch(function(){alert('Sin conexión');});
+        });
+      });
+      // FIX (jue 11-jun-2026, v21): wire botón Borrar PT
+      listaEl.querySelectorAll('.ctrl-man-btn-borrar').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var mF=_mById(btn.dataset.id);if(!mF){alert('No encontrado.');return;}
+          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),
+            {usuario:usuario,auditor:esAud,supervisor:isSup()})
+          .then(function(d){
+            if(d.ok){
+              if(window._bodManifiestoSeleccionado&&window._bodManifiestoSeleccionado.id===btn.dataset.id) window._bodManifiestoSeleccionado=null;
+              _cargarVistaUnificada();
+            } else if(d.tieneLineas){
+              if(!confirm('El PT '+escH(d.correlativo||'')+' tiene '+d.count+' líneas en Papel de Trabajo. ¿Segús que deseás borrarlo? Se eliminarán todas las líneas.')) return;
+              bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),
+                {usuario:usuario,auditor:esAud,supervisor:isSup(),forzar:true})
+              .then(function(d2){
+                if(d2.ok){
+                  if(window._bodManifiestoSeleccionado&&window._bodManifiestoSeleccionado.id===btn.dataset.id) window._bodManifiestoSeleccionado=null;
+                  _cargarVistaUnificada();
+                } else alert(d2.error||'Error');
+              }).catch(function(){alert('Sin conexión');});
+            } else alert(d.error||'Error');
+          }).catch(function(){alert('Sin conexión');});
         });
       });
       if(esAud){
@@ -11772,6 +11813,12 @@ function bodRenderControlManifiestos() {
     });
   }
   _cargarVistaUnificada();
+  // FIX (jue 11-jun-2026, v21): poner fecha Guatemala en prefijo PT
+  var _ptPrefEl = document.getElementById('ctrl-pt-prefix');
+  if(_ptPrefEl) {
+    var _hoyGT2 = new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
+    _ptPrefEl.textContent = 'PT-'+_hoyGT2+'-';
+  }
 
   // Wire: Crear papel de trabajo → guarda selección y va a Papel de Trabajo
   var btnCrear = document.getElementById('btn-ctrl-man-crear');
@@ -11783,13 +11830,8 @@ function bodRenderControlManifiestos() {
     }).then(function(d){
       if(d.ok && d.manifiesto && d.manifiesto.id && d.manifiesto.correlativo) {
         if(msg) msg.innerHTML='<span style="color:#1e7e34">✅ '+escH(d.manifiesto.correlativo)+' creado. Ahora creá la carga logística y luego presioná Empezar.</span>';
-        // FIX: quedarse en Control, refrescar y preseleccionar el PT nuevo
+        // FIX (jue 11-jun-2026, v21): refrescar lista (select eliminado)
         _cargarVistaUnificada();
-        // Preseleccionar en selector de carga después del refresh
-        setTimeout(function(){
-          var sel=document.getElementById('ctrl-manif-sel');
-          if(sel) sel.value=d.manifiesto.id;
-        }, 600);
       } else {
         if(msg) msg.innerHTML='<span style="color:#c0392b">'+escH((d&&d.error)||'Error')+'</span>';
       }
@@ -11799,15 +11841,18 @@ function bodRenderControlManifiestos() {
   // Wire: Crear carga logística desde formulario
   var btnCC = document.getElementById('btn-ctrl-crear-carga');
   if(btnCC) btnCC.addEventListener('click', function(){
-    var manifId = (document.getElementById('ctrl-manif-sel').value||'').trim();
+    // FIX (jue 11-jun-2026, v21): leer PT desde campo compuesto
+    var _ptPfx = (document.getElementById('ctrl-pt-prefix')||{}).textContent||'';
+    var _ptN   = (document.getElementById('ctrl-pt-num') ? document.getElementById('ctrl-pt-num').value : '').trim();
+    var msgEl  = document.getElementById('ctrl-carga-msg');
+    if(!_ptN || !/^\d{1,2}$/.test(_ptN)){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el número de PT (01, 02…)</span>'; return; }
+    var correlativoInput = _ptPfx.replace(/\s/g,'')+String(_ptN).padStart(2,'0');
     var furgon  = (document.getElementById('ctrl-furgon-inp').value||'').trim();
     var placa   = (document.getElementById('ctrl-placa-inp').value||'').trim().toUpperCase();
     var marcha  = (document.getElementById('ctrl-marchamo-inp').value||'').trim().toUpperCase();
     var licHija = (document.getElementById('ctrl-lichija-inp').value||'').trim().toUpperCase();
     var destino = (document.getElementById('ctrl-destino-inp').value||'').trim().toUpperCase();
     var obs     = (document.getElementById('ctrl-obs-inp').value||'').trim();
-    var msgEl   = document.getElementById('ctrl-carga-msg');
-    if(!manifId){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Seleccioná un PT primero o creá uno arriba.</span>'; return; }
     if(!furgon) { if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el furgón.</span>'; return; }
     if(!licHija){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia hija.</span>'; return; }
     if(!destino){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">Ingresá el destino TR999.</span>'; return; }
@@ -11818,7 +11863,7 @@ function bodRenderControlManifiestos() {
       licencia_hija:licHija, destino_tr999:destino, observacion:obs,
       usuario:usuario, auditor:isBodAuditor(), supervisor:isBodAuditor()
     };
-    if(manifId) payload.manifiesto_id = manifId;
+    payload.correlativo = correlativoInput; // FIX v21: server busca o crea el manifiesto por correlativo
     bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/carga-logistica', payload)
       .then(function(d){
         if(!d.ok){ if(msgEl) msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
