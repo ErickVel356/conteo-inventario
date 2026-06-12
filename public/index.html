@@ -1766,12 +1766,8 @@ function renderLoginNameOptions(){
     html += '<option>Alexander Grijalva</option><option>Jaqueline Perez</option>';
     html += '<option>Jeffry Telon</option><option>Bianca Montenegro</option>';
     html += '</optgroup>';
-    html += '<optgroup label="Bodega CDG" id="login-optgroup-bodega">';
-    html += '<option>Huvaldo Pérez</option><option>Ader Chávez</option>';
-    html += '<option>Angie Suar</option><option>Duma Pérez</option>';
-    html += '<option>Edgar Soto</option>';
-    html += '<option>Alejandra Galeros</option><option>Sharon Hernández</option>';
-    html += '</optgroup>';
+    // FIX (vie 12-jun-2026, v5.2.31): bodega users solo con clave bodega (como RGIS con su clave)
+    // Removido: optgroup Bodega CDG del scope full — usan su propia clave
   }
   sel.innerHTML = html;
   sel.value = '';
@@ -10120,12 +10116,27 @@ function bodAbrirMenu() {
   var captBtn   = document.getElementById('sm-bod-captura');
   var audBtn    = document.getElementById('sm-bod-auditoria');
   var barraBtn  = document.getElementById('sm-bod-barra-sku');
-  // sm-bod-captura: bodega y supervisor
+  // Mostrar/ocultar según rol
   if(captBtn)   captBtn.style.display   = (isBodBodega() || (typeof isSup==='function' && isSup())) ? '' : 'none';
-  // sm-bod-auditoria: supervisor y contador
   if(audBtn)    audBtn.style.display    = isBodAuditor() ? '' : 'none';
-  // sm-bod-barra-sku: solo supervisor
   if(barraBtn)  barraBtn.style.display  = (typeof isSup==='function' && isSup()) ? '' : 'none';
+  // FIX (vie 12-jun-2026, v5.2.31): cablear clicks de submenu (solo una vez)
+  if(!window._bodMenuWired) {
+    window._bodMenuWired = true;
+    if(captBtn) captBtn.addEventListener('click', function(){
+      navTo('pg-bod-captura', '📦 Capturar tarima');
+      if(typeof bodIniciarCaptura === 'function') bodIniciarCaptura();
+    });
+    if(audBtn) audBtn.addEventListener('click', function(){
+      navTo('pg-bod-auditoria', '🔍 Auditar sesión');
+      _bodAudSesion = null; _bodAudManifAct = null;
+      if(typeof bodRenderAuditoria === 'function') bodRenderAuditoria();
+    });
+    if(barraBtn) barraBtn.addEventListener('click', function(){
+      navTo('pg-bod-barra-sku', '📋 Catálogo barra-SKU');
+      if(typeof bodWireBarraSku === 'function') bodWireBarraSku();
+    });
+  }
 }
 
 // Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
@@ -10145,6 +10156,7 @@ window.bodCleanup = function(){
   if(typeof bodAudLastRefresh   !== 'undefined') bodAudLastRefresh   = 0;
   if(typeof bodAudPollTimer     !== 'undefined' && bodAudPollTimer){ clearInterval(bodAudPollTimer); bodAudPollTimer = null; }
   // Reset new audit state
+  window._bodMenuWired = false; // allow re-wiring on next login
   _bodAudSesion = null;
   _bodAudManifAct = null;
   _bodAudTeorico = {};
@@ -10570,6 +10582,19 @@ function bodAudTab5() {
 }
 
 window.bodRenderAuditoria = bodRenderAuditoria;
+
+// Wire catálogo barra-SKU (si no fue definido antes)
+if(typeof bodWireBarraSku === 'undefined') {
+  function bodWireBarraSku(){
+    var inp=document.getElementById('inp-bod-barra-sku');
+    var btn=document.getElementById('btn-bod-barra-sku-upload');
+    var nom=document.getElementById('bod-barra-sku-nombre');
+    var msg=document.getElementById('bod-barra-sku-msg');
+    if(!inp||inp._wired)return; inp._wired=true;
+    inp.addEventListener('change',function(){if(this.files&&this.files[0]){if(nom)nom.textContent=this.files[0].name;if(btn)btn.disabled=false;}});
+    if(btn)btn.addEventListener('click',function(){var f=inp.files&&inp.files[0];if(!f)return;if(msg)msg.innerHTML='<span style="color:#888">Subiendo…</span>';btn.disabled=true;var fd=new FormData();fd.append('file',f);fd.append('usuario',window.currentUser?window.currentUser.name:'');fetch('/api/bod/barra-sku/upload',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(d){if(msg)msg.innerHTML='<span style="color:'+(d.ok?'#1e7e34':'#c0392b')+'">'+bodEscA(d.ok?'✅ '+d.procesadas+' barras cargadas':d.error||'Error')+'</span>';btn.disabled=false;inp.value='';}).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexión</span>';btn.disabled=false;});});
+  }
+}
 
 })(); // FIN BOD MODULE
 </script>
