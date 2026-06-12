@@ -489,6 +489,11 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="mc-title">Conteos CDG</div>
           <div class="mc-sub">Envíos a Hamilton (U25)</div>
         </div>
+        <div class="menu-card" id="mc-bodega" style="display:none">
+          <div class="mc-icon">📦</div>
+          <div class="mc-title">Bodega CDG</div>
+          <div class="mc-sub">Captura · Auditoría · Manifiesto</div>
+        </div>
       </div>
       <div style="margin-top:1.5rem;display:flex;gap:.75rem;flex-wrap:wrap">
         <button class="btn btn-sm" id="btn-reset">↺ Nuevo día</button>
@@ -1965,6 +1970,11 @@ function updateOnlineBar(){
 document.getElementById('mc-hamilton').addEventListener('click',function(){
   navTo('pg-hamilton','🏭 Conteos Hamilton');
   updateSubmenúCounts();
+});
+var _mcBod = document.getElementById('mc-bodega');
+if(_mcBod) _mcBod.addEventListener('click',function(){
+  navTo('pg-bod-menu','📦 Bodega CDG');
+  if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
 });
 document.getElementById('mc-cdg').addEventListener('click',function(){
   // FIX (sáb 30-may-2026, v5.2.27): si CDG v2 está habilitado, mostrar selector.
@@ -9972,6 +9982,9 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez',
   'Edgar Soto','Alejandra Galeros','Sharon Hernández'];
 window.BODEGA_LIST = BODEGA_LIST;
+// FIX (vie 12-jun-2026, v21): RGIS_LIST — lista de usuarios permitidos con clave RGIS
+var RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5'];
+window.RGIS_LIST = RGIS_LIST;
 
 // ─── ESTADO CENTRAL ───────────────────────────────────────────────────────────
 window._bod = {
@@ -10019,6 +10032,15 @@ window.bodAbrirMenu = function() {
   // Catálogo solo supervisores
   if(catEl) catEl.style.display = window._bod.esAuditor ? '' : 'none';
   // Wire submenu items una sola vez
+  // FIX (vie 12-jun-2026): mostrar card Bodega CDG en menú Hamilton para supervisores
+  var mcBod = document.getElementById('mc-bodega');
+  if(mcBod && window.BOD_ENABLED_CLIENT) mcBod.style.display = '';
+  // Restricción: usuarios bodega solo ven pg-bod-menu (no Hamilton)
+  if(window.currentUser && window.currentUser.role === 'bodega') {
+    window._pageStack = []; // limpiar historial para que back no lleve a Hamilton
+    var backBtn = document.getElementById('btn-back');
+    if(backBtn) backBtn.style.display = 'none';
+  }
   if(!window._bodMenuWired) {
     window._bodMenuWired = true;
     if(capEl) capEl.addEventListener('click', function(){
@@ -10034,6 +10056,11 @@ window.bodAbrirMenu = function() {
       bodWireBarraSku();
     });
   }
+};
+// FIX (vie 12-jun-2026): función para mostrar card Bodega CDG en menú Hamilton
+window.bodMostrarMenuPrincipal = function() {
+  var mcBod = document.getElementById('mc-bodega');
+  if(mcBod) mcBod.style.display = '';
 };
 window.bodCleanup = function() {
   window._bod.sesion = null;
