@@ -10137,12 +10137,19 @@ window.bodMostrarMenuPrincipal = function(){
 window.bodAbrirMenu = bodAbrirMenu;
 
 window.bodCleanup = function(){
+  // FIX (vie 12-jun-2026, v5.2.31): variables old code → guardadas con typeof
   bodSesionActual = null;
   bodLineas = [];
-  bodAuditoriaData = null;
-  bodFurgonAsignaciones = [];
-  bodEnsureAudPoll();
-  bodAudLastRefresh = 0;
+  if(typeof bodAuditoriaData    !== 'undefined') bodAuditoriaData    = null;
+  if(typeof bodFurgonAsignaciones !== 'undefined') bodFurgonAsignaciones = [];
+  if(typeof bodAudLastRefresh   !== 'undefined') bodAudLastRefresh   = 0;
+  if(typeof bodAudPollTimer     !== 'undefined' && bodAudPollTimer){ clearInterval(bodAudPollTimer); bodAudPollTimer = null; }
+  // Reset new audit state
+  _bodAudSesion = null;
+  _bodAudManifAct = null;
+  _bodAudTeorico = {};
+  _bodAudTab = '4-control';
+  // Limpiar UI
   var mcBod = document.getElementById('mc-bodega');
   if(mcBod) mcBod.remove();
   var captBtn = document.getElementById('sm-bod-captura');
