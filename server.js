@@ -6502,3 +6502,123 @@ app.delete('/api/bod/sesion/:id/papel-trabajo-sku', bodGuard, async (req, res) =
     res.json({ ok:true });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+//   BODEGA CDG v2 — Endpoints limpios (jue 12-jun-2026, server v22)
+//   Tres recursos: tarimas (captura operadores) + teorico (WMS persistido)
+//   + paper trabajo ya existente + manifiestos ya existentes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/bod/sesion/:id/tarimas ──────────────────────────────────────
+app.get('/api/bod/sesion/:id/tarimas', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var rows  = await supabase('GET', 'bod_tarimas', null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=creado_en.asc&select=*');
+    res.json({ ok:true, rows: Array.isArray(rows) ? rows : [] });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/sesion/:id/tarimas ─────────────────────────────────────
+// Body: { licencia_bolson, correlativo, sku, descripcion, cantidad, estructura, operador }
+app.post('/api/bod/sesion/:id/tarimas', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var b     = req.body || {};
+    var sku   = String(b.sku||'').trim().toUpperCase();
+    var corr  = String(b.correlativo||'').trim().toUpperCase();
+    var lb    = String(b.licencia_bolson||'').trim().toUpperCase();
+    var operador = String(b.operador||'').trim();
+    if(!sku || !corr || !lb || !operador)
+      return res.status(400).json({ ok:false, error:'sku, correlativo, licencia_bolson y operador requeridos.' });
+    var row = {
+      sesion_id:       sesId,
+      licencia_bolson: lb,
+      fecha_licencia:  new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}),
+      correlativo:     corr,
+      sku:             sku,
+      descripcion:     String(b.descripcion||'').trim(),
+      cantidad:        Number(b.cantidad)||0,
+      estructura:      String(b.estructura||'').trim(),
+      operador:        operador,
+      creado_en:       new Date().toISOString()
+    };
+    var saved = await supabase('POST', 'bod_tarimas', [row], '?select=*');
+    res.json({ ok:true, row: Array.isArray(saved)?saved[0]:null });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/sesion/:id/tarimas/:lineId ────────────────────────────
+// Solo puede borrar el operador que creó la línea
+app.delete('/api/bod/sesion/:id/tarimas/:lineId', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var lineId = String(req.params.lineId).trim();
+    var usuario = String((req.body||{}).usuario||'').trim();
+    // Verify ownership
+    var rows = await supabase('GET','bod_tarimas',null,
+      '?id=eq.'+encodeURIComponent(lineId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=operador');
+    if(!Array.isArray(rows)||!rows[0])
+      return res.status(404).json({ ok:false, error:'Línea no encontrada.' });
+    if(rows[0].operador !== usuario)
+      return res.status(403).json({ ok:false, error:'Solo el operador que creó la línea puede borrarla.' });
+    await supabase('DELETE','bod_tarimas',null,
+      '?id=eq.'+encodeURIComponent(lineId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/sesion/:id/teorico ──────────────────────────────────────
+// Retorna el teórico WMS persistido para esta sesión
+app.get('/api/bod/sesion/:id/teorico', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var rows  = await supabase('GET','bod_teorico',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc&select=*');
+    res.json({ ok:true, rows: Array.isArray(rows)?rows:[], count: Array.isArray(rows)?rows.length:0 });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/sesion/:id/teorico/upload ───────────────────────────────
+// Sube Excel WMS con columnas: sku, descripcion, cantidad
+// Borra el teórico anterior y reemplaza con el nuevo
+app.post('/api/bod/sesion/:id/teorico/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var usuario = String(req.body.usuario||'').trim();
+    if(!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
+    var wb = XLSX.read(req.file.buffer, { type:'buffer' });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    if(!raw.length) return res.status(400).json({ ok:false, error:'El archivo está vacío.' });
+    // Normalizar columnas (case-insensitive)
+    var rows = [];
+    var now = new Date().toISOString();
+    raw.forEach(function(r) {
+      var keys = Object.keys(r).reduce(function(m,k){ m[k.toLowerCase().trim()]=k; return m; },{});
+      var sku = String(r[keys['sku']||keys['codigo']||keys['code']||'']||'').trim().toUpperCase();
+      var qty = Number(r[keys['cantidad']||keys['qty']||keys['quantity']||keys['cant']||'']||0);
+      var desc = String(r[keys['descripcion']||keys['description']||keys['nombre']||'']||'').trim();
+      if(sku) rows.push({ sesion_id:sesId, sku:sku, descripcion:desc, cantidad:qty,
+        subido_por:usuario, subido_en:now });
+    });
+    if(!rows.length) return res.status(400).json({ ok:false, error:'No se encontraron filas con SKU válido.' });
+    // Reemplazar teórico anterior (DELETE + INSERT)
+    await supabase('DELETE','bod_teorico',null,'?sesion_id=eq.'+encodeURIComponent(sesId));
+    // Insert en lotes de 200
+    for(var i=0;i<rows.length;i+=200){
+      await supabase('POST','bod_teorico',rows.slice(i,i+200),'?select=id');
+    }
+    console.log('BOD teórico upload: '+rows.length+' SKUs para sesión '+sesId+' por '+usuario);
+    res.json({ ok:true, procesadas:rows.length });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/sesion/:id/teorico ────────────────────────────────────
+app.delete('/api/bod/sesion/:id/teorico', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    await supabase('DELETE','bod_teorico',null,'?sesion_id=eq.'+encodeURIComponent(sesId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
