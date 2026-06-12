@@ -489,11 +489,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="mc-title">Conteos CDG</div>
           <div class="mc-sub">Envíos a Hamilton (U25)</div>
         </div>
-        <div class="menu-card" id="mc-bodega" style="display:none">
-          <div class="mc-icon">📦</div>
-          <div class="mc-title">Bodega CDG</div>
-          <div class="mc-sub">Captura · Auditoría · Manifiesto</div>
-        </div>
       </div>
       <div style="margin-top:1.5rem;display:flex;gap:.75rem;flex-wrap:wrap">
         <button class="btn btn-sm" id="btn-reset">↺ Nuevo día</button>
@@ -505,8 +500,9 @@ textarea.field-inp{resize:vertical;min-height:72px}
     ─────────────────────────────────────────────────────────────────────── -->
 
     <!-- MENÚ PRINCIPAL -->
-    <div id="pg-bod-menu" class="page">
-      <div class="submenu-list" id="bod-menu-list">
+        <div id="pg-bod-menu" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
+      <div class="submenu-list">
         <div class="submenu-item" id="sm-bod-captura">
           <div class="si-icon">📦</div>
           <div class="si-text">
@@ -514,14 +510,14 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <div class="si-sub">Registrar ítems por tarima</div>
           </div>
         </div>
-        <div class="submenu-item" id="sm-bod-auditoria">
+        <div class="submenu-item" id="sm-bod-auditoria" style="display:none">
           <div class="si-icon">🔍</div>
           <div class="si-text">
             <div class="si-title">Auditar sesión</div>
-            <div class="si-sub">Auditores y supervisores</div>
+            <div class="si-sub">Supervisores y contadores</div>
           </div>
         </div>
-        <div class="submenu-item" id="sm-bod-barra-sku">
+        <div class="submenu-item" id="sm-bod-barra-sku" style="display:none">
           <div class="si-icon">📋</div>
           <div class="si-text">
             <div class="si-title">Catálogo barra-SKU</div>
@@ -553,13 +549,79 @@ textarea.field-inp{resize:vertical;min-height:72px}
     </div>
 
     <!-- CAPTURA DE TARIMA -->
+        <!-- ── BODEGA: CAPTURA DE TARIMA ──────────────────────────── -->
     <div id="pg-bod-captura" class="page">
-      <div id="bod-captura-content"></div>
+      <!-- Encabezado sesión -->
+      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia (Bolsón)</label>
+            <input type="text" class="field-inp" id="bod-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
+          </div>
+          <div style="min-width:130px">
+            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha trabajo</label>
+            <input type="date" class="field-inp" id="bod-fecha">
+          </div>
+          <button class="btn btn-dark" id="btn-bod-abrir-sesion">Abrir sesión</button>
+        </div>
+        <div id="bod-sesion-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        <div id="bod-sesion-info" style="font-size:.78rem;color:#888;margin-top:3px"></div>
+      </div>
+
+      <!-- Formulario captura (oculto hasta tener sesión) -->
+      <div id="bod-form-captura" style="display:none">
+        <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div style="min-width:100px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Tarima</label>
+              <select class="field-inp" id="bod-sel-tarima" style="font-size:.85rem;padding:6px 8px">
+                <!-- Generado por JS: A1-A100 -->
+              </select>
+            </div>
+            <div style="min-width:130px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Barra (opcional)</label>
+              <input type="text" class="field-inp" id="bod-barra" placeholder="Escanear o escribir" autocomplete="off" inputmode="text">
+            </div>
+            <div style="min-width:80px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">SKU</label>
+              <input type="text" class="field-inp" id="bod-sku" placeholder="SKU" autocomplete="off" inputmode="numeric">
+            </div>
+            <div style="flex:2;min-width:130px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Descripción</label>
+              <input type="text" class="field-inp" id="bod-desc" placeholder="Autofill o manual">
+            </div>
+            <div style="min-width:70px">
+              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Cantidad</label>
+              <input type="number" class="field-inp" id="bod-cantidad" value="1" min="1" step="1" style="width:70px">
+            </div>
+            <button class="btn btn-dark" id="btn-bod-agregar">+ Agregar</button>
+          </div>
+          <div id="bod-captura-msg" style="font-size:.82rem;margin-top:.5rem"></div>
+        </div>
+
+        <!-- Tabla últimos 15 -->
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap">
+          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
+          <select id="bod-filtro-operador" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:150px">
+            <option value="mis">Mis capturas</option>
+            <option value="todos">Todos</option>
+          </select>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>Operador</th><th>Tarima</th><th>Barra</th>
+              <th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Hora</th>
+            </tr></thead>
+            <tbody id="bod-tabla-capturas"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- AUDITAR SESIÓN — contenido 100% renderizado por JS -->
     <div id="pg-bod-auditoria" class="page">
-      <div id="bod-aud-content"></div>
+      <div id="bod-aud-contenido"></div>
     </div>
 
 
@@ -1970,11 +2032,6 @@ function updateOnlineBar(){
 document.getElementById('mc-hamilton').addEventListener('click',function(){
   navTo('pg-hamilton','🏭 Conteos Hamilton');
   updateSubmenúCounts();
-});
-var _mcBod = document.getElementById('mc-bodega');
-if(_mcBod) _mcBod.addEventListener('click',function(){
-  navTo('pg-bod-menu','📦 Bodega CDG');
-  if(typeof window.bodAbrirMenu === 'function') window.bodAbrirMenu();
 });
 document.getElementById('mc-cdg').addEventListener('click',function(){
   // FIX (sáb 30-may-2026, v5.2.27): si CDG v2 está habilitado, mostrar selector.
@@ -9971,1089 +10028,543 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 </script>
 
 <script>
-/* ═══════════════════════════════════════════════════════════════════════════
-   BOD MODULE v2 — Bodega CDG / Clean rewrite jue 12-jun-2026
-   Estado centralizado en window._bod. Una función por responsabilidad.
-   No hay closures anidados, no hay parches sobre parches.
-   Protección Render: bodGuard (server) + bodFetch con debounce integrado.
-   ══════════════════════════════════════════════════════════════════════════ */
+(function(){ 'use strict';
 
-// ─── USUARIOS BODEGA (expuesto para login en script anterior) ─────────────────
-var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez',
-  'Edgar Soto','Alejandra Galeros','Sharon Hernández'];
-window.BODEGA_LIST = BODEGA_LIST;
-// FIX (vie 12-jun-2026, v21): RGIS_LIST — lista de usuarios permitidos con clave RGIS
-var RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5'];
-window.RGIS_LIST = RGIS_LIST;
+// ── Constantes ──────────────────────────────────────────────────────────
+var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto','Alejandra Galeros','Sharon Hernández'];
+window.BODEGA_LIST = BODEGA_LIST; // exponer para el login en script anterior
 
-// ─── ESTADO CENTRAL ───────────────────────────────────────────────────────────
-window._bod = {
-  sesion:           null,   // { id, licencia_id, fecha, estado, ... }
-  tab:              '4-control',
-  manifiestoActivo: null,   // PT seleccionado para Tab 5
-  usuario:          '',
-  esAuditor:        false,
-  teorico:          {},     // { [sku]: { descripcion, cantidad } } — cache local
-};
+window.RGIS_ACCESS_KEY = 'CLAVE_RGIS_AQUI';
+window.RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5'];
 
-// ─── ACCESO ───────────────────────────────────────────────────────────────────
-function isBodAuditor() {
-  return !!(window.currentUser &&
-    ['supervisor','bodega'].includes(window.currentUser.role));
+var BOD_ENABLED_CLIENT = false;
+window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+
+// ── Estado interno (no toca variables globales del resto de la app) ──────
+var bodSesionActual  = null;  // objeto sesión abierta
+var bodLineas        = [];    // array de líneas de la sesión
+var bodPollTimer     = null;
+
+// ── Inicialización: consultar status al servidor ─────────────────────────
+function bodEnsureAudPoll(){
+  if(!bodAudPollTimer){
+    bodAudPollTimer = setInterval(bodAuditoriaAutoRefresh, 5000);
+  }
 }
 
-// ─── FETCH HELPER (protección Render: centraliza todos los calls) ─────────────
+function bodInit() {
+  fetch('/api/bod/status')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      BOD_ENABLED_CLIENT = !!(d && d.enabled);
+      window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+      if(BOD_ENABLED_CLIENT) {
+        // Mostrar botón bodega en menú si supervisor
+        bodMostrarMenuPrincipal();
+        // Mostrar opción auditoria a supervisores en pg-bod-menu
+        var audBtn   = document.getElementById('sm-bod-auditoria');
+        var barraBtn = document.getElementById('sm-bod-barra-sku');
+        if(audBtn   && typeof isSup === 'function' && isSup()) audBtn.style.display   = '';
+        if(barraBtn && typeof isSup === 'function' && isSup()) barraBtn.style.display = '';
+      }
+    })
+    .catch(function(){
+      BOD_ENABLED_CLIENT = false;
+      window.BOD_ENABLED_CLIENT = false;
+    });
+  bodEnsureAudPoll();
+}
+
+// ── Helpers de rol BOD ───────────────────────────────────────────────────
+function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
+function isBodAuditor() { return !!(window.currentUser && (window.currentUser.role === 'supervisor' || window.currentUser.role === 'contador')); }
+function bodTarimaPrefix(nombre) {
+  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E',
+              'Alejandra Galeros':'F', 'Sharon Hernández':'G' };
+  return map[nombre] || 'A';
+}
+
+// Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
+function bodMostrarMenuPrincipal() {
+  if(!BOD_ENABLED_CLIENT) {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
+  if(!window.currentUser) {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
+  var role = window.currentUser.role;
+  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') {
+    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
+  }
+  // Scope bodega: entra directo a pg-bod-menu, no necesita tarjeta en pg-menu
+  if(window.ACCESS_SCOPE === 'bodega') return;
+  // Agregar tarjeta mc-bodega si no existe
+  var mcBod = document.getElementById('mc-bodega');
+  if(!mcBod) {
+    var menuCards = document.querySelector('#pg-menu .menu-grid, #pg-menu .menu-cards, #pg-menu .main-menu');
+    if(!menuCards) return;
+    var card = document.createElement('div');
+    card.className = 'menu-card';
+    card.id = 'mc-bodega';
+    card.innerHTML = '<div class="mc-icon">📦</div><div class="mc-title">Bodega CDG</div><div class="mc-sub">Armado de Tarimas</div>';
+    card.addEventListener('click', function(){
+      if(typeof navTo === 'function') navTo('pg-bod-menu','📦 Bodega CDG');
+      bodAbrirMenu();
+    });
+    menuCards.appendChild(card);
+  }
+}
+
+// ── Menú bodega ──────────────────────────────────────────────────────────
+function bodAbrirMenu() {
+  var captBtn   = document.getElementById('sm-bod-captura');
+  var audBtn    = document.getElementById('sm-bod-auditoria');
+  var barraBtn  = document.getElementById('sm-bod-barra-sku');
+  // sm-bod-captura: bodega y supervisor
+  if(captBtn)   captBtn.style.display   = (isBodBodega() || (typeof isSup==='function' && isSup())) ? '' : 'none';
+  // sm-bod-auditoria: supervisor y contador
+  if(audBtn)    audBtn.style.display    = isBodAuditor() ? '' : 'none';
+  // sm-bod-barra-sku: solo supervisor
+  if(barraBtn)  barraBtn.style.display  = (typeof isSup==='function' && isSup()) ? '' : 'none';
+}
+
+// Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
+window.bodMostrarMenuPrincipal = function(){
+  BOD_ENABLED_CLIENT = !!window.BOD_ENABLED_CLIENT || BOD_ENABLED_CLIENT;
+  window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
+  return bodMostrarMenuPrincipal();
+};
+window.bodAbrirMenu = bodAbrirMenu;
+
+window.bodCleanup = function(){
+  bodSesionActual = null;
+  bodLineas = [];
+  bodAuditoriaData = null;
+  bodFurgonAsignaciones = [];
+  bodEnsureAudPoll();
+  bodAudLastRefresh = 0;
+  var mcBod = document.getElementById('mc-bodega');
+  if(mcBod) mcBod.remove();
+  var captBtn = document.getElementById('sm-bod-captura');
+  var audBtn  = document.getElementById('sm-bod-auditoria');
+  var barraBtn = document.getElementById('sm-bod-barra-sku');
+  if(captBtn)  captBtn.style.display  = 'none';
+  if(audBtn)   audBtn.style.display   = 'none';
+  if(barraBtn) barraBtn.style.display = 'none';
+  var audCont = document.getElementById('bod-aud-contenido');
+  if(audCont) audCont.innerHTML = '';
+};
+
+// ── Helper fetch bodega ───────────────────────────────────────────────────
 function bodFetch(method, path, body) {
-  var opts = { method: method,
-    headers: { 'Content-Type':'application/json', 'x-bod-user': window._bod.usuario || '' }
-  };
-  if(body !== undefined && body !== null) opts.body = JSON.stringify(body);
+  var opts = { method: method, headers: {'Content-Type':'application/json'} };
+  if(body) opts.body = JSON.stringify(body);
   return fetch(path, opts).then(function(r){ return r.json(); });
 }
 
-// ─── ESC HTML ─────────────────────────────────────────────────────────────────
-function bodEsc(s){
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ─── INIT (llamado por afterLogin y navTo) ────────────────────────────────────
-function bodInit() {
-  window._bod.usuario   = window.currentUser ? window.currentUser.name : '';
-  window._bod.esAuditor = isBodAuditor();
-}
-window.bodAbrirMenu = function() {
-  bodInit();
-  var capEl  = document.getElementById('sm-bod-captura');
-  var audEl  = document.getElementById('sm-bod-auditoria');
-  var catEl  = document.getElementById('sm-bod-barra-sku');
-  // Todos los bodega pueden capturar y auditar
-  if(capEl) capEl.style.display = '';
-  if(audEl) audEl.style.display = '';
-  // Catálogo solo supervisores
-  if(catEl) catEl.style.display = window._bod.esAuditor ? '' : 'none';
-  // Wire submenu items una sola vez
-  // FIX (vie 12-jun-2026): mostrar card Bodega CDG en menú Hamilton para supervisores
-  var mcBod = document.getElementById('mc-bodega');
-  if(mcBod && window.BOD_ENABLED_CLIENT) mcBod.style.display = '';
-  // Restricción: usuarios bodega solo ven pg-bod-menu (no Hamilton)
-  if(window.currentUser && window.currentUser.role === 'bodega') {
-    window._pageStack = []; // limpiar historial para que back no lleve a Hamilton
-    var backBtn = document.getElementById('btn-back');
-    if(backBtn) backBtn.style.display = 'none';
-  }
-  if(!window._bodMenuWired) {
-    window._bodMenuWired = true;
-    if(capEl) capEl.addEventListener('click', function(){
-      bodIniciarCaptura();
-      navTo('pg-bod-captura','📦 Capturar tarima');
-    });
-    if(audEl) audEl.addEventListener('click', function(){
-      navTo('pg-bod-auditoria','🔍 Auditar sesión');
-      bodRenderSesionSelect();
-    });
-    if(catEl) catEl.addEventListener('click', function(){
-      navTo('pg-bod-barra-sku','📋 Catálogo barra-SKU');
-      bodWireBarraSku();
-    });
-  }
-};
-// FIX (vie 12-jun-2026): función para mostrar card Bodega CDG en menú Hamilton
-window.bodMostrarMenuPrincipal = function() {
-  var mcBod = document.getElementById('mc-bodega');
-  if(mcBod) mcBod.style.display = '';
-};
-window.bodCleanup = function() {
-  window._bod.sesion = null;
-  window._bod.tab    = '4-control';
-  window._bod.manifiestoActivo = null;
-  window._bod.teorico = {};
-  window._bodMenuWired = false;
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-//   SELECCIÓN DE SESIÓN
-// ═════════════════════════════════════════════════════════════════════════════
-function bodRenderSesionSelect() {
-  var el = document.getElementById('bod-aud-content');
-  if(!el) return;
-  el.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.5rem 0">Cargando sesiones\u2026</div>';
-  bodFetch('GET','/api/bod/sesiones?limit=30')
+// ── Captura: abrir sesión ────────────────────────────────────────────────
+var btnAbrirSesion = document.getElementById('btn-bod-abrir-sesion');
+if(btnAbrirSesion) btnAbrirSesion.addEventListener('click', function(){
+  if(!BOD_ENABLED_CLIENT) { alert('Módulo bodega no habilitado.'); return; }
+  var lic   = (document.getElementById('bod-licencia').value||'').trim().toUpperCase();
+  var fecha = (document.getElementById('bod-fecha').value||'').trim();
+  var msgEl = document.getElementById('bod-sesion-msg');
+  if(!lic)   { msgEl.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>'; return; }
+  if(!fecha) { msgEl.innerHTML='<span style="color:#c0392b">Seleccioná la fecha.</span>'; return; }
+  var usuario = window.currentUser ? window.currentUser.name : '';
+  if(!usuario){ msgEl.innerHTML='<span style="color:#c0392b">Seleccioná tu nombre.</span>'; return; }
+  msgEl.innerHTML='<span style="color:#888">Abriendo sesión…</span>';
+  bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, fecha_trabajo:fecha, tipo:'recoleccion', creado_por:usuario })
     .then(function(d){
-      if(!d.ok) { el.innerHTML='<div style="color:#c0392b">'+bodEsc(d.error||'Error')+'</div>'; return; }
-      var sesiones = (d.sesiones||[]).slice(0,20);
-      var html = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;'
-               + 'letter-spacing:.3px;margin-bottom:.6rem">Seleccioná una sesión</div>';
-      // Crear nueva sesión
-      if(isBodAuditor()){
-        html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.75rem">'
-              + '<input type="text" id="bod-new-ses-lic" class="field-inp" placeholder="Licencia bolsón (ej: U25-162000)"'
-              + ' style="width:220px;font-size:.82rem;padding:4px 8px">'
-              + '<button class="btn btn-sm btn-dark" id="bod-btn-nueva-ses">+ Nueva sesión</button>'
-              + '<span id="bod-new-ses-msg" style="font-size:.76rem"></span></div>';
-      }
-      if(!sesiones.length){
-        html += '<div style="color:#aaa;font-size:.82rem">Sin sesiones. Creá una nueva arriba.</div>';
-      } else {
-        html += '<div class="tbl-wrap"><table style="font-size:.8rem"><thead><tr>'
-              + '<th>Licencia</th><th>Fecha</th><th>Estado</th><th>Creado por</th><th></th>'
-              + '</tr></thead><tbody>';
-        sesiones.forEach(function(s){
-          var estBg = s.estado==='cerrada' ? '#e8f5e9' : '#e3f2fd';
-          var estFg = s.estado==='cerrada' ? '#1b5e20' : '#1565c0';
-          html += '<tr><td style="font-weight:600;color:#1565c0">'+bodEsc(s.licencia_id||'—')+'</td>'
-                + '<td>'+bodEsc(s.fecha||'—')+'</td>'
-                + '<td><span style="background:'+estBg+';color:'+estFg+';padding:1px 6px;border-radius:8px;font-size:.72rem">'
-                + bodEsc(s.estado||'—')+'</span></td>'
-                + '<td style="color:#666;font-size:.77rem">'+bodEsc(s.creado_por||'—')+'</td>'
-                + '<td><button class="btn btn-xs bod-btn-entrar-ses" data-id="'+bodEsc(s.id)+'"'
-                + ' data-lic="'+bodEsc(s.licencia_id||'')+'" style="background:#1565c0;color:#fff;font-size:.72rem">'
-                + '▶ Entrar</button></td></tr>';
-        });
-        html += '</tbody></table></div>';
-      }
-      el.innerHTML = html;
-      // Wire nueva sesión
-      var btnN = document.getElementById('bod-btn-nueva-ses');
-      if(btnN) btnN.addEventListener('click', function(){
-        var lic = (document.getElementById('bod-new-ses-lic')||{value:''}).value.trim().toUpperCase();
-        var msg = document.getElementById('bod-new-ses-msg');
-        if(!lic){ if(msg) msg.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>'; return; }
-        if(msg) msg.innerHTML='<span style="color:#888">Creando\u2026</span>';
-        bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, usuario:window._bod.usuario })
-          .then(function(d){
-            if(!d.ok){ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEsc(d.error||'Error')+'</span>'; return; }
-            window._bod.sesion = d.sesion || { id:d.id, licencia_id:lic };
-            bodRenderAuditoria();
-          }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexión</span>'; });
-      });
-      // Wire entrar
-      el.querySelectorAll('.bod-btn-entrar-ses').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var sesId = btn.dataset.id;
-          var lic   = btn.dataset.lic;
-          bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId))
-            .then(function(d){
-              window._bod.sesion = d.sesion || { id:sesId, licencia_id:lic };
-              bodRenderAuditoria();
-            }).catch(function(){ alert('Sin conexión'); });
-        });
-      });
-    }).catch(function(){ el.innerHTML='<div style="color:#c0392b">Sin conexión</div>'; });
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      bodSesionActual = d.sesion;
+      msgEl.innerHTML='<span style="color:#1e7e34">'+(d.created?'✅ Sesión creada':'✅ Sesión existente cargada')+'</span>';
+      document.getElementById('bod-sesion-info').textContent = 'Sesión: '+d.sesion.id+' · '+d.sesion.estado;
+      document.getElementById('bod-form-captura').style.display='';
+      bodPoblarTarimas();
+      document.getElementById('bod-barra').focus();
+      bodCargarLineas(d.sesion.id);
+    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+});
+
+// Llenar selector tarimas A1-A100
+function bodPoblarTarimas() {
+  var sel = document.getElementById('bod-sel-tarima');
+  if(!sel) return;  // reconstruir siempre para usar el prefijo correcto según usuario
+  sel.innerHTML = '';
+  var nombre  = window.currentUser ? window.currentUser.name : '';
+  // Supervisor: genera A01-E100 (todos los prefijos)
+  // Bodega: genera solo su prefijo propio (ej. Huvaldo → A01-A100)
+  var prefijos = (typeof isSup==='function' && isSup())
+    ? ['A','B','C','D','E']
+    : [bodTarimaPrefix(nombre)];
+  prefijos.forEach(function(letra){
+    for(var n=1; n<=100; n++){
+      var num = n < 10 ? '0'+n : ''+n;
+      var opt = document.createElement('option');
+      opt.value = letra+num; opt.textContent = letra+num;
+      sel.appendChild(opt);
+    }
+  });
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//   CONTENEDOR AUDITAR SESIÓN (tab switcher)
-// ═════════════════════════════════════════════════════════════════════════════
-function bodRenderAuditoria() {
-  var el = document.getElementById('bod-aud-content');
-  if(!el || !window._bod.sesion) return;
-  var ses  = window._bod.sesion;
-  var tab  = window._bod.tab;
-  var tabs = [
-    { id:'1-tarimas',  label:'1. Tarimas'  },
-    { id:'2-detalle',  label:'2. Detalle'  },
-    { id:'3-teorico',  label:'3. Carga Teórico' },
-    { id:'4-control',  label:'4. Control de Manifiesto' },
-    { id:'5-papel',    label:'5. Papel de Trabajo' },
-  ];
-  var hdr  = '<div style="font-size:.78rem;color:#1565c0;font-weight:700;margin-bottom:.4rem">'
-           + '\uD83D\uDCCB Sesión: '+bodEsc(ses.licencia_id||ses.id)
-           + ' <span style="color:#888;font-weight:400">\xb7 '+bodEsc(ses.fecha||'')+'</span>'
-           + ' <button id="bod-btn-cambiar-ses" style="margin-left:8px;font-size:.72rem;background:none;'
-           + 'border:1px solid #ccc;border-radius:4px;padding:1px 6px;cursor:pointer;color:#555">↩ Cambiar</button>'
-           + '</div>';
-  var tabHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:.7rem">';
-  tabs.forEach(function(t){
-    var on = t.id === tab;
-    tabHtml += '<button class="bod-tab-btn" data-tab="'+t.id+'" style="font-size:.75rem;padding:4px 10px;'
-             + 'border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;'
-             + 'background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+';">'
-             + t.label+'</button>';
-  });
-  tabHtml += '</div>';
-  el.innerHTML = hdr + tabHtml + '<div id="bod-tab-content"></div>';
-  // Wire tabs
-  el.querySelectorAll('.bod-tab-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      window._bod.tab = btn.dataset.tab;
-      bodRenderAuditoria();
-    });
-  });
-  // Wire cambiar sesión
-  var btnC = document.getElementById('bod-btn-cambiar-ses');
-  if(btnC) btnC.addEventListener('click', function(){
-    window._bod.sesion = null;
-    window._bod.manifiestoActivo = null;
-    bodRenderSesionSelect();
-  });
-  // Render active tab
-  switch(tab){
-    case '1-tarimas': bodTab1Tarimas(); break;
-    case '2-detalle': bodTab2Detalle(); break;
-    case '3-teorico': bodTab3Teorico(); break;
-    case '4-control': bodTab4Control(); break;
-    case '5-papel':   bodTab5Papel();   break;
-  }
-}
+// Barra → autofill SKU/desc
+var barraInput = document.getElementById('bod-barra');
+var barraTimer = null;
+if(barraInput) barraInput.addEventListener('input', function(){
+  clearTimeout(barraTimer);
+  var val = this.value.trim();
+  if(!val) return;
+  barraTimer = setTimeout(function(){
+    fetch('/api/bod/barra/'+encodeURIComponent(val))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.encontrado){
+          var skuEl = document.getElementById('bod-sku');
+          var descEl = document.getElementById('bod-desc');
+          if(skuEl)  skuEl.value  = d.sku;
+          if(descEl) descEl.value = d.descripcion || '';
+          document.getElementById('bod-cantidad').focus();
+        }
+      }).catch(function(){});
+  }, 300);
+});
 
-// ═════════════════════════════════════════════════════════════════════════════
-//   TAB 1: TARIMAS — resumen de capturas por tarima
-// ═════════════════════════════════════════════════════════════════════════════
-function bodTab1Tarimas() {
-  var tc = document.getElementById('bod-tab-content');
-  if(!tc) return;
-  tc.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.4rem 0">Cargando tarimas\u2026</div>';
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(window._bod.sesion.id)+'/tarimas')
+// Listener keydown Enter: dispara lookup inmediato cuando el escáner envía Enter.
+// Evita esperar el debounce de 300ms que puede dejar la barra sin resolver.
+if(barraInput) barraInput.addEventListener('keydown', function(e){
+  if(e.key !== 'Enter') return;
+  e.preventDefault();
+  clearTimeout(barraTimer);
+  var val = this.value.trim();
+  if(!val) return;
+  fetch('/api/bod/barra/'+encodeURIComponent(val))
+    .then(function(r){ return r.json(); })
     .then(function(d){
-      var rows = d.ok ? (d.rows||[]) : [];
-      if(!rows.length){
-        tc.innerHTML = '<div style="color:#aaa;font-size:.82rem;padding:.4rem 0">Sin capturas de tarimas. '
-          +'Los operadores capturan desde "Capturar tarima" en el menú principal.</div>'; return;
+      if(d.encontrado){
+        var skuEl  = document.getElementById('bod-sku');
+        var descEl = document.getElementById('bod-desc');
+        if(skuEl)  skuEl.value  = d.sku;
+        if(descEl) descEl.value = d.descripcion || '';
+        document.getElementById('bod-cantidad').focus();
       }
-      // Agrupar por correlativo
-      var grupos = {};
-      rows.forEach(function(r){
-        var k = (r.licencia_bolson||'')+'|'+(r.correlativo||'');
-        if(!grupos[k]) grupos[k] = { licencia:r.licencia_bolson, fecha:r.fecha_licencia,
-          correlativo:r.correlativo, operador:r.operador, lineas:[], skusSet:new Set() };
-        grupos[k].lineas.push(r);
-        grupos[k].skusSet.add(r.sku);
-      });
-      var html = '<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-        +'<th>Licencia bolsón</th><th>Fecha</th><th>Correlativo</th>'
-        +'<th class="tc">Líneas</th><th class="tc">SKUs únicos</th><th class="tc">Cantidad</th>'
-        +'<th>Operador</th><th>Acción</th></tr></thead><tbody>';
-      Object.values(grupos).forEach(function(g){
-        var totalQty = g.lineas.reduce(function(s,r){ return s+Number(r.cantidad||0); },0);
-        html += '<tr><td style="color:#1565c0;font-weight:600">'+bodEsc(g.licencia)+'</td>'
-          +'<td>'+bodEsc(g.fecha||'—')+'</td>'
-          +'<td style="font-weight:700">'+bodEsc(g.correlativo)+'</td>'
-          +'<td class="tc">'+g.lineas.length+'</td>'
-          +'<td class="tc">'+g.skusSet.size+'</td>'
-          +'<td class="tc">'+totalQty+'</td>'
-          +'<td style="font-size:.75rem;color:#555">'+bodEsc(g.operador||'—')+'</td>'
-          +'<td><button class="btn btn-xs bod-btn-ver-detalle" data-corr="'+bodEsc(g.correlativo)+'"'
-          +' style="background:#1565c0;color:#fff;font-size:.7rem">Ver detalle</button></td></tr>';
-      });
-      html += '</tbody></table></div>';
-      tc.innerHTML = html;
-      tc.querySelectorAll('.bod-btn-ver-detalle').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          window._bodFiltroCorr = btn.dataset.corr;
-          window._bod.tab = '2-detalle';
-          bodRenderAuditoria();
-        });
-      });
-    }).catch(function(){ tc.innerHTML='<div style="color:#c0392b">Sin conexión</div>'; });
+    }).catch(function(){});
+});
+
+// Agregar línea
+var btnAgregar = document.getElementById('btn-bod-agregar');
+if(btnAgregar) btnAgregar.addEventListener('click', function(){
+  if(!bodSesionActual){ alert('Abrí una sesión primero.'); return; }
+  if(bodSesionActual.estado==='cerrada'){ alert('La sesión está cerrada.'); return; }
+  var tarima   = (document.getElementById('bod-sel-tarima').value||'').trim();
+  var barra    = (document.getElementById('bod-barra').value||'').trim()||null;
+  var sku      = (document.getElementById('bod-sku').value||'').trim();
+  var desc     = (document.getElementById('bod-desc').value||'').trim();
+  var cantidad = Number(document.getElementById('bod-cantidad').value||1);
+  var msgEl    = document.getElementById('bod-captura-msg');
+  var usuario  = window.currentUser ? window.currentUser.name : '';
+  if(!sku){ msgEl.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+  if(!(cantidad>0)){ msgEl.innerHTML='<span style="color:#c0392b">Cantidad debe ser mayor a 0.</span>'; return; }
+  msgEl.innerHTML='<span style="color:#888">Guardando…</span>';
+  bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(bodSesionActual.id)+'/linea',
+    { tarima, barra, sku, descripcion:desc, cantidad, operador:usuario })
+    .then(function(d){
+      if(!d.ok){ msgEl.innerHTML='<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+      msgEl.innerHTML='';
+      // Reset campos rápidos
+      document.getElementById('bod-barra').value='';
+      document.getElementById('bod-sku').value='';
+      document.getElementById('bod-desc').value='';
+      document.getElementById('bod-cantidad').value='1';
+      document.getElementById('bod-barra').focus();
+      bodCargarLineas(bodSesionActual.id);
+    }).catch(function(){ msgEl.innerHTML='<span style="color:#c0392b">Sin conexión.</span>'; });
+});
+
+// Cargar y renderizar las últimas 15 líneas
+function bodCargarLineas(sesId) {
+  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/lineas')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      bodLineas = Array.isArray(d.lineas) ? d.lineas : [];
+      bodRenderTabla();
+    }).catch(function(){});
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//   TAB 2: DETALLE — SKUs por tarima con campo Físico s/Auditoría
-// ═════════════════════════════════════════════════════════════════════════════
-function bodTab2Detalle() {
-  var tc = document.getElementById('bod-tab-content');
-  if(!tc) return;
-  // Filtros
-  var filtHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.6rem;align-items:flex-end">'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Correlativo</label>'
-    +'<input type="text" id="fil-det-corr" class="field-inp" value="'+bodEsc(window._bodFiltroCorr||'')+'"'
-    +' style="width:80px;padding:3px 7px;font-size:.8rem" placeholder="A01"></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">SKU</label>'
-    +'<input type="text" id="fil-det-sku" class="field-inp" style="width:100px;padding:3px 7px;font-size:.8rem" placeholder="Filtrar SKU"></div>'
-    +'<button class="btn btn-sm" id="bod-btn-filtrar-det" style="font-size:.76rem">Filtrar</button></div>'
-    +'<div id="det-tabla-cont"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
-  tc.innerHTML = filtHtml;
-  function cargarDetalle(){
-    var corrFil = (document.getElementById('fil-det-corr')||{value:''}).value.trim().toUpperCase();
-    var skuFil  = (document.getElementById('fil-det-sku') ||{value:''}).value.trim().toUpperCase();
-    var dEl = document.getElementById('det-tabla-cont');
-    if(!dEl) return;
-    dEl.innerHTML = '<div style="color:#888;font-size:.82rem">Cargando\u2026</div>';
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(window._bod.sesion.id)+'/tarimas')
-      .then(function(d){
-        var rows = (d.ok ? d.rows||[] : [])
-          .filter(function(r){ return (!corrFil||r.correlativo===corrFil)&&(!skuFil||r.sku.includes(skuFil)); });
-        if(!rows.length){ dEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin resultados.</div>'; return; }
-        var html = '<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-          +'<th>Corr.</th><th>SKU</th><th>Descripción</th>'
-          +'<th class="tc">Capturado</th><th class="tc">Físico s/Aud.</th>'
-          +'<th class="tc">Dif.</th><th>Estado</th><th>Operador</th></tr></thead><tbody>';
-        rows.forEach(function(r){
-          var capQty = Number(r.cantidad||0);
-          html += '<tr data-id="'+bodEsc(r.id)+'" data-cap="'+capQty+'">'
-            +'<td style="font-weight:700">'+bodEsc(r.correlativo)+'</td>'
-            +'<td style="font-weight:600">'+bodEsc(r.sku)+'</td>'
-            +'<td style="font-size:.76rem">'+bodEsc(r.descripcion||'—')+'</td>'
-            +'<td class="tc">'+capQty+'</td>'
-            +'<td class="tc"><input type="number" class="det-fisico-inp field-inp" min="0" step="1"'
-            +' value="" style="width:60px;padding:2px 4px;font-size:.78rem;text-align:center"></td>'
-            +'<td class="tc det-dif" style="font-weight:600">—</td>'
-            +'<td class="det-est" style="font-size:.75rem;color:#555">—</td>'
-            +'<td style="font-size:.75rem;color:#666">'+bodEsc(r.operador||'—')+'</td></tr>';
-        });
-        html += '</tbody></table></div>';
-        dEl.innerHTML = html;
-        // Wire: calcular diferencia al cambiar físico
-        dEl.querySelectorAll('.det-fisico-inp').forEach(function(inp){
-          inp.addEventListener('input', function(){
-            var tr    = inp.closest('tr');
-            var cap   = Number(tr.dataset.cap||0);
-            var fis   = Number(inp.value)||0;
-            var dif   = cap - fis;
-            var difEl = tr.querySelector('.det-dif');
-            var estEl = tr.querySelector('.det-est');
-            if(difEl) { difEl.textContent = isNaN(dif)?'—':dif;
-              difEl.style.color = dif===0?'#1e7e34':dif<0?'#c0392b':'#e65100'; }
-            if(estEl) { var est = dif===0?'Cuadrado':dif<0?'Faltante':'Sobrante';
-              estEl.textContent = est;
-              estEl.style.color = dif===0?'#1e7e34':dif<0?'#c0392b':'#e65100'; }
-          });
-        });
-      }).catch(function(){ if(dEl) dEl.innerHTML='<div style="color:#c0392b">Sin conexión</div>'; });
-  }
-  cargarDetalle();
-  var btnF = document.getElementById('bod-btn-filtrar-det');
-  if(btnF) btnF.addEventListener('click', cargarDetalle);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//   TAB 3: CARGA TEÓRICO — WMS Excel persistido por sesión
-// ═════════════════════════════════════════════════════════════════════════════
-function bodTab3Teorico() {
-  var tc = document.getElementById('bod-tab-content');
-  if(!tc) return;
-  tc.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.3rem 0">Cargando te\xf3rico\u2026</div>';
-  function renderTeorico(){
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(window._bod.sesion.id)+'/teorico')
-      .then(function(d){
-        var rows = d.ok ? (d.rows||[]) : [];
-        // Build local cache for Tab 5
-        window._bod.teorico = {};
-        rows.forEach(function(r){ window._bod.teorico[r.sku] = { descripcion:r.descripcion, cantidad:Number(r.cantidad||0) }; });
-        var uploadHtml = '';
-        if(isBodAuditor()){
-          uploadHtml = '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-            +'<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">'
-            +'\u2B06\uFE0F Subir te\xf3rico WMS (Excel)</div>'
-            +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-            +'<label class="btn btn-sm" style="cursor:pointer;position:relative;font-size:.75rem">'
-            +'\uD83D\uDCC2 Elegir archivo'
-            +'<input type="file" id="bod-teo-file" accept=".xlsx,.xls,.csv"'
-            +' style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden"></label>'
-            +'<span id="bod-teo-fname" style="font-size:.76rem;color:#555"></span>'
-            +'<button class="btn btn-sm btn-dark" id="bod-btn-teo-upload" disabled style="font-size:.75rem">\u2B06\uFE0F Subir y guardar</button>'
-            +'<span id="bod-teo-msg" style="font-size:.76rem"></span></div>'
-            +(rows.length ? '<button class="btn btn-xs" id="bod-btn-teo-limpiar"'
-            +' style="margin-top:.4rem;font-size:.7rem;background:#fdecea;color:#c0392b">Limpiar te\xf3rico</button>':'')
-            +'</div>';
-        }
-        var tblHtml = '';
-        if(rows.length){
-          tblHtml = '<div style="font-size:.76rem;color:#555;margin-bottom:.3rem">'
-            +'<strong>'+rows.length+' SKUs cargados</strong>'
-            +(rows[0].subido_por ? ' \xb7 Subido por '+bodEsc(rows[0].subido_por):'')+'</div>';
-          tblHtml += '<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-            +'<th>SKU</th><th>Descripción</th><th class="tc">Cantidad 952</th>'
-            +'</tr></thead><tbody>';
-          rows.forEach(function(r){
-            tblHtml += '<tr><td style="font-weight:600">'+bodEsc(r.sku)+'</td>'
-              +'<td>'+bodEsc(r.descripcion||'—')+'</td>'
-              +'<td class="tc">'+Number(r.cantidad||0)+'</td></tr>';
-          });
-          tblHtml += '</tbody></table></div>';
-        } else {
-          tblHtml = '<div style="color:#aaa;font-size:.82rem">Sin te\xf3rico cargado. Sub\xed el Excel del WMS arriba.</div>';
-        }
-        tc.innerHTML = uploadHtml + tblHtml;
-        // Wire file input
-        var fileInp = document.getElementById('bod-teo-file');
-        var fnEl    = document.getElementById('bod-teo-fname');
-        var btnUp   = document.getElementById('bod-btn-teo-upload');
-        if(fileInp) fileInp.addEventListener('change', function(){
-          if(this.files&&this.files[0]){
-            if(fnEl) fnEl.textContent = this.files[0].name;
-            if(btnUp) btnUp.disabled = false;
-          }
-        });
-        if(btnUp) btnUp.addEventListener('click', function(){
-          var f = fileInp && fileInp.files && fileInp.files[0];
-          if(!f) return;
-          var msg = document.getElementById('bod-teo-msg');
-          if(msg) msg.innerHTML = '<span style="color:#888">Subiendo\u2026</span>';
-          btnUp.disabled = true;
-          var fd = new FormData();
-          fd.append('file', f);
-          fd.append('usuario', window._bod.usuario);
-          fetch('/api/bod/sesion/'+encodeURIComponent(window._bod.sesion.id)+'/teorico/upload',
-            { method:'POST', body:fd })
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-              if(d.ok){
-                if(msg) msg.innerHTML = '<span style="color:#1e7e34">\u2705 '+d.procesadas+' SKUs guardados</span>';
-                setTimeout(renderTeorico, 800);
-              } else {
-                if(msg) msg.innerHTML = '<span style="color:#c0392b">'+bodEsc(d.error||'Error')+'</span>';
-                btnUp.disabled = false;
-              }
-            }).catch(function(){
-              if(msg) msg.innerHTML = '<span style="color:#c0392b">Sin conexi\xf3n</span>';
-              btnUp.disabled = false;
-            });
-        });
-        // Wire limpiar
-        var btnL = document.getElementById('bod-btn-teo-limpiar');
-        if(btnL) btnL.addEventListener('click', function(){
-          if(!confirm('\xbfLimpiar te\xf3rico? Se borrar\xe1n todos los SKUs cargados para esta sesi\xf3n.')) return;
-          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(window._bod.sesion.id)+'/teorico',{})
-            .then(function(){ renderTeorico(); }).catch(function(){ alert('Sin conexi\xf3n'); });
-        });
-      }).catch(function(){ tc.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
-  }
-  renderTeorico();
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//   TAB 4: CONTROL DE MANIFIESTOS
-//   Spec: PT-YYYY-MM-DD-## | campos editables | 💾 Guardar/Editar | Empezar | Borrar
-// ═════════════════════════════════════════════════════════════════════════════
-function bodTab4Control() {
-  var tc = document.getElementById('bod-tab-content');
-  if(!tc) return;
-  var sesId   = window._bod.sesion.id;
-  var usuario = window._bod.usuario;
-  var esAud   = isBodAuditor();
-
-  tc.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.3rem 0">Cargando\u2026</div>';
-
-  function render(manifiestos, cgMap){
-    var createBtn = esAud
-      ? '<div style="margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">'
-        +'<button class="btn btn-sm btn-dark" id="bod-btn-crear-pt">\u2795 Crear papel de trabajo</button>'
-        +'<span id="bod-pt-create-msg" style="font-size:.76rem"></span></div>'
+function bodRenderTabla() {
+  var tbody = document.getElementById('bod-tabla-capturas');
+  if(!tbody) return;
+  var filtroSel = document.getElementById('bod-filtro-operador');
+  var filtroVal = filtroSel ? filtroSel.value : (isBodBodega() ? 'mis' : 'todos');
+  var usuario   = window.currentUser ? window.currentUser.name : '';
+  var esAudTab  = isBodAuditor();
+  var base = filtroVal === 'mis' && usuario
+    ? bodLineas.filter(function(l){ return l.operador === usuario; })
+    : bodLineas;
+  var ultimas = base.slice(-15).reverse();
+  if(!ultimas.length){ tbody.innerHTML='<tr><td colspan="8" class="empty">Sin registros aún.</td></tr>'; return; }
+  tbody.innerHTML = ultimas.map(function(l){
+    var hora = l.ts_captura ? l.ts_captura.substring(11,16) : '';
+    var puedeEliminar = (l.operador === usuario) || esAudTab;
+    var btnElim = puedeEliminar
+      ? '<button class="btn btn-xs bod-btn-del-linea" data-id="'+escH(l.id)+'"'
+        +' style="background:#fdecea;color:#c0392b;font-size:.7rem;padding:2px 6px">✕</button>'
       : '';
-    var tblHtml = '';
-    if(!manifiestos.length){
-      tblHtml = '<div style="color:#aaa;font-size:.82rem">Sin papeles de trabajo. Cre\xe1 uno arriba.</div>';
-    } else {
-      tblHtml = '<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:920px;font-size:.76rem;border-collapse:collapse">'
-        +'<thead><tr style="background:#e8ecf0">'
-        +'<th style="padding:4px 6px;white-space:nowrap">PT</th>'
-        +'<th style="padding:4px 6px;text-align:center">Estado</th>'
-        +'<th style="padding:4px 6px">Furg\xf3n</th>'
-        +'<th style="padding:4px 6px">Placa</th>'
-        +'<th style="padding:4px 6px">Marchamo</th>'
-        +'<th style="padding:4px 6px">Lic. hija</th>'
-        +'<th style="padding:4px 6px">TR999</th>'
-        +'<th style="padding:4px 6px">Obs.</th>'
-        +'<th style="padding:4px 6px">Creador</th>'
-        +'<th style="padding:4px 6px;text-align:center">Carga</th>'
-        +'<th style="padding:4px 6px;white-space:nowrap;text-align:center">Acciones</th>'
-        +'</tr></thead><tbody>';
-      var estadoStyle = {
-        en_proceso:{ bg:'#e3f2fd',fg:'#1565c0',label:'En proceso' },
-        finalizado:{ bg:'#e8f5e9',fg:'#1b5e20',label:'Finalizado' },
-        anulado:   { bg:'#fdecea',fg:'#c0392b',label:'Anulado'   },
-      };
-      manifiestos.forEach(function(m){
-        var cg      = cgMap[m.id] || null;
-        var es      = estadoStyle[m.estado] || estadoStyle['en_proceso'];
-        var badge   = '<span style="background:'+es.bg+';color:'+es.fg+';font-size:.7rem;padding:1px 6px;border-radius:8px">'+es.label+'</span>';
-        var skuCnt  = m._skuCount || 0;
-        var cargaBadge = skuCnt > 0
-          ? '<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 7px;border-radius:6px;font-weight:600">'+skuCnt+' l\xedneas</span>'
-          : '<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">0</span>';
-        // Editable inputs
-        var iFurg = '<input class="ctrl-inp field-inp" data-f="furgon" value="'+bodEsc((cg?cg.furgon:m.furgon)||'')+'" placeholder="N\xfam" style="width:55px;padding:2px 4px;font-size:.76rem">';
-        var iPlac = '<input class="ctrl-inp field-inp" data-f="placa" value="'+bodEsc(cg?cg.placa||'':'')+'" placeholder="Placa" style="width:76px;padding:2px 4px;font-size:.76rem">';
-        var iMarch= '<input class="ctrl-inp field-inp" data-f="marchamo" value="'+bodEsc(cg?cg.marchamo||'':'')+'" placeholder="March." style="width:80px;padding:2px 4px;font-size:.76rem">';
-        var iLic  = '<input class="ctrl-inp field-inp" data-f="licencia_hija" value="'+bodEsc((cg?cg.licencia_hija:m.licencia_hija)||'')+'" placeholder="U25-XXX" style="width:85px;padding:2px 4px;font-size:.76rem">';
-        var iTR   = '<input class="ctrl-inp field-inp" data-f="destino_tr999" value="'+bodEsc(cg?cg.destino_tr999||'':'')+'" placeholder="TR999.x.x" style="width:95px;padding:2px 4px;font-size:.76rem">';
-        var iObs  = '<input class="ctrl-inp field-inp" data-f="observacion" value="'+bodEsc(cg?cg.observacion||'':'')+'" placeholder="Obs." style="min-width:60px;padding:2px 4px;font-size:.76rem">';
-        var acciones = '';
-        if(m.estado !== 'anulado'){
-          // Empezar / Continuar
-          var yaCols = Array.isArray(m.colaboradores) ? m.colaboradores : [];
-          var label  = (m.auditor_lider===usuario && !yaCols.length) ? 'Empezar'
-            : (m.auditor_lider===usuario || yaCols.includes(usuario)) ? 'Continuar' : 'Unirse';
-          acciones += '<button class="btn btn-xs bod-btn-ir" data-id="'+bodEsc(m.id)+'" style="background:#1565c0;color:#fff;font-size:.7rem">\u25b6 '+label+'</button> ';
-          if(esAud){
-            if(m.estado !== 'finalizado')
-              acciones += '<button class="btn btn-xs bod-btn-fin" data-id="'+bodEsc(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem">Fin</button> ';
-            acciones += '<button class="btn btn-xs bod-btn-save" data-id="'+bodEsc(m.id)+'" title="Guardar cambios" style="background:#1b5e20;color:#fff;font-size:.72rem;padding:3px 8px">\uD83D\uDCBE</button> ';
-            acciones += '<button class="btn btn-xs bod-btn-borrar" data-id="'+bodEsc(m.id)+'" title="Borrar PT" style="background:#7b241c;color:#fff;font-size:.7rem">Borrar</button>';
-          }
-        }
-        tblHtml += '<tr data-mid="'+bodEsc(m.id)+'" style="border-top:1px solid #eee">'
-          +'<td style="padding:3px 5px;font-weight:700;color:#1565c0;white-space:nowrap">'+bodEsc(m.correlativo||'—')+'</td>'
-          +'<td style="padding:3px 5px;text-align:center">'+badge+'</td>'
-          +'<td style="padding:2px 3px">'+iFurg+'</td>'
-          +'<td style="padding:2px 3px">'+iPlac+'</td>'
-          +'<td style="padding:2px 3px">'+iMarch+'</td>'
-          +'<td style="padding:2px 3px">'+iLic+'</td>'
-          +'<td style="padding:2px 3px">'+iTR+'</td>'
-          +'<td style="padding:2px 3px">'+iObs+'</td>'
-          +'<td style="padding:3px 5px;font-size:.75rem;color:#555">'+bodEsc(m.auditor_lider||m.creado_por||'—')+'</td>'
-          +'<td style="padding:3px 5px;text-align:center">'+cargaBadge+'</td>'
-          +'<td style="padding:3px 5px;white-space:nowrap">'+acciones+'</td>'
-          +'</tr>';
-      });
-      tblHtml += '</tbody></table></div>';
-    }
-    tc.innerHTML = createBtn + tblHtml;
+    return '<tr>'
+      +'<td style="font-size:.78rem">'+escH(l.operador||'')+'</td>'
+      +'<td style="font-weight:600">'+escH(l.tarima||'')+'</td>'
+      +'<td style="font-size:.78rem;color:#888">'+escH(l.barra||'—')+'</td>'
+      +'<td style="font-weight:600">'+escH(l.sku||'')+'</td>'
+      +'<td style="font-size:.82rem">'+escH(l.descripcion||'—')+'</td>'
+      +'<td class="tc">'+Number(l.cantidad)+'</td>'
+      +'<td style="font-size:.75rem;color:#888">'+hora+'</td>'
+      +'<td class="tc">'+btnElim+'</td>'
+      +'</tr>';
+  }).join('');
 
-    // Wire: Crear PT
-    var btnC = document.getElementById('bod-btn-crear-pt');
-    if(btnC) btnC.addEventListener('click', function(){
-      var msg = document.getElementById('bod-pt-create-msg');
-      if(msg) msg.innerHTML='<span style="color:#888">Creando\u2026</span>';
-      bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control',
-        { auditor_lider:usuario, creado_por:usuario })
+  // Wire botones eliminar
+  tbody.querySelectorAll('.bod-btn-del-linea').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var linId = btn.dataset.id;
+      var lin   = bodLineas.find(function(l){ return l.id === linId; });
+      if(!confirm('Eliminar línea: SKU '+(lin?lin.sku:linId)+'? Esta acción no se puede deshacer.')) return;
+      bodFetch('DELETE', '/api/bod/linea/'+encodeURIComponent(linId),
+        { usuario:usuario, supervisor:esAudTab })
         .then(function(d){
-          if(d.ok && d.manifiesto){
-            if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+bodEsc(d.manifiesto.correlativo)+' creado</span>';
-            setTimeout(function(){ bodTab4Control(); }, 800);
-          } else {
-            if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEsc((d&&d.error)||'Error')+'</span>';
-          }
-        }).catch(function(){ alert('Sin conexi\xf3n'); });
+          if(!d.ok){ alert(d.error||'Error al eliminar'); return; }
+          var sesId = bodSesionActual ? bodSesionActual.id : '';
+          if(sesId) bodCargarLineas(sesId);
+        }).catch(function(){ alert('Sin conexión'); });
     });
-
-    // Wire: 💾 Guardar campos editables
-    tc.querySelectorAll('.bod-btn-save').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var tr = btn.closest('tr');
-        if(!tr) return;
-        var mId = tr.dataset.mid;
-        var vals = {};
-        tr.querySelectorAll('.ctrl-inp').forEach(function(inp){ vals[inp.dataset.f]=inp.value.trim(); });
-        btn.disabled = true; btn.textContent = '\u23f3';
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(mId)+'/guardar',
-          { usuario:usuario, furgon:vals.furgon||'', placa:(vals.placa||'').toUpperCase(),
-            marchamo:(vals.marchamo||'').toUpperCase(), licencia_hija:(vals.licencia_hija||'').toUpperCase(),
-            destino_tr999:(vals.destino_tr999||'').toUpperCase(), observacion:vals.observacion||'' })
-          .then(function(d){
-            if(d.ok){ btn.textContent='\u2705'; setTimeout(function(){ btn.textContent='\uD83D\uDCBE'; btn.disabled=false; },1200); }
-            else { alert(d.error||'Error'); btn.textContent='\uD83D\uDCBE'; btn.disabled=false; }
-          }).catch(function(){ alert('Sin conexi\xf3n'); btn.textContent='\uD83D\uDCBE'; btn.disabled=false; });
-      });
-    });
-
-    // Wire: Empezar/Continuar/Unirse
-    tc.querySelectorAll('.bod-btn-ir').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var mId  = btn.dataset.id;
-        var mObj = manifiestos.find(function(x){ return x.id===mId; });
-        if(!mObj) return;
-        var cg   = cgMap[mId] || null;
-        window._bod.manifiestoActivo = {
-          id:            mObj.id,
-          correlativo:   mObj.correlativo,
-          estado:        mObj.estado,
-          _sesId:        sesId,
-          auditor_lider: mObj.auditor_lider,
-          colaboradores: Array.isArray(mObj.colaboradores)?mObj.colaboradores:[],
-          furgon:        cg?cg.furgon:mObj.furgon,
-          placa:         cg?(cg.placa||null):null,
-          marchamo:      cg?(cg.marchamo||null):null,
-          licencia_hija: cg?cg.licencia_hija:mObj.licencia_hija,
-          destino_tr999: cg?(cg.destino_tr999||null):null,
-          observacion:   cg?(cg.observacion||null):null,
-        };
-        window._bod.tab = '5-papel';
-        bodRenderAuditoria();
-      });
-    });
-
-    // Wire: Finalizar
-    tc.querySelectorAll('.bod-btn-fin').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if(!confirm('\xbfFinalizar este PT? No se podr\xe1n agregar m\xe1s l\xedneas.')) return;
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/finalizar',{usuario:usuario})
-          .then(function(d){ if(d.ok) bodTab4Control(); else alert(d.error||'Error'); })
-          .catch(function(){ alert('Sin conexi\xf3n'); });
-      });
-    });
-
-    // Wire: Borrar
-    tc.querySelectorAll('.bod-btn-borrar').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),
-          {usuario:usuario,auditor:true,supervisor:isSup()})
-          .then(function(d){
-            if(d.ok){ bodTab4Control(); }
-            else if(d.tieneLineas){
-              if(!confirm('El PT tiene '+d.count+' l\xedneas en Papel de Trabajo. \xbfBorrarlo de todas formas?')) return;
-              bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),
-                {usuario:usuario,auditor:true,supervisor:isSup(),forzar:true})
-                .then(function(d2){ if(d2.ok) bodTab4Control(); else alert(d2.error||'Error'); });
-            } else alert(d.error||'Error');
-          }).catch(function(){ alert('Sin conexi\xf3n'); });
-      });
-    });
-  }
-
-  // Cargar manifiestos + cargas y renderizar
-  Promise.all([
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control'),
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/furgones').catch(function(){return{ok:true,rows:[]};})
-  ]).then(function(res){
-    var manifiestos = res[0].ok ? (res[0].manifiestos||[]) : [];
-    var cargas      = res[1].ok ? (res[1].rows||[])       : [];
-    var cgMap = {};
-    cargas.forEach(function(cg){ if(cg.manifiesto_id) cgMap[cg.manifiesto_id]=cg; });
-    render(manifiestos, cgMap);
-  }).catch(function(){ tc.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//   TAB 5: PAPEL DE TRABAJO
-//   Spec: header PT | barcode+SKU+desc+físico+tarima+estado | tabla con 952/dif/seguimiento
-// ═════════════════════════════════════════════════════════════════════════════
-function bodTab5Papel() {
-  var tc = document.getElementById('bod-tab-content');
-  if(!tc) return;
-  if(!window._bod.manifiestoActivo){
-    tc.innerHTML = '<div style="background:#fff8e1;border-radius:8px;padding:.8rem 1rem;font-size:.82rem;color:#795548">'
-      +'\uD83D\uDCCB Us\xe1 <strong>\u25b6 Empezar</strong> en Control de Manifiesto para trabajar el Papel de Trabajo.'
-      +'<br><button class="btn btn-sm" id="bod-ir-ctrl" style="margin-top:.4rem;font-size:.76rem">Ir a Control de Manifiesto</button></div>';
-    var b = document.getElementById('bod-ir-ctrl');
-    if(b) b.addEventListener('click', function(){ window._bod.tab='4-control'; bodRenderAuditoria(); });
-    return;
-  }
-  var m       = window._bod.manifiestoActivo;
-  var sesId   = window._bod.sesion.id;
-  var usuario = window._bod.usuario;
-
-  // Header del PT
-  var hdr = '<div style="background:#e3f2fd;border-radius:6px;padding:.5rem .85rem;margin-bottom:.5rem;'
-    +'font-size:.78rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-    +'<span style="font-weight:700;color:#1565c0;font-size:.84rem">'+bodEsc(m.correlativo||'PT-?')+'</span>'
-    +'<span style="color:#888">\xb7</span>'
-    +'<span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:1px 7px;border-radius:8px">'+bodEsc(m.estado||'en_proceso')+'</span>'
-    +(m.furgon ? '<span style="font-size:.73rem;color:#555">Furg\xf3n: '+bodEsc(m.furgon)+'</span>' : '')
-    +(m.licencia_hija ? '<span style="font-size:.73rem;color:#555">Lic: '+bodEsc(m.licencia_hija)+'</span>' : '')
-    +'<button id="bod-papel-recargar" class="btn btn-xs" style="margin-left:auto;font-size:.71rem;background:#e8f4ff;color:#1565c0">\u21bb Recargar</button>'
-    +'</div>';
-
-  // Formulario agregar línea
-  var addForm = '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-    +'<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.45rem">+ Agregar l\xednea</div>'
-    +'<div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap">'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">C\xf3d. de barra / SKU</label>'
-    +'<input type="text" id="pap-barra" class="field-inp" placeholder="Escanear o escribir" autocomplete="off"'
-    +' style="width:150px;padding:4px 8px;font-size:.82rem" inputmode="numeric"></div>'
-    +'<div style="flex:1;min-width:130px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">SKU</label>'
-    +'<input type="text" id="pap-sku" class="field-inp" placeholder="Auto" readonly'
-    +' style="width:100px;padding:4px 8px;font-size:.82rem;background:#f0f0f0"></div>'
-    +'<div style="flex:2;min-width:140px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label>'
-    +'<input type="text" id="pap-desc" class="field-inp" placeholder="Auto"'
-    +' style="width:100%;padding:4px 8px;font-size:.78rem;background:#f0f0f0;color:#555" readonly></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">F\xedsico s/Aud.</label>'
-    +'<input type="number" id="pap-fisico" class="field-inp" value="0" min="0" step="1"'
-    +' style="width:72px;padding:4px 7px;font-size:.82rem;text-align:center"></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label>'
-    +'<input type="text" id="pap-tarima" class="field-inp" placeholder="Ej: A01"'
-    +' style="width:60px;padding:4px 7px;font-size:.82rem;text-transform:uppercase"></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Estatus</label>'
-    +'<select id="pap-estado" class="field-inp" style="padding:4px 7px;font-size:.8rem">'
-    +'<option value="No auditado">No auditado</option><option value="Auditado">Auditado</option>'
-    +'</select></div>'
-    +'<button class="btn btn-sm" id="pap-btn-agregar" style="background:#1565c0;color:#fff;font-size:.76rem;padding:5px 14px;align-self:flex-end">+ Agregar</button>'
-    +'<span id="pap-add-msg" style="font-size:.76rem;align-self:center"></span>'
-    +'</div></div>';
-
-  tc.innerHTML = hdr + addForm + '<div id="pap-tabla-cont"><div style="color:#888;font-size:.82rem;padding:.3rem">Cargando\u2026</div></div>';
-
-  // Recalcular diferencia + seguimiento
-  function calcSeg(cant952, fisico, aud){
-    var c = Number(cant952)||0, f = Number(fisico)||0;
-    var dif = c - f;
-    var seg = dif === 0 ? 'Cuadrado' : dif < 0 ? 'Solicitar traslado a 952' : 'Se queda en bols\xf3n';
-    var segC= dif === 0 ? '#1e7e34'  : dif < 0 ? '#c0392b' : '#e65100';
-    var difPost = aud ? 0 : dif;
-    var cantManif = aud ? f : c;
-    return { dif:dif, seg:seg, segC:segC, difPost:difPost, cantManif:cantManif };
-  }
-
-  // Cargar y renderizar filas
-  function cargarFilas(){
-    var tEl = document.getElementById('pap-tabla-cont');
-    if(!tEl) return;
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo?manifiesto_id='+encodeURIComponent(m.id))
-      .then(function(d){
-        var filas = d.ok ? (d.rows||[]) : [];
-        if(!filas.length){
-          tEl.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.3rem">Sin l\xedneas. Agrega SKUs arriba.</div>';
-          return;
-        }
-        var mSel = window._bod.manifiestoActivo || {};
-        var furg = mSel.furgon||'—'; var lic = mSel.licencia_hija||'—'; var tr = mSel.destino_tr999||'—';
-        var html = '<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:900px;font-size:.76rem"><thead><tr>'
-          +'<th>SKU</th><th>Nombre</th><th class="tc">Tarima AI</th><th class="tc">Estado</th>'
-          +'<th class="tc">952</th><th class="tc">F\xedsico</th><th class="tc">Dif.</th>'
-          +'<th>Seguimiento</th><th class="tc">TR999</th><th class="tc">Dif. post-valid.</th>'
-          +'<th>Tarima</th><th>Furg\xf3n</th><th>Lic. hija</th><th class="tc">Cant. Manif.</th>'
-          +'<th class="tc">Acci\xf3n</th></tr></thead><tbody>';
-        filas.forEach(function(f, idx){
-          var est  = f.estado_papel||'No auditado';
-          var aud  = est==='Auditado' || !!f.validado;
-          var cv   = calcSeg(f.cantidad_952, f.fisico_auditoria, aud);
-          html += '<tr data-sku="'+bodEsc(f.sku)+'" data-c952="'+Number(f.cantidad_952||0)+'">'
-            +'<td style="font-weight:600">'+bodEsc(f.sku||'')+'</td>'
-            +'<td style="font-size:.74rem">'+bodEsc(f.nombre||'—')+'</td>'
-            +'<td class="tc" style="color:#888;font-size:.72rem">AI-'+(idx+1)+'</td>'
-            +'<td class="tc"><select class="pap-sel-est field-inp" data-sku="'+bodEsc(f.sku)+'" style="font-size:.72rem;padding:2px 4px">'
-              +'<option value="No auditado"'+(est==='No auditado'?' selected':'')+'>No auditado</option>'
-              +'<option value="Auditado"'+(est==='Auditado'?' selected':'')+'>Auditado</option>'
-            +'</select></td>'
-            +'<td class="tc">'+Number(f.cantidad_952||0)+'</td>'
-            +'<td class="tc"><input type="number" class="pap-fisico-inp field-inp" data-sku="'+bodEsc(f.sku)+'" data-c952="'+Number(f.cantidad_952||0)+'"'
-              +' value="'+Number(f.fisico_auditoria||0)+'" min="0" step="1" style="width:58px;padding:2px 4px;font-size:.78rem;text-align:center"></td>'
-            +'<td class="tc pap-dif" style="font-weight:600;color:'+cv.segC+'">'+cv.dif+'</td>'
-            +'<td class="pap-seg" style="font-size:.75rem;color:'+cv.segC+'">'+bodEsc(cv.seg)+'</td>'
-            +'<td class="tc" style="font-size:.72rem">'+bodEsc(tr)+'</td>'
-            +'<td class="tc pap-difpost" style="font-weight:600;color:'+cv.segC+'">'+cv.difPost+'</td>'
-            +'<td style="font-size:.73rem;color:#888">'+bodEsc(f.tarimas||'—')+'</td>'
-            +'<td style="font-size:.73rem">'+bodEsc(furg)+'</td>'
-            +'<td style="font-size:.73rem">'+bodEsc(lic)+'</td>'
-            +'<td class="tc pap-cantmanif" style="font-weight:600">'+cv.cantManif+'</td>'
-            +'<td class="tc"><button class="btn btn-xs pap-btn-quitar" data-sku="'+bodEsc(f.sku)+'"'
-              +' style="background:#fdecea;color:#c0392b;font-size:.7rem">Quitar</button></td>'
-            +'</tr>';
-        });
-        html += '</tbody></table></div>';
-        tEl.innerHTML = html;
-
-        // Wire: estado selector
-        tEl.querySelectorAll('.pap-sel-est').forEach(function(sel){
-          sel.addEventListener('change', function(){
-            var sku = sel.dataset.sku;
-            var tr2 = sel.closest('tr');
-            var aud2= sel.value==='Auditado';
-            var c952= Number(tr2.dataset.c952||0);
-            var fis2= Number(tr2.querySelector('.pap-fisico-inp').value)||0;
-            var cv2 = calcSeg(c952,fis2,aud2);
-            tr2.querySelector('.pap-dif').textContent=cv2.dif; tr2.querySelector('.pap-dif').style.color=cv2.segC;
-            tr2.querySelector('.pap-seg').textContent=cv2.seg; tr2.querySelector('.pap-seg').style.color=cv2.segC;
-            tr2.querySelector('.pap-difpost').textContent=cv2.difPost;
-            tr2.querySelector('.pap-cantmanif').textContent=cv2.cantManif;
-            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo',
-              { manifiesto_id:m.id, skus:[{sku:sku,estado_papel:sel.value,validado:aud2,validado_por:aud2?usuario:'',fisico_auditoria:fis2,diferencia:cv2.dif,seguimiento:cv2.seg,cantidad_manifiesto:cv2.cantManif}] })
-              .then(function(d){ if(!d.ok) alert(d.error||'Error guardando estado'); }).catch(function(){});
-          });
-        });
-
-        // Wire: físico input
-        tEl.querySelectorAll('.pap-fisico-inp').forEach(function(inp){
-          inp.addEventListener('input', function(){
-            var tr2 = inp.closest('tr');
-            var c952= Number(inp.dataset.c952||0);
-            var fis = Number(inp.value)||0;
-            var aud = tr2.querySelector('.pap-sel-est').value==='Auditado';
-            var cv3 = calcSeg(c952,fis,aud);
-            tr2.querySelector('.pap-dif').textContent=cv3.dif; tr2.querySelector('.pap-dif').style.color=cv3.segC;
-            tr2.querySelector('.pap-seg').textContent=cv3.seg; tr2.querySelector('.pap-seg').style.color=cv3.segC;
-            tr2.querySelector('.pap-difpost').textContent=cv3.difPost;
-            tr2.querySelector('.pap-cantmanif').textContent=cv3.cantManif;
-          });
-          inp.addEventListener('change', function(){
-            var sku = inp.dataset.sku;
-            var tr2 = inp.closest('tr');
-            var c952= Number(inp.dataset.c952||0);
-            var fis = Number(inp.value)||0;
-            var aud = tr2.querySelector('.pap-sel-est').value==='Auditado';
-            var cv4 = calcSeg(c952,fis,aud);
-            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo',
-              { manifiesto_id:m.id, skus:[{sku:sku,fisico_auditoria:fis,diferencia:cv4.dif,seguimiento:cv4.seg,cantidad_manifiesto:cv4.cantManif}] })
-              .then(function(d){ if(!d.ok) alert(d.error||'Error'); }).catch(function(){});
-          });
-        });
-
-        // Wire: quitar fila
-        tEl.querySelectorAll('.pap-btn-quitar').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            if(!confirm('\xbfQuitar SKU '+btn.dataset.sku+' del papel de trabajo?')) return;
-            bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo-sku',
-              { manifiesto_id:m.id, sku:btn.dataset.sku })
-              .then(function(d){ if(d.ok) cargarFilas(); else alert(d.error||'Error'); })
-              .catch(function(){ alert('Sin conexi\xf3n'); });
-          });
-        });
-      }).catch(function(){ if(tEl) tEl.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
-  }
-  cargarFilas();
-
-  // Wire: ↻ recargar
-  var rBtn = document.getElementById('bod-papel-recargar');
-  if(rBtn) rBtn.addEventListener('click', cargarFilas);
-
-  // Wire: barra scan → buscar SKU
-  var barraInp = document.getElementById('pap-barra');
-  var skuInp   = document.getElementById('pap-sku');
-  var descInp  = document.getElementById('pap-desc');
-  var _barraTimer = null;
-  function lookupBarra(val){
-    if(!val) return;
-    // Primero buscar en catálogo de barras
-    bodFetch('GET','/api/bod/barra/'+encodeURIComponent(val))
-      .then(function(d){
-        if(d && d.ok && d.sku){
-          if(skuInp)  skuInp.value  = d.sku;
-          if(descInp) descInp.value = d.descripcion||'';
-        } else {
-          // Si no hay barra, tratar el valor como SKU directo
-          if(skuInp) skuInp.value = val.toUpperCase();
-          // Buscar descripción en catálogo de SKUs
-          bodFetch('GET','/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(val.toUpperCase()))
-            .then(function(d2){
-              if(d2&&d2.ok&&d2.resultados&&d2.resultados.length){
-                var r = d2.resultados.find(function(x){ return String(x.sku)===val.toUpperCase(); })||d2.resultados[0];
-                if(descInp) descInp.value = r.descripcion||'';
-              }
-            }).catch(function(){});
-        }
-      }).catch(function(){});
-  }
-  if(barraInp){
-    barraInp.addEventListener('input', function(){
-      clearTimeout(_barraTimer);
-      var v = barraInp.value.trim();
-      if(v.length >= 3) _barraTimer = setTimeout(function(){ lookupBarra(v); }, 500);
-    });
-    barraInp.addEventListener('blur', function(){ var v=barraInp.value.trim(); if(v) lookupBarra(v); });
-  }
-
-  // Wire: + Agregar
-  var btnAdd = document.getElementById('pap-btn-agregar');
-  if(btnAdd) btnAdd.addEventListener('click', function(){
-    var sku    = ((skuInp&&skuInp.value)||'').trim().toUpperCase()
-              || ((barraInp&&barraInp.value)||'').trim().toUpperCase();
-    var msg    = document.getElementById('pap-add-msg');
-    var fisico = Number((document.getElementById('pap-fisico')||{value:0}).value)||0;
-    var tarima = ((document.getElementById('pap-tarima')||{value:''}).value||'').trim().toUpperCase();
-    var estado = (document.getElementById('pap-estado')||{value:'No auditado'}).value;
-    if(!sku){ if(msg) msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 un SKU o barra.</span>'; return; }
-    var teoRow = window._bod.teorico[sku] || null;
-    var nombre = (descInp&&descInp.value)||'';
-    var cant952 = teoRow ? teoRow.cantidad : 0;
-    if(msg) msg.innerHTML='<span style="color:#888">Guardando\u2026</span>';
-    btnAdd.disabled = true;
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(sesId)+'/papel-trabajo',
-      { manifiesto_id:m.id, skus:[{
-          sku:sku, nombre:nombre, cantidad_952:cant952, tarimas:tarima,
-          estado_papel:estado, validado:estado==='Auditado', validado_por:estado==='Auditado'?usuario:'',
-          fisico_auditoria:fisico,
-          diferencia:cant952-fisico, seguimiento:'',
-          cantidad_manifiesto:estado==='Auditado'?fisico:cant952
-        }] })
-      .then(function(d){
-        if(d.ok){
-          if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+sku+'</span>';
-          if(barraInp) barraInp.value='';
-          if(skuInp)   skuInp.value='';
-          if(descInp)  descInp.value='';
-          if(document.getElementById('pap-fisico'))  document.getElementById('pap-fisico').value='0';
-          if(document.getElementById('pap-tarima'))  document.getElementById('pap-tarima').value='';
-          if(document.getElementById('pap-estado'))  document.getElementById('pap-estado').value='No auditado';
-          if(barraInp) barraInp.focus();
-          btnAdd.disabled = false;
-          cargarFilas();
-        } else {
-          if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEsc(d.error||'Error')+'</span>';
-          btnAdd.disabled = false;
-        }
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; btnAdd.disabled=false; });
   });
-  // Enter en barra agrega
-  if(barraInp) barraInp.addEventListener('keydown', function(e){ if(e.key==='Enter'&&btnAdd) btnAdd.click(); });
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//   CAPTURA DE TARIMA (init — render se hace en pg-bod-captura)
-// ═════════════════════════════════════════════════════════════════════════════
-function bodIniciarCaptura() {
-  var el = document.getElementById('bod-captura-content');
+// Wire filtro operador — re-renderiza la tabla al cambiar
+(function(){
+  var filtroEl = document.getElementById('bod-filtro-operador');
+  if(filtroEl) {
+    // Default: "Mis capturas" para bodega, "Todos" para supervisor/contador
+    filtroEl.addEventListener('change', function(){ bodRenderTabla(); });
+  }
+})();
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//   BODEGA CDG v2 — Auditar Sesion (clean, jue 12-jun-2026)
+//   Tabs 1-5. Entrada por licencia bolson, sin pantalla de sesiones.
+// ─────────────────────────────────────────────────────────────────────────────
+var _bodAudSesion   = null;
+var _bodAudTab      = '4-control';
+var _bodAudManifAct = null;
+var _bodAudTeorico  = {};
+var _bodFiltroTarima = '';
+
+function bodEscA(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function bodRenderAuditoria(data) {
+  // data param ignored -- kept for backward compat with old callers
+  var el = document.getElementById('bod-aud-contenido');
   if(!el) return;
-  var usuario = window._bod.usuario;
-  var sesHtml = '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-    +'<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">Sesi\xf3n de captura</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Licencia bols\xf3n</label>'
-    +'<input type="text" id="cap-lic" class="field-inp" placeholder="U25-162000" autocomplete="off" style="width:160px;font-size:.82rem;padding:4px 8px"></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Correlativo tarima</label>'
-    +'<select id="cap-corr" class="field-inp" style="padding:4px 8px;font-size:.82rem">'
-    +'<option value="">-- Seleccioná --</option>'
-    + ['A','B','C','D','E'].flatMap(function(l){ return Array.from({length:9},function(_,i){ return '<option value="'+l+'0'+(i+1)+'">'+l+'0'+(i+1)+'</option>'; }) }).join('')
-    +'</select></div>'
-    +'<button class="btn btn-sm btn-dark" id="cap-btn-abrir">Abrir sesi\xf3n</button>'
-    +'<span id="cap-ses-msg" style="font-size:.76rem"></span></div></div>'
-    +'<div id="cap-form-wrap" style="display:none">'
-    +'<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-    +'<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">+ Agregar SKU</div>'
-    +'<div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap">'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Barra / SKU</label>'
-    +'<input type="text" id="cap-barra" class="field-inp" placeholder="Escanear o escribir" autocomplete="off" style="width:160px;padding:4px 8px;font-size:.82rem" inputmode="numeric"></div>'
-    +'<div style="flex:2;min-width:140px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label>'
-    +'<input type="text" id="cap-desc" class="field-inp" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:.78rem;background:#f0f0f0" readonly></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Cantidad</label>'
-    +'<input type="number" id="cap-cant" class="field-inp" value="1" min="1" step="1" style="width:65px;padding:4px 7px;font-size:.82rem;text-align:center"></div>'
-    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Estructura</label>'
-    +'<input type="text" id="cap-estructura" class="field-inp" placeholder="Opt." style="width:80px;padding:4px 7px;font-size:.82rem"></div>'
-    +'<button class="btn btn-sm" id="cap-btn-agregar" style="background:#1565c0;color:#fff;font-size:.76rem;align-self:flex-end">+ Agregar</button>'
-    +'<span id="cap-add-msg" style="font-size:.76rem;align-self:center"></span>'
-    +'</div></div>'
-    +'<div id="cap-tabla-cont"><div style="color:#888;font-size:.82rem">Sin l\xedneas a\xfan.</div></div>'
-    +'</div>';
-  el.innerHTML = sesHtml;
-
-  var _capSesId = null, _capLic = null, _capCorr = null;
-
-  // Wire: abrir sesión
-  document.getElementById('cap-btn-abrir').addEventListener('click', function(){
-    var lic  = (document.getElementById('cap-lic')||{value:''}).value.trim().toUpperCase();
-    var corr = (document.getElementById('cap-corr')||{value:''}).value.trim().toUpperCase();
-    var msg  = document.getElementById('cap-ses-msg');
-    if(!lic || !corr){ if(msg) msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 licencia y correlativo.</span>'; return; }
-    if(msg) msg.innerHTML='<span style="color:#888">Buscando sesi\xf3n\u2026</span>';
-    // Buscar sesión activa o crear
-    bodFetch('GET','/api/bod/sesiones?licencia='+encodeURIComponent(lic)+'&estado=abierta')
-      .then(function(d){
-        var ses = d.ok && (d.sesiones||[]).find(function(s){ return s.licencia_id===lic && s.estado==='abierta'; });
-        if(ses){ _capSesId=ses.id; _capLic=lic; _capCorr=corr; activarFormCaptura(ses); }
-        else {
-          bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, usuario:usuario })
-            .then(function(d2){
-              if(!d2.ok){ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEsc(d2.error||'Error')+'</span>'; return; }
-              _capSesId=(d2.sesion||{}).id||d2.id; _capLic=lic; _capCorr=corr;
-              activarFormCaptura(d2.sesion||{id:_capSesId,licencia_id:lic});
-            }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; });
-        }
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; });
-  });
-
-  function activarFormCaptura(ses){
-    var msg = document.getElementById('cap-ses-msg');
-    if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 Sesi\xf3n '+bodEsc(_capLic)+' \xb7 '+bodEsc(_capCorr)+'</span>';
-    var fw = document.getElementById('cap-form-wrap');
-    if(fw) fw.style.display='';
-    cargarTarimas();
-  }
-
-  function cargarTarimas(){
-    var tEl = document.getElementById('cap-tabla-cont');
-    if(!tEl || !_capSesId) return;
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_capSesId)+'/tarimas')
-      .then(function(d){
-        var rows = (d.ok?d.rows:[]).filter(function(r){ return r.correlativo===_capCorr; });
-        if(!rows.length){ tEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin l\xedneas en este correlativo.</div>'; return; }
-        var html='<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-          +'<th>SKU</th><th>Descripci\xf3n</th><th class="tc">Cant.</th><th>Estructura</th><th>Hora</th><th></th>'
-          +'</tr></thead><tbody>';
-        rows.forEach(function(r){
-          var esPropia = r.operador===usuario;
-          html+='<tr><td style="font-weight:600">'+bodEsc(r.sku)+'</td>'
-            +'<td style="font-size:.76rem">'+bodEsc(r.descripcion||'—')+'</td>'
-            +'<td class="tc">'+Number(r.cantidad||0)+'</td>'
-            +'<td style="font-size:.75rem">'+bodEsc(r.estructura||'—')+'</td>'
-            +'<td style="font-size:.73rem;color:#888">'+bodEsc((r.creado_en||'').substring(11,16))+'</td>'
-            +'<td>'+(esPropia?'<button class="btn btn-xs cap-btn-del" data-id="'+bodEsc(r.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Borrar</button>':'—')+'</td></tr>';
-        });
-        html+='</tbody></table></div>';
-        tEl.innerHTML=html;
-        tEl.querySelectorAll('.cap-btn-del').forEach(function(btn){
-          btn.addEventListener('click',function(){
-            if(!confirm('¿Borrar esta l\xednea?')) return;
-            bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(_capSesId)+'/tarimas/'+encodeURIComponent(btn.dataset.id),
-              {usuario:usuario})
-              .then(function(d){ if(d.ok) cargarTarimas(); else alert(d.error||'Error'); })
-              .catch(function(){ alert('Sin conexi\xf3n'); });
-          });
-        });
-      }).catch(function(){ tEl.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
-  }
-
-  // Wire: barra/SKU lookup
-  var _capTimer=null;
-  var barraEl=document.getElementById('cap-barra');
-  var descEl=document.getElementById('cap-desc');
-  function lookupCapBarra(v){
-    bodFetch('GET','/api/bod/barra/'+encodeURIComponent(v))
-      .then(function(d){
-        if(d&&d.ok&&d.sku){ if(descEl) descEl.value=d.descripcion||''; }
-        else {
-          bodFetch('GET','/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(v.toUpperCase()))
-            .then(function(d2){
-              if(d2&&d2.ok&&d2.resultados&&d2.resultados.length&&descEl) descEl.value=d2.resultados[0].descripcion||'';
-            }).catch(function(){});
-        }
-      }).catch(function(){});
-  }
-  if(barraEl){
-    barraEl.addEventListener('input',function(){ clearTimeout(_capTimer); var v=barraEl.value.trim(); if(v.length>=3) _capTimer=setTimeout(function(){ lookupCapBarra(v); },500); });
-    barraEl.addEventListener('blur',function(){ var v=barraEl.value.trim(); if(v) lookupCapBarra(v); });
-  }
-
-  // Wire: + Agregar línea
-  var btnAgr=document.getElementById('cap-btn-agregar');
-  if(btnAgr) btnAgr.addEventListener('click',function(){
-    if(!_capSesId){ alert('Primero abrí una sesi\xf3n.'); return; }
-    var bv   = (document.getElementById('cap-barra')||{value:''}).value.trim().toUpperCase();
-    var cant = Number((document.getElementById('cap-cant')||{value:1}).value)||1;
-    var desc = (document.getElementById('cap-desc')||{value:''}).value.trim();
-    var estr = (document.getElementById('cap-estructura')||{value:''}).value.trim();
-    var msg  = document.getElementById('cap-add-msg');
-    if(!bv){ if(msg) msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 barra o SKU.</span>'; return; }
-    if(msg) msg.innerHTML='<span style="color:#888">Guardando\u2026</span>';
-    btnAgr.disabled=true;
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(_capSesId)+'/tarimas',
-      { licencia_bolson:_capLic, correlativo:_capCorr, sku:bv,
-        descripcion:desc, cantidad:cant, estructura:estr, operador:usuario })
-      .then(function(d){
-        if(d.ok){
-          if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+bv+'</span>';
-          if(barraEl){ barraEl.value=''; barraEl.focus(); }
-          if(descEl) descEl.value='';
-          if(document.getElementById('cap-cant')) document.getElementById('cap-cant').value='1';
-          if(document.getElementById('cap-estructura')) document.getElementById('cap-estructura').value='';
-          cargarTarimas();
-        } else { if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEsc(d.error||'Error')+'</span>'; }
-        btnAgr.disabled=false;
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; btnAgr.disabled=false; });
-  });
-  if(barraEl) barraEl.addEventListener('keydown',function(e){ if(e.key==='Enter'&&btnAgr) btnAgr.click(); });
+  if(!_bodAudSesion) { bodRenderAudEntrar(); return; }
+  var ses=_bodAudSesion, tab=_bodAudTab;
+  var tabs=[{id:'1-tarimas',lbl:'1. Tarimas'},{id:'2-detalle',lbl:'2. Detalle'},{id:'3-teorico',lbl:'3. Carga Te\xf3rico'},{id:'4-control',lbl:'4. Control de Manifiesto'},{id:'5-papel',lbl:'5. Papel de Trabajo'}];
+  var hdr='<div style="font-size:.78rem;color:#1565c0;font-weight:700;margin-bottom:.4rem">'
+    +'\uD83D\uDCCB Licencia: '+bodEscA(ses.licencia_id||ses.id)
+    +' <span style="color:#888;font-weight:400">\xb7 '+bodEscA(ses.fecha||'')+'</span>'
+    +' <button id="bod-aud-cambiar" style="margin-left:8px;font-size:.72rem;background:none;border:1px solid #ccc;border-radius:4px;padding:1px 6px;cursor:pointer;color:#555">\u21a9 Cambiar</button></div>';
+  var tabsH='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:.7rem">';
+  tabs.forEach(function(t){ var on=t.id===tab; tabsH+='<button class="bod-tab-pill" data-tab="'+t.id+'" style="font-size:.75rem;padding:4px 10px;border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+'">'+t.lbl+'</button>'; });
+  tabsH+='</div>';
+  el.innerHTML=hdr+tabsH+'<div id="bod-tab-body"></div>';
+  el.querySelectorAll('.bod-tab-pill').forEach(function(btn){ btn.addEventListener('click',function(){ _bodAudTab=btn.dataset.tab; bodRenderAuditoria(); }); });
+  var bC=document.getElementById('bod-aud-cambiar'); if(bC) bC.addEventListener('click',function(){ _bodAudSesion=null; _bodAudManifAct=null; bodRenderAuditoria(); });
+  switch(tab){ case '1-tarimas':bodAudTab1();break; case '2-detalle':bodAudTab2();break; case '3-teorico':bodAudTab3();break; case '4-control':bodAudTab4();break; case '5-papel':bodAudTab5();break; }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//   CATÁLOGO BARRA-SKU (wire del botón de upload)
-// ═════════════════════════════════════════════════════════════════════════════
-function bodWireBarraSku(){
-  var inp = document.getElementById('inp-bod-barra-sku');
-  var btn = document.getElementById('btn-bod-barra-sku-upload');
-  var nom = document.getElementById('bod-barra-sku-nombre');
-  var msg = document.getElementById('bod-barra-sku-msg');
-  if(!inp || inp._wired) return;
-  inp._wired = true;
-  inp.addEventListener('change', function(){
-    if(this.files&&this.files[0]){
-      if(nom) nom.textContent = this.files[0].name;
-      if(btn) btn.disabled = false;
-    }
+function bodRenderAudEntrar() {
+  var el=document.getElementById('bod-aud-contenido'); if(!el) return;
+  el.innerHTML='<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.6rem">Selecion\xe1 licencia bols\xf3n</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.8rem">'
+    +'<input type="text" id="bod-aud-lic" class="field-inp" placeholder="Ej: U26-163091" style="width:200px;font-size:.84rem;padding:5px 10px" autocomplete="off">'
+    +'<button class="btn btn-sm btn-dark" id="bod-aud-ok">Entrar \u25b6</button>'
+    +'<span id="bod-aud-msg" style="font-size:.76rem"></span></div>'
+    +'<div id="bod-aud-lista"></div>';
+  // Cargar sesiones activas como chips
+  bodFetch('GET','/api/bod/sesiones?limit=20').then(function(d){
+    var lista=document.getElementById('bod-aud-lista'); if(!lista) return;
+    var ses=d.ok?(d.sesiones||[]):[];
+    if(!ses.length){lista.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin sesiones activas.</div>';return;}
+    var h='<div style="font-size:.75rem;color:#666;margin-bottom:.3rem">Sesiones activas:</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
+    ses.forEach(function(s){ h+='<button class="btn btn-xs b-ses" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha||'')+'" style="font-size:.76rem;background:#e3f2fd;color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</button>'; });
+    h+='</div>';
+    lista.innerHTML=h;
+    lista.querySelectorAll('.b-ses').forEach(function(btn){ btn.addEventListener('click',function(){ _bodAudSesion={id:btn.dataset.id,licencia_id:btn.dataset.lic,fecha:btn.dataset.fecha,estado:'abierta'}; _bodAudTab='4-control'; bodRenderAuditoria(); }); });
+  }).catch(function(){});
+  var btnE=document.getElementById('bod-aud-ok');
+  if(btnE) btnE.addEventListener('click',function(){
+    var lic=(document.getElementById('bod-aud-lic')||{value:''}).value.trim().toUpperCase();
+    var msg=document.getElementById('bod-aud-msg');
+    if(!lic){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 la licencia.</span>';return;}
+    if(msg)msg.innerHTML='<span style="color:#888">Buscando\u2026</span>';
+    bodFetch('GET','/api/bod/sesiones?limit=20').then(function(d){
+      var ses=d.ok?(d.sesiones||[]):[];
+      var match=ses.find(function(s){ return (s.licencia_id||'').toUpperCase()===lic; });
+      if(match){_bodAudSesion=match;_bodAudTab='4-control';bodRenderAuditoria();}
+      else{if(msg)msg.innerHTML='<span style="color:#c0392b">No se encontr\xf3 sesi\xf3n para '+bodEscA(lic)+'.</span>';}
+    }).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';});
   });
-  if(btn) btn.addEventListener('click', function(){
-    var f = inp.files&&inp.files[0];
-    if(!f) return;
-    if(msg) msg.innerHTML='<span style="color:#888">Subiendo\u2026</span>';
-    btn.disabled=true;
-    var fd=new FormData(); fd.append('file',f); fd.append('usuario',window._bod.usuario);
-    fetch('/api/bod/barra-sku/upload',{method:'POST',body:fd})
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if(msg) msg.innerHTML='<span style="color:'+(d.ok?'#1e7e34':'#c0392b')+'">'+bodEsc(d.ok?'✅ '+d.procesadas+' barras cargadas':d.error||'Error')+'</span>';
-        btn.disabled=false; inp.value='';
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; btn.disabled=false; });
-  });
+  var inp=document.getElementById('bod-aud-lic'); if(inp) inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnE)btnE.click();});
 }
 
+// Tab 1: Tarimas
+function bodAudTab1() {
+  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando\u2026</div>';
+  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/lineas').then(function(d){
+    var rows=d.ok?(d.lineas||[]):[];
+    if(!rows.length){tb.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin capturas de tarimas.</div>';return;}
+    var grupos={};
+    rows.forEach(function(r){ var k=r.tarima||'--'; if(!grupos[k])grupos[k]={tarima:k,operador:r.operador,lineas:[],skus:new Set()}; grupos[k].lineas.push(r); grupos[k].skus.add(r.sku); });
+    var html='<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr><th>Tarima</th><th class="tc">L\xedneas</th><th class="tc">SKUs</th><th class="tc">Cant. total</th><th>Operador</th><th></th></tr></thead><tbody>';
+    Object.values(grupos).forEach(function(g){ var qty=g.lineas.reduce(function(s,r){return s+Number(r.cantidad||0);},0); html+='<tr><td style="font-weight:700">'+bodEscA(g.tarima)+'</td><td class="tc">'+g.lineas.length+'</td><td class="tc">'+g.skus.size+'</td><td class="tc">'+qty+'</td><td style="font-size:.76rem;color:#555">'+bodEscA(g.operador||'--')+'</td><td><button class="btn btn-xs b1-det" data-t="'+bodEscA(g.tarima)+'" style="background:#1565c0;color:#fff;font-size:.7rem">Ver detalle</button></td></tr>'; });
+    html+='</tbody></table></div>';
+    tb.innerHTML=html;
+    tb.querySelectorAll('.b1-det').forEach(function(btn){ btn.addEventListener('click',function(){ _bodFiltroTarima=btn.dataset.t; _bodAudTab='2-detalle'; bodRenderAuditoria(); }); });
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+}
+
+// Tab 2: Detalle
+function bodAudTab2() {
+  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
+  tb.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">'
+    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label><input type="text" id="fd-t" class="field-inp" value="'+bodEscA(_bodFiltroTarima)+'" placeholder="A01" style="width:72px;padding:3px 7px;font-size:.8rem"></div>'
+    +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">SKU</label><input type="text" id="fd-s" class="field-inp" style="width:100px;padding:3px 7px;font-size:.8rem" placeholder="Filtrar"></div>'
+    +'<button class="btn btn-sm" id="fd-btn" style="font-size:.76rem">Filtrar</button></div><div id="fd-c"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
+  function load(){
+    var tF=(document.getElementById('fd-t')||{value:''}).value.trim().toUpperCase();
+    var sF=(document.getElementById('fd-s')||{value:''}).value.trim().toUpperCase();
+    var c=document.getElementById('fd-c'); if(!c) return;
+    c.innerHTML='<div style="color:#888;font-size:.82rem">Cargando\u2026</div>';
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/lineas').then(function(d){
+      var rows=(d.ok?d.lineas||[]:[]).filter(function(r){return(!tF||(r.tarima||'').toUpperCase()===tF)&&(!sF||r.sku.includes(sF));});
+      if(!rows.length){c.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin resultados.</div>';return;}
+      var h='<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr><th>Tarima</th><th>SKU</th><th>Descripci\xf3n</th><th class="tc">Capturado</th><th class="tc">F\xedsico s/Aud.</th><th class="tc">Dif.</th><th>Estado</th><th>Operador</th></tr></thead><tbody>';
+      rows.forEach(function(r){ var cap=Number(r.cantidad||0); h+='<tr data-cap="'+cap+'"><td style="font-weight:700">'+bodEscA(r.tarima||'--')+'</td><td style="font-weight:600">'+bodEscA(r.sku)+'</td><td style="font-size:.76rem">'+bodEscA(r.descripcion||'--')+'</td><td class="tc">'+cap+'</td><td class="tc"><input type="number" class="d2f field-inp" min="0" step="1" value="" style="width:60px;padding:2px 4px;font-size:.78rem;text-align:center"></td><td class="tc d2d" style="font-weight:600">--</td><td class="d2e" style="font-size:.75rem">--</td><td style="font-size:.75rem;color:#666">'+bodEscA(r.operador||'--')+'</td></tr>'; });
+      h+='</tbody></table></div>'; c.innerHTML=h;
+      c.querySelectorAll('.d2f').forEach(function(inp){ inp.addEventListener('input',function(){ var tr=inp.closest('tr'),cap=Number(tr.dataset.cap||0),fis=Number(inp.value)||0,dif=cap-fis,dEl=tr.querySelector('.d2d'),eEl=tr.querySelector('.d2e'); if(dEl){dEl.textContent=dif;dEl.style.color=dif===0?'#1e7e34':dif<0?'#c0392b':'#e65100';} if(eEl){eEl.textContent=dif===0?'Cuadrado':dif<0?'Faltante':'Sobrante';eEl.style.color=dif===0?'#1e7e34':dif<0?'#c0392b':'#e65100';} }); });
+    }).catch(function(){if(c)c.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+  }
+  load(); var fb=document.getElementById('fd-btn'); if(fb) fb.addEventListener('click',load);
+}
+
+// Tab 3: Carga Teorico
+function bodAudTab3() {
+  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando te\xf3rico\u2026</div>';
+  function renderTeo(){
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico').then(function(d){
+      var rows=d.ok?(d.rows||[]): [];
+      _bodAudTeorico={};
+      rows.forEach(function(r){_bodAudTeorico[r.sku]={descripcion:r.descripcion,cantidad:Number(r.cantidad||0)};});
+      var upH=isBodAuditor()?'<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem"><div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">Subir te\xf3rico WMS</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label class="btn btn-sm" style="cursor:pointer;position:relative;font-size:.75rem">\uD83D\uDCC2 Elegir<input type="file" id="t3f" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden"></label><span id="t3n" style="font-size:.76rem;color:#555"></span><button class="btn btn-sm btn-dark" id="t3b" disabled style="font-size:.75rem">\u2B06\uFE0F Subir y guardar</button><span id="t3m" style="font-size:.76rem"></span></div>'+(rows.length?'<button class="btn btn-xs" id="t3cl" style="margin-top:.4rem;font-size:.7rem;background:#fdecea;color:#c0392b">Limpiar te\xf3rico</button>':'')+'</div>':'';
+      var tH=rows.length?'<div style="font-size:.76rem;color:#555;margin-bottom:.3rem"><strong>'+rows.length+' SKUs</strong>'+(rows[0].subido_por?' \xb7 '+bodEscA(rows[0].subido_por):'')+'</div><div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr><th>SKU</th><th>Descripci\xf3n</th><th class="tc">Cant. 952</th></tr></thead><tbody>'+rows.map(function(r){return'<tr><td style="font-weight:600">'+bodEscA(r.sku)+'</td><td>'+bodEscA(r.descripcion||'--')+'</td><td class="tc">'+Number(r.cantidad||0)+'</td></tr>';}).join('')+'</tbody></table></div>':'<div style="color:#aaa;font-size:.82rem">Sin te\xf3rico cargado.</div>';
+      tb.innerHTML=upH+tH;
+      var fi=document.getElementById('t3f'),fn=document.getElementById('t3n'),bu=document.getElementById('t3b');
+      if(fi)fi.addEventListener('change',function(){if(this.files&&this.files[0]){if(fn)fn.textContent=this.files[0].name;if(bu)bu.disabled=false;}});
+      if(bu)bu.addEventListener('click',function(){var f=fi&&fi.files&&fi.files[0];if(!f)return;var msg=document.getElementById('t3m');if(msg)msg.innerHTML='<span style="color:#888">Subiendo\u2026</span>';bu.disabled=true;var fd=new FormData();fd.append('file',f);fd.append('usuario',window.currentUser?window.currentUser.name:'');fetch('/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico/upload',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(d){if(d.ok){if(msg)msg.innerHTML='<span style="color:#1e7e34">\u2705 '+d.procesadas+' SKUs</span>';setTimeout(renderTeo,800);}else{if(msg)msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';bu.disabled=false;}}).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';bu.disabled=false;});});
+      var cl=document.getElementById('t3cl');if(cl)cl.addEventListener('click',function(){if(!confirm('Limpiar te\xf3rico?'))return;bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico',{}).then(function(){renderTeo();});});
+    }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+  }
+  renderTeo();
+}
+
+// Tab 4: Control de Manifiestos
+function bodAudTab4() {
+  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
+  var ses=_bodAudSesion, usr=window.currentUser?window.currentUser.name:'', esA=isBodAuditor();
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando\u2026</div>';
+  function renderCtrl(mf,cgM){
+    var cB=esA?'<div style="margin-bottom:.75rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap"><button class="btn btn-sm btn-dark" id="b4-crear">\u2795 Crear papel de trabajo</button><span id="b4-msg" style="font-size:.76rem"></span></div>':'';
+    if(!mf.length){tb.innerHTML=cB+'<div style="color:#aaa;font-size:.82rem">Sin papeles de trabajo.</div>';wireCtrl([],{});return;}
+    var eS={en_proceso:{bg:'#e3f2fd',fg:'#1565c0',lbl:'En proceso'},finalizado:{bg:'#e8f5e9',fg:'#1b5e20',lbl:'Finalizado'},anulado:{bg:'#fdecea',fg:'#c0392b',lbl:'Anulado'}};
+    var h='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:900px;font-size:.76rem;border-collapse:collapse"><thead><tr style="background:#e8ecf0"><th style="padding:4px 6px;white-space:nowrap">PT</th><th style="padding:4px 6px;text-align:center">Estado</th><th style="padding:4px 6px">Furg\xf3n</th><th style="padding:4px 6px">Placa</th><th style="padding:4px 6px">Marchamo</th><th style="padding:4px 6px">Lic. hija</th><th style="padding:4px 6px">TR999</th><th style="padding:4px 6px">Obs.</th><th style="padding:4px 6px;text-align:center">Carga</th><th style="padding:4px 6px;text-align:center">Acciones</th></tr></thead><tbody>';
+    mf.forEach(function(m){
+      var cg=cgM[m.id]||null,es=eS[m.estado]||eS['en_proceso'],skuCnt=m._skuCount||0;
+      var badge='<span style="background:'+es.bg+';color:'+es.fg+';font-size:.7rem;padding:1px 6px;border-radius:8px">'+es.lbl+'</span>';
+      var cBadge=skuCnt>0?'<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 7px;border-radius:6px;font-weight:600">'+skuCnt+' l\xedneas</span>':'<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">0</span>';
+      var fI='<input class="ci field-inp" data-f="furgon" value="'+bodEscA((cg?cg.furgon:m.furgon)||'')+'" placeholder="N\xfam" style="width:55px;padding:2px 4px;font-size:.76rem">';
+      var pI='<input class="ci field-inp" data-f="placa" value="'+bodEscA(cg?cg.placa||'':'')+'" placeholder="Placa" style="width:76px;padding:2px 4px;font-size:.76rem">';
+      var mI='<input class="ci field-inp" data-f="marchamo" value="'+bodEscA(cg?cg.marchamo||'':'')+'" placeholder="March." style="width:80px;padding:2px 4px;font-size:.76rem">';
+      var lI='<input class="ci field-inp" data-f="licencia_hija" value="'+bodEscA((cg?cg.licencia_hija:m.licencia_hija)||'')+'" placeholder="U25-" style="width:85px;padding:2px 4px;font-size:.76rem">';
+      var tI='<input class="ci field-inp" data-f="destino_tr999" value="'+bodEscA(cg?cg.destino_tr999||'':'')+'" placeholder="TR999" style="width:90px;padding:2px 4px;font-size:.76rem">';
+      var oI='<input class="ci field-inp" data-f="observacion" value="'+bodEscA(cg?cg.observacion||'':'')+'" placeholder="Obs." style="min-width:55px;padding:2px 4px;font-size:.76rem">';
+      var yCols=Array.isArray(m.colaboradores)?m.colaboradores:[];
+      var lbl=(m.auditor_lider===usr&&!yCols.length)?'Empezar':(m.auditor_lider===usr||yCols.includes(usr))?'Continuar':'Unirse';
+      var acc='';
+      if(m.estado!=='anulado'){
+        acc+='<button class="btn btn-xs b4-ir" data-id="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff;font-size:.7rem">\u25b6 '+lbl+'</button> ';
+        if(esA&&m.estado!=='finalizado')acc+='<button class="btn btn-xs b4-fin" data-id="'+bodEscA(m.id)+'" style="background:#f3e5f5;color:#6a1b9a;font-size:.7rem">Fin</button> ';
+        if(esA)acc+='<button class="btn btn-xs b4-sav" data-id="'+bodEscA(m.id)+'" title="Guardar" style="background:#1b5e20;color:#fff;font-size:.72rem;padding:3px 8px">\uD83D\uDCBE</button> ';
+        if(esA)acc+='<button class="btn btn-xs b4-del" data-id="'+bodEscA(m.id)+'" style="background:#7b241c;color:#fff;font-size:.7rem">Borrar</button>';
+      }
+      h+='<tr data-mid="'+bodEscA(m.id)+'" style="border-top:1px solid #eee"><td style="padding:3px 5px;font-weight:700;color:#1565c0;white-space:nowrap">'+bodEscA(m.correlativo||'--')+'</td><td style="padding:3px 5px;text-align:center">'+badge+'</td><td style="padding:2px 3px">'+fI+'</td><td style="padding:2px 3px">'+pI+'</td><td style="padding:2px 3px">'+mI+'</td><td style="padding:2px 3px">'+lI+'</td><td style="padding:2px 3px">'+tI+'</td><td style="padding:2px 3px">'+oI+'</td><td style="padding:3px 5px;text-align:center">'+cBadge+'</td><td style="padding:3px 5px;white-space:nowrap">'+acc+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    tb.innerHTML=cB+h;
+    wireCtrl(mf,cgM);
+  }
+  function wireCtrl(mf,cgM){
+    var cp=document.getElementById('b4-crear');
+    if(cp)cp.addEventListener('click',function(){var msg=document.getElementById('b4-msg');if(msg)msg.innerHTML='<span style="color:#888">Creando\u2026</span>';bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control',{auditor_lider:usr,creado_por:usr}).then(function(d){if(d.ok&&d.manifiesto){if(msg)msg.innerHTML='<span style="color:#1e7e34">\u2705 '+bodEscA(d.manifiesto.correlativo)+'</span>';setTimeout(bodAudTab4,800);}else{if(msg)msg.innerHTML='<span style="color:#c0392b">'+bodEscA((d&&d.error)||'Error')+'</span>';}}).catch(function(){alert('Sin conexi\xf3n');});});
+    tb.querySelectorAll('.b4-ir').forEach(function(btn){btn.addEventListener('click',function(){var m=mf.find(function(x){return x.id===btn.dataset.id;}),cg=cgM[btn.dataset.id]||null;if(!m)return;_bodAudManifAct={id:m.id,correlativo:m.correlativo,estado:m.estado,furgon:cg?cg.furgon:m.furgon,placa:cg?(cg.placa||null):null,marchamo:cg?(cg.marchamo||null):null,licencia_hija:cg?cg.licencia_hija:m.licencia_hija,destino_tr999:cg?(cg.destino_tr999||null):null,auditor_lider:m.auditor_lider,colaboradores:Array.isArray(m.colaboradores)?m.colaboradores:[]};_bodAudTab='5-papel';bodRenderAuditoria();});});
+    tb.querySelectorAll('.b4-sav').forEach(function(btn){btn.addEventListener('click',function(){var tr=btn.closest('tr');if(!tr)return;var vals={};tr.querySelectorAll('.ci').forEach(function(i){vals[i.dataset.f]=i.value.trim();});btn.disabled=true;btn.textContent='\u23f3';bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/guardar',{usuario:usr,furgon:vals.furgon||'',placa:(vals.placa||'').toUpperCase(),marchamo:(vals.marchamo||'').toUpperCase(),licencia_hija:(vals.licencia_hija||'').toUpperCase(),destino_tr999:(vals.destino_tr999||'').toUpperCase(),observacion:vals.observacion||''}).then(function(d){if(d.ok){btn.textContent='\u2705';setTimeout(function(){btn.textContent='\uD83D\uDCBE';btn.disabled=false;},1200);}else{alert(d.error||'Error');btn.textContent='\uD83D\uDCBE';btn.disabled=false;}}).catch(function(){alert('Sin conexi\xf3n');btn.textContent='\uD83D\uDCBE';btn.disabled=false;});});});
+    tb.querySelectorAll('.b4-fin').forEach(function(btn){btn.addEventListener('click',function(){if(!confirm('Finalizar PT?'))return;bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id)+'/finalizar',{usuario:usr}).then(function(d){if(d.ok)bodAudTab4();else alert(d.error||'Error');}).catch(function(){alert('Sin conexi\xf3n');});});});
+    tb.querySelectorAll('.b4-del').forEach(function(btn){btn.addEventListener('click',function(){bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),{usuario:usr,auditor:true}).then(function(d){if(d.ok)bodAudTab4();else if(d.tieneLineas){if(!confirm('Tiene '+d.count+' lineas. Borrar?'))return;bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.id),{usuario:usr,auditor:true,forzar:true}).then(function(d2){if(d2.ok)bodAudTab4();else alert(d2.error||'Error');});}else alert(d.error||'Error');}).catch(function(){alert('Sin conexi\xf3n');});});});
+  }
+  Promise.all([bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control'),bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/furgones').catch(function(){return{ok:true,rows:[]};})]).then(function(r){var mf=r[0].ok?(r[0].manifiestos||[]):[];var cg=r[1].ok?(r[1].rows||[]):[];var cgM={};cg.forEach(function(c){if(c.manifiesto_id)cgM[c.manifiesto_id]=c;});renderCtrl(mf,cgM);}).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+}
+
+// Tab 5: Papel de Trabajo
+function bodAudTab5() {
+  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
+  if(!_bodAudManifAct){tb.innerHTML='<div style="background:#fff8e1;border-radius:8px;padding:.8rem 1rem;font-size:.82rem;color:#795548">\uD83D\uDCCB Us\xe1 <strong>\u25b6 Empezar</strong> en Control de Manifiesto.<br><button class="btn btn-sm" id="b5-ctrl" style="margin-top:.4rem;font-size:.76rem">Ir a Control de Manifiesto</button></div>';var b=document.getElementById('b5-ctrl');if(b)b.addEventListener('click',function(){_bodAudTab='4-control';bodRenderAuditoria();});return;}
+  var m=_bodAudManifAct,ses=_bodAudSesion,usr=window.currentUser?window.currentUser.name:'';
+  var hdr='<div style="background:#e3f2fd;border-radius:6px;padding:.5rem .85rem;margin-bottom:.5rem;font-size:.78rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span style="font-weight:700;color:#1565c0;font-size:.84rem">'+bodEscA(m.correlativo||'PT-?')+'</span><span style="color:#888">\xb7</span><span style="background:#e3f2fd;color:#1565c0;font-size:.72rem;padding:1px 7px;border-radius:8px">'+bodEscA(m.estado||'en_proceso')+'</span>'+(m.furgon?'<span style="font-size:.73rem;color:#555">Furg\xf3n: '+bodEscA(m.furgon)+'</span>':'')+(m.licencia_hija?'<span style="font-size:.73rem;color:#555">Lic: '+bodEscA(m.licencia_hija)+'</span>':'')+'<button id="b5-rl" class="btn btn-xs" style="margin-left:auto;font-size:.71rem;background:#e8f4ff;color:#1565c0">\u21bb</button></div>';
+  var addF='<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem"><div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">+ Agregar l\xednea</div><div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap"><div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">C\xf3d. barra / SKU</label><input type="text" id="p5-barra" class="field-inp" placeholder="Escanear o escribir" autocomplete="off" style="width:150px;padding:4px 8px;font-size:.82rem" inputmode="numeric"></div><div style="flex:2;min-width:130px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label><input type="text" id="p5-desc" class="field-inp" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:.78rem;background:#f0f0f0;color:#555" readonly></div><div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">F\xedsico s/Aud.</label><input type="number" id="p5-fis" class="field-inp" value="0" min="0" step="1" style="width:68px;padding:4px 7px;font-size:.82rem;text-align:center"></div><div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label><input type="text" id="p5-tar" class="field-inp" placeholder="A01" style="width:60px;padding:4px 7px;font-size:.82rem;text-transform:uppercase"></div><div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Estatus</label><select id="p5-est" class="field-inp" style="padding:4px 7px;font-size:.8rem"><option value="No auditado">No auditado</option><option value="Auditado">Auditado</option></select></div><button class="btn btn-sm" id="p5-add" style="background:#1565c0;color:#fff;font-size:.76rem;padding:5px 14px;align-self:flex-end">+ Agregar</button><span id="p5-msg" style="font-size:.76rem;align-self:center"></span></div></div>';
+  tb.innerHTML=hdr+addF+'<div id="p5-tbl"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
+  function cS(c952,fis,aud){var c=Number(c952)||0,f=Number(fis)||0,d=c-f,seg=d===0?'Cuadrado':d<0?'Solicitar traslado a 952':'Se queda en bols\xf3n',segC=d===0?'#1e7e34':d<0?'#c0392b':'#e65100';return{dif:d,seg:seg,segC:segC,difPost:aud?0:d,cantManif:aud?f:c};}
+  function lF(){
+    var tEl=document.getElementById('p5-tbl');if(!tEl)return;
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo?manifiesto_id='+encodeURIComponent(m.id)).then(function(d){
+      var filas=d.ok?(d.rows||[]):[];
+      if(!filas.length){tEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin l\xedneas. Agrega SKUs arriba.</div>';return;}
+      var h='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:880px;font-size:.76rem"><thead><tr><th>SKU</th><th>Nombre</th><th class="tc">AI</th><th class="tc">Estado</th><th class="tc">952</th><th class="tc">F\xedsico</th><th class="tc">Dif.</th><th>Seguimiento</th><th class="tc">TR999</th><th class="tc">Dif.pv.</th><th>Tarima</th><th>Furg.</th><th>Lic.</th><th class="tc">Cant.M.</th><th class="tc">Acci\xf3n</th></tr></thead><tbody>';
+      filas.forEach(function(f,idx){var est=f.estado_papel||'No auditado',aud=est==='Auditado'||!!f.validado,cv=cS(f.cantidad_952,f.fisico_auditoria,aud);h+='<tr data-sku="'+bodEscA(f.sku)+'" data-c952="'+Number(f.cantidad_952||0)+'"><td style="font-weight:600">'+bodEscA(f.sku||'')+'</td><td style="font-size:.74rem">'+bodEscA(f.nombre||'--')+'</td><td class="tc" style="color:#888;font-size:.72rem">AI-'+(idx+1)+'</td><td class="tc"><select class="p5-sel field-inp" data-sku="'+bodEscA(f.sku)+'" style="font-size:.72rem;padding:2px 4px"><option value="No auditado"'+(est==='No auditado'?' selected':'')+'>No auditado</option><option value="Auditado"'+(est==='Auditado'?' selected':'')+'>Auditado</option></select></td><td class="tc">'+Number(f.cantidad_952||0)+'</td><td class="tc"><input type="number" class="p5fi field-inp" data-sku="'+bodEscA(f.sku)+'" data-c952="'+Number(f.cantidad_952||0)+'" value="'+Number(f.fisico_auditoria||0)+'" min="0" step="1" style="width:58px;padding:2px 4px;font-size:.78rem;text-align:center"></td><td class="tc p5d" style="font-weight:600;color:'+cv.segC+'">'+cv.dif+'</td><td class="p5s" style="font-size:.75rem;color:'+cv.segC+'">'+bodEscA(cv.seg)+'</td><td class="tc" style="font-size:.72rem">'+bodEscA(m.destino_tr999||'--')+'</td><td class="tc p5dp" style="font-weight:600;color:'+cv.segC+'">'+cv.difPost+'</td><td style="font-size:.73rem;color:#888">'+bodEscA(f.tarimas||'--')+'</td><td style="font-size:.73rem">'+bodEscA(m.furgon||'--')+'</td><td style="font-size:.73rem">'+bodEscA(m.licencia_hija||'--')+'</td><td class="tc p5cm" style="font-weight:600">'+cv.cantManif+'</td><td class="tc"><button class="btn btn-xs p5q" data-sku="'+bodEscA(f.sku)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Quitar</button></td></tr>';});
+      h+='</tbody></table></div>';tEl.innerHTML=h;
+      tEl.querySelectorAll('.p5-sel').forEach(function(sel){sel.addEventListener('change',function(){var tr=sel.closest('tr'),a2=sel.value==='Auditado',c952=Number(tr.dataset.c952||0),fis2=Number(tr.querySelector('.p5fi').value)||0,cv2=cS(c952,fis2,a2);tr.querySelector('.p5d').textContent=cv2.dif;tr.querySelector('.p5d').style.color=cv2.segC;tr.querySelector('.p5s').textContent=cv2.seg;tr.querySelector('.p5s').style.color=cv2.segC;tr.querySelector('.p5dp').textContent=cv2.difPost;tr.querySelector('.p5cm').textContent=cv2.cantManif;bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{manifiesto_id:m.id,skus:[{sku:sel.dataset.sku,estado_papel:sel.value,validado:a2,validado_por:a2?usr:'',fisico_auditoria:fis2,diferencia:cv2.dif,seguimiento:cv2.seg,cantidad_manifiesto:cv2.cantManif}]}).then(function(d){if(!d.ok)alert(d.error||'Error');}).catch(function(){});});});
+      tEl.querySelectorAll('.p5fi').forEach(function(inp){inp.addEventListener('input',function(){var tr=inp.closest('tr'),c952=Number(inp.dataset.c952||0),fis=Number(inp.value)||0,aud=tr.querySelector('.p5-sel').value==='Auditado',cv3=cS(c952,fis,aud);tr.querySelector('.p5d').textContent=cv3.dif;tr.querySelector('.p5d').style.color=cv3.segC;tr.querySelector('.p5s').textContent=cv3.seg;tr.querySelector('.p5s').style.color=cv3.segC;tr.querySelector('.p5dp').textContent=cv3.difPost;tr.querySelector('.p5cm').textContent=cv3.cantManif;});inp.addEventListener('change',function(){var sku=inp.dataset.sku,tr=inp.closest('tr'),c952=Number(inp.dataset.c952||0),fis=Number(inp.value)||0,aud=tr.querySelector('.p5-sel').value==='Auditado',cv4=cS(c952,fis,aud);bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{manifiesto_id:m.id,skus:[{sku:sku,fisico_auditoria:fis,diferencia:cv4.dif,seguimiento:cv4.seg,cantidad_manifiesto:cv4.cantManif}]}).then(function(d){if(!d.ok)alert(d.error||'Error');}).catch(function(){});});});
+      tEl.querySelectorAll('.p5q').forEach(function(btn){btn.addEventListener('click',function(){if(!confirm('Quitar SKU '+btn.dataset.sku+'?'))return;bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo-sku',{manifiesto_id:m.id,sku:btn.dataset.sku}).then(function(d){if(d.ok)lF();else alert(d.error||'Error');}).catch(function(){alert('Sin conexi\xf3n');});});});
+    }).catch(function(){if(tEl)tEl.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+  }
+  lF();
+  var rB=document.getElementById('b5-rl');if(rB)rB.addEventListener('click',lF);
+  var bI=document.getElementById('p5-barra'),dI=document.getElementById('p5-desc'),_t5=null;
+  function lkB(v){bodFetch('GET','/api/bod/barra/'+encodeURIComponent(v)).then(function(d){if(d&&d.ok&&d.sku){if(dI)dI.value=d.descripcion||'';}else{bodFetch('GET','/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(v.toUpperCase())).then(function(d2){if(d2&&d2.ok&&d2.resultados&&d2.resultados.length&&dI)dI.value=d2.resultados[0].descripcion||'';}).catch(function(){});}}).catch(function(){});}
+  if(bI){bI.addEventListener('input',function(){clearTimeout(_t5);var v=bI.value.trim();if(v.length>=3)_t5=setTimeout(function(){lkB(v);},500);});bI.addEventListener('blur',function(){var v=bI.value.trim();if(v)lkB(v);});}
+  var btnA=document.getElementById('p5-add');
+  if(btnA)btnA.addEventListener('click',function(){
+    var sku=(bI&&bI.value||'').trim().toUpperCase(),msg=document.getElementById('p5-msg'),fis=Number((document.getElementById('p5-fis')||{value:0}).value)||0,tar=((document.getElementById('p5-tar')||{value:''}).value||'').trim().toUpperCase(),est=(document.getElementById('p5-est')||{value:'No auditado'}).value,nombre=dI?dI.value:'';
+    if(!sku){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 SKU o barra.</span>';return;}
+    var teo=_bodAudTeorico[sku]||null,cant952=teo?teo.cantidad:0;
+    if(msg)msg.innerHTML='<span style="color:#888">Guardando\u2026</span>';btnA.disabled=true;
+    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{manifiesto_id:m.id,skus:[{sku:sku,nombre:nombre||'',cantidad_952:cant952,tarimas:tar,estado_papel:est,validado:est==='Auditado',validado_por:est==='Auditado'?usr:'',fisico_auditoria:fis,diferencia:cant952-fis,seguimiento:'',cantidad_manifiesto:est==='Auditado'?fis:cant952}]}).then(function(d){if(d.ok){if(msg)msg.innerHTML='<span style="color:#1e7e34">\u2705 '+sku+'</span>';if(bI)bI.value='';if(dI)dI.value='';if(document.getElementById('p5-fis'))document.getElementById('p5-fis').value='0';if(document.getElementById('p5-tar'))document.getElementById('p5-tar').value='';if(document.getElementById('p5-est'))document.getElementById('p5-est').value='No auditado';if(bI)bI.focus();lF();}else{if(msg)msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';}btnA.disabled=false;}).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';btnA.disabled=false;});
+  });
+  if(bI)bI.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnA)btnA.click();});
+}
+
+window.bodRenderAuditoria = bodRenderAuditoria;
+
+})(); // FIN BOD MODULE
 </script>
 
 </body>
