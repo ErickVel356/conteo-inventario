@@ -2364,6 +2364,11 @@ var _supaTimer = null;
     }
     var prEl = document.getElementById('pg-rgis-nombre');
     if(prEl) prEl.style.display = 'none';
+    // Mostrar main-wrap y user badge (normalmente lo hace el handler del botón Entrar)
+    document.getElementById('pg-login').style.display = 'none';
+    document.getElementById('main-wrap').style.display = '';
+    document.getElementById('user-badge').textContent = '🔍 ' + nombre;
+    document.getElementById('fecha').textContent = new Date().toLocaleDateString('es',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
     if(typeof afterLogin === 'function') afterLogin();
   }
   if(btn)  btn.addEventListener('click', confirmar);
