@@ -406,12 +406,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <option>Jeffry Telon</option><option>Bianca Montenegro</option>
         </optgroup>
         <!-- BOD: operadores de bodega — visible siempre, rol se asigna en JS -->
-        <optgroup label="Bodega CDG" id="login-optgroup-bodega">
-          <option>Huvaldo Pérez</option><option>Ader Chávez</option>
-          <option>Angie Suar</option><option>Duma Pérez</option>
-          <option>Edgar Soto</option>
-          <option>Alejandra Galeros</option><option>Sharon Hernández</option>
-        </optgroup>
       </select>
     </div>
     <div id="login-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
@@ -424,6 +418,24 @@ textarea.field-inp{resize:vertical;min-height:72px}
 <!-- ══════════════════════════════════════════════════════════════
      SHELL — visible tras login
 ══════════════════════════════════════════════════════════════ -->
+    <!-- RGIS: Pantalla nombre real obligatorio -->
+    <div id="pg-rgis-nombre" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+      <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+        <div style="text-align:center;margin-bottom:1.2rem">
+          <div style="font-size:2rem;margin-bottom:6px">&#128100;</div>
+          <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:2px">Identificaci&oacute;n RGIS</h2>
+          <p style="font-size:.83rem;color:#888">Ingresaste como <strong id="rgis-op-label">Operador ?</strong></p>
+        </div>
+        <label style="font-size:.85rem;font-weight:600;display:block;margin-bottom:.4rem">Tu nombre completo <span style="color:#c0392b">*</span></label>
+        <input type="text" id="rgis-nombre-real" placeholder="Ej: Carlos L&oacute;pez"
+          style="width:100%;padding:.6rem .8rem;font-size:.95rem;border:1.5px solid #ddd;border-radius:8px;box-sizing:border-box;margin-bottom:.4rem"
+          autocomplete="off" autocorrect="off" autocapitalize="words">
+        <div id="rgis-nombre-err" style="color:#c0392b;font-size:.8rem;margin-bottom:.5rem;display:none">El nombre es obligatorio.</div>
+        <button id="rgis-nombre-btn" style="width:100%;padding:.7rem;font-size:.95rem;font-weight:700;background:#111;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-top:.3rem">Continuar &rarr;</button>
+        <button id="rgis-nombre-volver" style="width:100%;padding:.5rem;font-size:.83rem;background:none;border:none;color:#888;cursor:pointer;margin-top:.4rem">&larr; Volver a selecci&oacute;n</button>
+      </div>
+    </div>
+
 <div id="main-wrap" style="display:none">
 
   <!-- TOPBAR GLOBAL -->
@@ -475,23 +487,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
     <!-- ONLINE BAR (solo supervisores) -->
     <div id="online-bar"></div>
 
-    <!-- RGIS: Pantalla nombre real obligatorio -->
-    <div id="pg-rgis-nombre" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
-      <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-        <div style="text-align:center;margin-bottom:1.2rem">
-          <div style="font-size:2rem;margin-bottom:6px">&#128100;</div>
-          <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:2px">Identificaci&oacute;n RGIS</h2>
-          <p style="font-size:.83rem;color:#888">Ingresaste como <strong id="rgis-op-label">Operador ?</strong></p>
-        </div>
-        <label style="font-size:.85rem;font-weight:600;display:block;margin-bottom:.4rem">Tu nombre completo <span style="color:#c0392b">*</span></label>
-        <input type="text" id="rgis-nombre-real" placeholder="Ej: Carlos L&oacute;pez"
-          style="width:100%;padding:.6rem .8rem;font-size:.95rem;border:1.5px solid #ddd;border-radius:8px;box-sizing:border-box;margin-bottom:.4rem"
-          autocomplete="off" autocorrect="off" autocapitalize="words">
-        <div id="rgis-nombre-err" style="color:#c0392b;font-size:.8rem;margin-bottom:.5rem;display:none">El nombre es obligatorio.</div>
-        <button id="rgis-nombre-btn" style="width:100%;padding:.7rem;font-size:.95rem;font-weight:700;background:#111;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-top:.3rem">Continuar &rarr;</button>
-        <button id="rgis-nombre-volver" style="width:100%;padding:.5rem;font-size:.83rem;background:none;border:none;color:#888;cursor:pointer;margin-top:.4rem">&larr; Volver a selecci&oacute;n</button>
-      </div>
-    </div>
+
 
     <!-- ── PÁGINA: MENÚ PRINCIPAL ─────────────────────────────── -->
     <div id="pg-menu" class="page active">
@@ -1935,6 +1931,10 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   // para evitar ReferenceError en strict mode por cross-scope.
   if(typeof window.cdgv2Cleanup === 'function') window.cdgv2Cleanup();
   if(typeof window.bodCleanup === 'function') window.bodCleanup();
+  // FIX (sab 13-jun-2026): limpiar variables RGIS al salir
+  window._rgisOperadorGenerico = null;
+  var _rgisScreen = document.getElementById('pg-rgis-nombre');
+  if(_rgisScreen) _rgisScreen.style.display = 'none';
   lastVersion = -1;
   window.serverLocks = {};
   window.ACCESS_SCOPE = 'full';
@@ -2372,6 +2372,7 @@ var _supaTimer = null;
     var prEl = document.getElementById('pg-rgis-nombre');
     if(prEl) prEl.style.display = 'none';
     window.currentUser = null;
+    window._rgisOperadorGenerico = null;
     var pgL = document.getElementById('pg-login'); if(pgL) pgL.style.display='flex';
   });
 })();
