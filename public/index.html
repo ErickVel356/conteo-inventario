@@ -2007,6 +2007,8 @@ function afterLogin(){
     var _mcBod = document.getElementById('mc-bodega');
     if(_mcBod) _mcBod.style.display = 'none'; // RGIS no ve Bodega CDG
     navTo('pg-menu','📦 Conteo de Inventario');
+    var _mgc = document.getElementById('menu-grid-cards'); // revelar cards
+    if(_mgc) _mgc.style.visibility = '';
     updateSubmenúCounts();
     return;
   }
