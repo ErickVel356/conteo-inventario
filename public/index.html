@@ -2003,7 +2003,10 @@ function afterLogin(){
   }
   // RGIS: entrar directo a Hamilton sin ver menú principal
   if(currentUser.role === 'rgis'){
-    navTo('pg-hamilton','Conteos Hamilton');
+    // FIX (sab 13-jun-2026): RGIS accede a Hamilton + CDG desde el menu principal
+    var _mcBod = document.getElementById('mc-bodega');
+    if(_mcBod) _mcBod.style.display = 'none'; // RGIS no ve Bodega CDG
+    navTo('pg-menu','📦 Conteo de Inventario');
     updateSubmenúCounts();
     return;
   }
