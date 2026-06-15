@@ -10467,32 +10467,26 @@ function bodRenderAudTabs(el){
 
 // ── Selector de sesión inline (para Tabs 3/4/5) ─────────────────────────
 function bodAudInlineSesionPicker(tb, onSelect){
-  tb.innerHTML='<div style="color:#888;font-size:.82rem;margin-bottom:.5rem">Seleccioná la licencia bolsón para esta pestaña:</div>'
-    +'<div id="bod-inline-ses-wrap" style="display:flex;flex-wrap:wrap;gap:.4rem"><div style="color:#aaa;font-size:.78rem">Cargando…</div></div>';
+  // Auto-selecciona silenciosamente la sesión más reciente.
+  // No muestra picker al usuario — el Word no lo describe.
+  tb.innerHTML='<div style="color:#888;font-size:.81rem">Cargando…</div>';
   bodFetch('GET','/api/bod/sesiones?limit=50').then(function(d){
-    var wrap=document.getElementById('bod-inline-ses-wrap'); if(!wrap) return;
     var ses=d.ok?(d.sesiones||[]):[];
-    if(!ses.length){ wrap.innerHTML='<div style="color:#aaa;font-size:.78rem">Sin sesiones. Creá una en Captura de Tarima.</div>'; return; }
-    var h='';
-    ses.forEach(function(s){
-      h+='<button class="b-inline-ses" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha_trabajo||'')+'"'
-        +' style="background:#fff;border:1px solid #c5cae9;border-radius:6px;padding:.4rem .7rem;cursor:pointer;font-size:.78rem">'
-        +'<strong style="color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</strong>'
-        +' <span style="color:#999">'+bodEscA(bodFmtFecha(s.fecha_trabajo||''))+'</span>'
-        +'</button>';
+    if(!ses.length){
+      tb.innerHTML='<div style="color:#aaa;font-size:.81rem;padding:.4rem">Sin sesiones. Creá una primero en Captura de Tarima.</div>';
+      return;
+    }
+    // Usar la más reciente (el endpoint ya devuelve orden desc)
+    var s=ses[0];
+    _bodAudSesion={id:s.id,licencia_id:s.licencia_id||s.id,fecha_trabajo:s.fecha_trabajo||''};
+    bodCargarTeorico(_bodAudSesion.id, function(){
+      var elMain=document.getElementById('bod-aud-contenido');
+      if(elMain) bodRenderAudTabs(elMain);
+      onSelect(_bodAudSesion);
     });
-    wrap.innerHTML=h;
-    wrap.querySelectorAll('.b-inline-ses').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        _bodAudSesion={id:btn.dataset.id,licencia_id:btn.dataset.lic,fecha_trabajo:btn.dataset.fecha};
-        bodCargarTeorico(_bodAudSesion.id, function(){
-          var elMain=document.getElementById('bod-aud-contenido');
-          if(elMain) bodRenderAudTabs(elMain);
-          onSelect(_bodAudSesion);
-        });
-      });
-    });
-  }).catch(function(){ });
+  }).catch(function(){
+    tb.innerHTML='<div style="color:#c0392b;font-size:.81rem">Error al cargar sesiones.</div>';
+  });
 }
 
 // ── Tab 1: Tarimas — TODAS las sesiones ─────────────────────────────────
