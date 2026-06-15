@@ -6116,7 +6116,7 @@ app.post('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
 
     // Batch upsert (Supabase: POST con Prefer merge-duplicates)
     var saved = await supabase('POST', 'bod_teorico_952', upserts,
-      '?on_conflict=sesion_id,sku');
+      '?on_conflict=sesion_id,licencia_hija,sku');
 
     // Invalidar caches
     cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
@@ -6190,11 +6190,9 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 
     if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
 
-    // FIX (jue 11-jun-2026): usar on_conflict correcto según si hay manifiesto_id
-    var onConflict = manifiesto_id
-      ? '?on_conflict=sesion_id,manifiesto_id,sku'
-      : '?on_conflict=sesion_id,licencia_hija,furgon,sku';
-    await supabase('POST', 'bod_papel_trabajo', upserts, onConflict);
+    // on_conflict usa el índice único real de la tabla: sesion_id,licencia_hija,furgon,sku
+    // manifiesto_id se almacena como dato adicional, no forma parte del unique key
+    await supabase('POST', 'bod_papel_trabajo', upserts, '?on_conflict=sesion_id,licencia_hija,furgon,sku');
 
     cacheInvalidatePrefix('bod:papel:'+sesId+':');
     res.json({ ok:true, guardados: upserts.length });
@@ -6434,9 +6432,12 @@ app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/guardar', bodGuard, asyn
     destino_tr999 = String(destino_tr999||''  ).trim().toUpperCase();
     observacion   = String(observacion||''  ).trim();
     var now = new Date().toISOString();
-    // 1. Actualizar bod_manifiestos_control con furgon + licencia_hija
+    // 1. Actualizar bod_manifiestos_control con todos los campos editables
     await supabase('PATCH','bod_manifiestos_control',
-      { furgon:furgon, licencia_hija:licencia_hija, actualizado_por:usuario, actualizado_en:now },
+      { furgon:furgon, placa:placa, marchamo:marchamo, licencia_hija:licencia_hija,
+        destino_tr999:destino_tr999, observacion:observacion,
+        auditor_lider:String(req.body.auditor_lider||'').trim(),
+        actualizado_por:usuario, actualizado_en:now },
       '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
     // 2. Upsert bod_furgon_cierres por manifiesto_id (crear si no existe, actualizar si existe)
     var existing = await supabase('GET','bod_furgon_cierres',null,
@@ -6664,7 +6665,7 @@ app.post('/api/bod/sesion/:id/teorico-952/upload', bodGuard, upload.single('file
     await supabase('DELETE','bod_teorico_952',null,delQuery);
     for(var i=0;i<upserts.length;i+=200){
       await supabase('POST','bod_teorico_952',upserts.slice(i,i+200),
-        '?on_conflict=sesion_id,sku');
+        '?on_conflict=sesion_id,licencia_hija,sku');
     }
     cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
     console.log('BOD teórico-952 upload: '+upserts.length+' SKUs sesión='+sesId+' por '+creadoPor);
