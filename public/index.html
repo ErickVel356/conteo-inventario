@@ -10411,51 +10411,38 @@ function bodRenderAuditoria(){
 window.bodRenderAuditoria = bodRenderAuditoria;
 
 function bodRenderAudSeleccion(el){
-  el.innerHTML = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.6rem">Selección de Sesión</div>'
-    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.8rem">'
-    +'<input type="text" id="bod-aud-lic" class="field-inp" placeholder="Licencia bolsón" style="width:200px;font-size:.84rem;padding:5px 10px" autocomplete="off">'
-    +'<button class="btn btn-sm btn-dark" id="bod-aud-ok">Entrar ▶</button>'
-    +'<span id="bod-aud-msg" style="font-size:.76rem"></span></div>'
-    +'<div id="bod-aud-lista"><div style="color:#888;font-size:.82rem">Cargando…</div></div>';
-
-  bodFetch('GET','/api/bod/sesiones?limit=20').then(function(d){
-    var lista = document.getElementById('bod-aud-lista'); if(!lista) return;
-    var ses = d.ok?(d.sesiones||[]):[];
-    if(!ses.length){ lista.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin sesiones activas.</div>'; return; }
-    var h='<div style="font-size:.75rem;color:#666;margin-bottom:.3rem">Sesiones activas:</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
+  el.innerHTML='<div style="color:#888;font-size:.82rem">Cargando sesiones…</div>';
+  bodFetch('GET','/api/bod/sesiones?limit=50').then(function(d){
+    var ses=d.ok?(d.sesiones||[]):[];
+    if(!ses.length){
+      el.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin sesiones activas. Creá una en Captura de Tarima.</div>';
+      return;
+    }
+    var h='<div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem">Seleccioná una licencia bolsón:</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:.5rem">';
     ses.forEach(function(s){
-      h+='<button class="btn btn-xs b-ses" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha_trabajo||'')+'" style="font-size:.76rem;background:#e3f2fd;color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</button>';
+      h+='<button class="b-ses-card" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha_trabajo||'')+'"'
+        +' style="background:#fff;border:2px solid #d0d7ff;border-radius:8px;padding:.55rem .9rem;cursor:pointer;text-align:left;min-width:160px">'
+        +'<div style="font-size:.88rem;font-weight:700;color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</div>'
+        +'<div style="font-size:.73rem;color:#888">'+bodEscA(bodFmtFecha(s.fecha_trabajo||''))+'</div>'
+        +'<div style="font-size:.72rem;color:#aaa;margin-top:2px">'+(s.total_skus||0)+' SKUs · '+(s.total_lineas||0)+' líneas</div>'
+        +'</button>';
     });
-    h+='</div>'; lista.innerHTML=h;
-    lista.querySelectorAll('.b-ses').forEach(function(btn){
+    h+='</div>';
+    el.innerHTML=h;
+    el.querySelectorAll('.b-ses-card').forEach(function(btn){
       btn.addEventListener('click',function(){
         _bodAudSesion={id:btn.dataset.id,licencia_id:btn.dataset.lic,fecha_trabajo:btn.dataset.fecha};
         _bodAudTab='4-control';
         bodCargarTeorico(_bodAudSesion.id,function(){ bodRenderAuditoria(); });
       });
     });
-  }).catch(function(){});
-
-  var btnE = document.getElementById('bod-aud-ok');
-  if(btnE) btnE.addEventListener('click',function(){
-    var lic=(document.getElementById('bod-aud-lic')||{value:''}).value.trim().toUpperCase();
-    var msg=document.getElementById('bod-aud-msg');
-    if(!lic){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';return;}
-    if(msg)msg.innerHTML='<span style="color:#888">Buscando…</span>';
-    bodFetch('GET','/api/bod/sesiones?limit=100').then(function(d){
-      var ses=d.ok?(d.sesiones||[]):[];
-      var match=ses.find(function(s){return(s.licencia_id||'').toUpperCase()===lic;});
-      if(match){
-        _bodAudSesion=match; _bodAudTab='4-control';
-        bodCargarTeorico(match.id,function(){ bodRenderAuditoria(); });
-      } else {
-        if(msg)msg.innerHTML='<span style="color:#c0392b">No se encontró sesión para '+bodEscA(lic)+'.</span>';
-      }
-    }).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexión</span>';});
+  }).catch(function(){
+    el.innerHTML='<div style="color:#c0392b;font-size:.82rem">Error al cargar sesiones.</div>';
   });
-  var inp=document.getElementById('bod-aud-lic');
-  if(inp) inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnE)btnE.click();});
 }
+
+
 
 function bodCargarTeorico(sesId, cb){
   bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/teorico-952')
@@ -11029,7 +11016,7 @@ function bodAudTab5(tb){
   ]).then(function(results){
     var mfs=results[0].ok?(results[0].manifiestos||[]):[];
     var pt=mfs.find(function(m){return m.id===mId;})||{};
-    var lineas=results[1].ok?(results[1].lineas||[]):[];
+    var lineas=results[1].ok?(results[1].rows||results[1].lineas||[]):[];
     var bloqueado=(pt.estado==='finalizado'||pt.estado==='anulado');
 
     // Header datos PT
