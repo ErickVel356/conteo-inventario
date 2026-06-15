@@ -1010,6 +1010,10 @@ textarea.field-inp{resize:vertical;min-height:72px}
               style="display:none;background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:.78rem">
               🔓 Desbloquear
             </button>
+            <button id="btn-cdgv2-editar-lic" class="btn btn-sm"
+              style="display:none;background:#e8eaf6;color:#3949ab;border:1px solid #9fa8da;font-size:.78rem">
+              ✏️ Editar
+            </button>
             <span style="font-size:.78rem;color:#888" id="cdgv2-lic-poll-ts"></span>
           </div>
         </div>
@@ -1017,6 +1021,35 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div style="margin-top:.75rem">
           <div style="font-size:.78rem;color:#555;font-weight:500;margin-bottom:6px">📷 Evidencia fotográfica</div>
           <div id="cdgv2-foto-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px"></div>
+        </div>
+      </div>
+
+      <!-- Formulario editar licencia (colapsable) -->
+      <div id="cdgv2-editar-form" style="display:none;margin-bottom:.75rem">
+        <div class="card" style="padding:.85rem 1rem;border:2px solid #9fa8da">
+          <div style="font-size:.78rem;font-weight:600;color:#3949ab;margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.3px">✏️ Editar licencia</div>
+          <div class="cdg-row" style="flex-wrap:wrap">
+            <div class="cdg-field" style="flex:2;min-width:140px">
+              <label>Correlativo / Nombre</label>
+              <input type="text" class="field-inp" id="cdgv2-edit-nombre" placeholder="Ej: U25-654321">
+            </div>
+            <div class="cdg-field" style="flex:1;min-width:100px">
+              <label>Tipo de bodega</label>
+              <select id="cdgv2-edit-tipo" class="field-inp">
+                <option value="CDG">CDG</option>
+                <option value="KTM">KTM</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div class="cdg-field" style="justify-content:flex-end;gap:6px">
+              <label>&nbsp;</label>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-sm" id="btn-cdgv2-editar-cancel" style="background:#f5f5f3;color:#555">Cancelar</button>
+                <button class="btn btn-sm btn-dark" id="btn-cdgv2-editar-ok" style="background:#3949ab;min-width:80px">Guardar</button>
+              </div>
+            </div>
+          </div>
+          <div id="cdgv2-editar-msg" style="font-size:.82rem;margin-top:.4rem"></div>
         </div>
       </div>
 
@@ -1036,6 +1069,10 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <div class="cdg-field" style="min-width:80px">
             <label>Cantidad</label>
             <input type="number" class="field-inp" id="cdgv2-add-qty" min="0" placeholder="0">
+          </div>
+          <div class="cdg-field" style="min-width:80px">
+            <label>Tarima</label>
+            <input type="number" class="field-inp" id="cdgv2-add-tarima" min="1" max="100" placeholder="1-100" inputmode="numeric">
           </div>
           <div class="cdg-field" style="min-width:90px">
             <label>Costo unit.</label>
@@ -9210,8 +9247,6 @@ function renderCdgv2Lista(licencias){
     return;
   }
   // FIX (lun 1-jun-2026, v5.2.27): deduplicar por id normalizado (toUpperCase)
-  // como segunda red. El server normaliza con trim().toUpperCase(), pero si en
-  // Supabase ya existen claves duplicadas con distinto case, el render no duplica.
   var vistos = {};
   var unicas = licencias.filter(function(l){
     var key = (l.id||'').toUpperCase();
@@ -9219,20 +9254,38 @@ function renderCdgv2Lista(licencias){
     vistos[key] = true;
     return true;
   });
-  el.innerHTML = unicas.map(function(l){
+  var html = '<div class="tbl-wrap"><table style="width:100%">'
+    +'<thead><tr>'
+    +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Correlativo</th>'
+    +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Tipo</th>'
+    +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Creado por</th>'
+    +'<th class="tc" style="padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Líneas</th>'
+    +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0">Usuarios</th>'
+    +'<th class="tc" style="padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Estado</th>'
+    +'</tr></thead><tbody>';
+
+  unicas.forEach(function(l, idx){
     var estadoColor = l.estado === 'activo' ? '#e8f5e9' : '#fce4ec';
     var estadoText  = l.estado === 'activo' ? 'Activa' : 'Cerrada';
     var estadoFg    = l.estado === 'activo' ? '#2e7d32' : '#c62828';
     var usuarios    = (l.usuarios || []).join(', ') || '—';
-    return '<div class="submenu-item cdgv2-lic-item" data-id="'+escH(l.id)+'" style="flex-direction:column;align-items:flex-start;gap:4px">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;width:100%">'
-      +'<div style="font-weight:700;font-size:.975rem">'+escH(l.id)+'</div>'
-      +'<span style="font-size:.72rem;padding:2px 9px;border-radius:10px;background:'+estadoColor+';color:'+estadoFg+';font-weight:600">'+estadoText+'</span>'
-      +'</div>'
-      +'<div style="font-size:.8rem;color:#666">'+escH(l.tipo)+' · Creado por '+escH(l.creadoPor)+'</div>'
-      +'<div style="font-size:.78rem;color:#888">'+l.totalLineas+' líneas · Usuarios: '+escH(usuarios)+'</div>'
-      +'</div>';
-  }).join('');
+    var rowBg       = idx % 2 === 0 ? '#fff' : '#fafaf8';
+    html += '<tr class="cdgv2-lic-item" data-id="'+escH(l.id)+'" style="background:'+rowBg+';cursor:pointer" '
+      +'onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\''+rowBg+'\'">'
+      +'<td style="padding:10px 10px;font-weight:700;font-size:.9rem;white-space:nowrap">'+escH(l.id)+'</td>'
+      +'<td style="padding:10px 10px;font-size:.82rem;color:#555;white-space:nowrap">'+escH(l.tipo)+'</td>'
+      +'<td style="padding:10px 10px;font-size:.82rem;color:#666;white-space:nowrap">'+escH(l.creadoPor)+'</td>'
+      +'<td class="tc" style="padding:10px 10px;font-size:.88rem;font-weight:600">'+l.totalLineas+'</td>'
+      +'<td style="padding:10px 10px;font-size:.78rem;color:#888">'+escH(usuarios)+'</td>'
+      +'<td class="tc" style="padding:10px 10px">'
+        +'<span style="font-size:.72rem;padding:3px 10px;border-radius:10px;background:'+estadoColor+';color:'+estadoFg+';font-weight:600;white-space:nowrap">'+estadoText+'</span>'
+      +'</td>'
+      +'</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+
   el.querySelectorAll('.cdgv2-lic-item').forEach(function(item){
     item.addEventListener('click', function(){
       cdgv2AbrirLicencia(item.dataset.id);
@@ -9358,7 +9411,7 @@ function cdgv2PollearLicencia(licenciaId, esPrimerCarga){
 
 function renderCdgv2Header(meta){
   if(!meta) return;
-  document.getElementById('cdgv2-lic-titulo').textContent = meta.id + ' · ' + meta.tipo;
+  document.getElementById('cdgv2-lic-titulo').textContent = (meta.alias ? meta.alias + ' (' + meta.id + ')' : meta.id) + ' · ' + meta.tipo;
   var finalizador = meta.finalizador || meta.creadoPor;
   document.getElementById('cdgv2-lic-meta').textContent =
     'Creado por ' + meta.creadoPor + ' · Finalizador: ' + finalizador +
@@ -9405,6 +9458,54 @@ function renderCdgv2Header(meta){
       });
     }
   }
+  // Botón editar licencia: visible para supervisores o el creador cuando activa
+  var btnEditarLic = document.getElementById('btn-cdgv2-editar-lic');
+  if(btnEditarLic) {
+    var puedeEditar = meta.estado === 'activo' && (esSup || (currentUser && currentUser.name === meta.creadoPor));
+    btnEditarLic.style.display = puedeEditar ? '' : 'none';
+    if(!btnEditarLic._handlerOk) {
+      btnEditarLic._handlerOk = true;
+      btnEditarLic.addEventListener('click', function(){
+        var form = document.getElementById('cdgv2-editar-form');
+        if(!form) return;
+        var meta2 = cdgv2LicenciaActual;
+        if(meta2){
+          document.getElementById('cdgv2-edit-nombre').value = meta2.alias || meta2.id || '';
+          var tipoSel = document.getElementById('cdgv2-edit-tipo');
+          if(tipoSel) tipoSel.value = meta2.tipo || 'CDG';
+        }
+        document.getElementById('cdgv2-editar-msg').innerHTML = '';
+        form.style.display = form.style.display === 'none' ? '' : 'none';
+      });
+    }
+  }
+  var btnEditarCancel = document.getElementById('btn-cdgv2-editar-cancel');
+  if(btnEditarCancel && !btnEditarCancel._handlerOk) {
+    btnEditarCancel._handlerOk = true;
+    btnEditarCancel.addEventListener('click', function(){
+      document.getElementById('cdgv2-editar-form').style.display = 'none';
+    });
+  }
+  var btnEditarOk = document.getElementById('btn-cdgv2-editar-ok');
+  if(btnEditarOk && !btnEditarOk._handlerOk) {
+    btnEditarOk._handlerOk = true;
+    btnEditarOk.addEventListener('click', function(){
+      if(!currentUser || !cdgv2LicenciaActual) return;
+      var nuevoNombre = (document.getElementById('cdgv2-edit-nombre').value||'').trim();
+      var nuevoTipo   = (document.getElementById('cdgv2-edit-tipo').value||'').trim();
+      var msgEl = document.getElementById('cdgv2-editar-msg');
+      if(!nuevoNombre){ msgEl.innerHTML = '<span style="color:#c0392b">Ingresá el correlativo.</span>'; return; }
+      msgEl.innerHTML = '<span style="color:#888">Guardando…</span>';
+      cdgv2Fetch('PATCH', '/api/cdg/v2/'+cdgv2LicenciaActual.id+'/meta',
+        { usuario: currentUser.name, alias: nuevoNombre, tipo: nuevoTipo })
+        .then(function(d){
+          if(!d.ok){ msgEl.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return; }
+          msgEl.innerHTML = '<span style="color:#1e7e34">✓ Guardado.</span>';
+          document.getElementById('cdgv2-editar-form').style.display = 'none';
+          cdgv2PollearLicencia(cdgv2LicenciaActual.id, false);
+        }).catch(function(){ msgEl.innerHTML = '<span style="color:#c0392b">Sin conexión</span>'; });
+    });
+  }
   // Form agregar: ocultar si cerrada
   document.getElementById('cdgv2-add-form').style.display = meta.estado === 'activo' ? '' : 'none';
 }
@@ -9430,8 +9531,10 @@ function renderCdgv2Lineas(){
     +'<th>Descripción</th>'
     +'<th class="tc" style="min-width:60px">Cant.</th>'
     +'<th class="tc" style="min-width:72px">Costo Q</th>'
+    +'<th class="tc" style="min-width:60px">Tarima</th>'
     +'<th class="tc" style="min-width:80px">Evidencia</th>'
     +'<th style="min-width:110px">Usuario / Hora</th>'
+    +'<th class="tc" style="min-width:100px">Auditado</th>'
     +'<th class="tc" style="min-width:44px">Acción</th>'
     +'</tr></thead><tbody>';
 
@@ -9471,14 +9574,30 @@ function renderCdgv2Lineas(){
         +' title="Eliminar línea">🗑</button>'
       : '';
 
+    var tarimaFmt  = l.tarima != null ? String(l.tarima) : '—';
+    var auditado   = l.auditado_manual || '';
+    var audBg      = auditado === 'Auditado' ? '#e8f5e9' : auditado === 'No Auditado' ? '#fdecea' : '#f5f5f3';
+    var audFg      = auditado === 'Auditado' ? '#2e7d32' : auditado === 'No Auditado' ? '#c0392b' : '#888';
+    var audSelect  = !cerrada
+      ? '<select class="cdgv2-auditado-sel" data-id="'+escH(l.id)+'"'
+        +' style="font-size:.72rem;border:1px solid #ddd;border-radius:5px;padding:2px 4px;'
+        +'background:'+audBg+';color:'+audFg+';cursor:pointer;font-weight:600">'
+        +'<option value="">—</option>'
+        +'<option value="Auditado"'+(auditado==='Auditado'?' selected':'')+'>Auditado</option>'
+        +'<option value="No Auditado"'+(auditado==='No Auditado'?' selected':'')+'>No Auditado</option>'
+        +'</select>'
+      : '<span style="font-size:.72rem;padding:2px 7px;border-radius:5px;background:'+audBg+';color:'+audFg+';font-weight:600">'+(auditado||'—')+'</span>';
+
     h += '<tr'+rowCls+'>'
       +'<td style="font-weight:700;font-size:.85rem;white-space:nowrap">'+escH(l.sku)+'</td>'
       +'<td style="font-size:.82rem;color:#333">'+escH(l.descripcion||'—')+'</td>'
       +'<td class="tc" style="font-weight:600;font-size:.88rem">'+Number(l.cantidad).toLocaleString('es-GT')+'</td>'
       +'<td class="tc" style="font-size:.8rem;color:#555;white-space:nowrap">'+costoFmt+'</td>'
+      +'<td class="tc" style="font-size:.85rem;font-weight:600;color:#555">'+escH(tarimaFmt)+'</td>'
       +'<td class="tc" style="white-space:nowrap">'+evidenciaCell+'</td>'
       +'<td style="font-size:.74rem;color:#888;white-space:nowrap">'
         +escH(l.autor)+'<br><span style="font-size:.7rem;color:#bbb">'+tsShort+'</span></td>'
+      +'<td class="tc">'+audSelect+'</td>'
       +'<td class="tc">'+btnDel+'</td>'
       +'</tr>';
   });
@@ -9501,7 +9620,25 @@ function renderCdgv2Lineas(){
     });
   });
 
-  // Handler agregar foto por línea — idéntico al anterior
+  // Handler cambio auditado_manual
+  el.querySelectorAll('.cdgv2-auditado-sel').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      var lid   = sel.dataset.id;
+      var valor = sel.value;
+      var lmeta = cdgv2LicenciaActual;
+      var linea = cdgv2Lineas.find(function(x){ return x.id === lid; });
+      if(!linea || !currentUser) return;
+      // Actualizar visualmente de inmediato
+      var bg = valor==='Auditado'?'#e8f5e9':valor==='No Auditado'?'#fdecea':'#f5f5f3';
+      var fg = valor==='Auditado'?'#2e7d32':valor==='No Auditado'?'#c0392b':'#888';
+      sel.style.background = bg; sel.style.color = fg;
+      cdgv2Fetch('PATCH', '/api/cdg/v2/'+(lmeta?lmeta.id:'?')+'/linea/'+lid,
+        { usuario: linea.autor, auditado_manual: valor })
+        .then(function(d){
+          if(!d.ok) alert(d.error||'Error al guardar estado auditado');
+        }).catch(function(){ alert('Sin conexión'); });
+    });
+  });
   el.querySelectorAll('.cdgv2-add-foto-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(!currentUser || !cdgv2LicenciaActual) return;
@@ -9547,16 +9684,20 @@ function renderCdgv2Fotos(meta){
   var labels  = ['MARCHAMO','MANIFIESTO','PLACA FURGÓN','OTRO','OTRO 2'];
   var fotos   = meta.fotosEncabezado || [];
   var cerrada = meta.estado === 'cerrado';
-  // Reusar patrón idéntico a CDG v1 (renderCDGFotoGrid):
-  // input[type=file][accept="image/*"] sin capture forzado → el dispositivo
-  // ofrece cámara y galería según sus propias capacidades.
   grid.innerHTML = labels.map(function(lbl, i){
     var url = fotos[i] || '';
     if(url) {
-      return '<div class="cdg-foto-slot has-photo" data-idx="'+i+'">'
-        +'<img src="'+escH(url)+'" alt="'+escH(lbl)+'">'
+      // Foto existente: mostrar miniatura + botón de reemplazar si no está cerrada
+      var reemplazarBtn = !cerrada
+        ? '<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);'
+          +'text-align:center;padding:3px 0;font-size:.62rem;color:#fff;cursor:pointer" '
+          +'class="cdg-foto-replace-overlay" data-idx="'+i+'">✏️ Cambiar</div>'
+        : '';
+      return '<div class="cdg-foto-slot has-photo" data-idx="'+i+'" style="position:relative">'
+        +'<img src="'+escH(url)+'" alt="'+escH(lbl)+'"">'
         +'<div class="slot-label-overlay">'+escH(lbl)+'</div>'
-        // Borrar foto no implementado en esta versión (server no soporta reemplazar array)
+        +reemplazarBtn
+        +((!cerrada) ? '<input type="file" accept="image/*" style="display:none" class="cdg-foto-replace-inp" data-idx="'+i+'">' : '')
         +'</div>';
     }
     if(cerrada) {
@@ -9571,24 +9712,33 @@ function renderCdgv2Fotos(meta){
 
   if(cerrada) return;
 
-  // Wiring igual a CDG v1: click en slot → abrir file picker
+  // Click en slot vacío → abrir file picker para agregar nueva foto
   grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
     var inp = slot.querySelector('input[type=file]');
     if(!inp) return;
-    slot.addEventListener('click', function(e){
-      if(e.target.classList && e.target.classList.contains('slot-del')) return;
-      inp.click();
-    });
+    // Slots vacíos: click en toda la tarjeta abre el picker
+    if(!slot.classList.contains('has-photo')) {
+      slot.addEventListener('click', function(e){
+        inp.click();
+      });
+    }
     inp.addEventListener('change', function(){
       if(!this.files[0]) return;
       var idx = parseInt(this.dataset.idx);
+      var isReplace = slot.classList.contains('has-photo');
       slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-      // safeRefId: mismo patrón de sanitización que CDG v1 (sin espacios ni chars especiales)
       var safeId = cdgv2SafeRefId(meta.id);
       window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
         .then(function(fotoUrl){
-          return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
-            { usuario: currentUser.name, fotos: [fotoUrl] });
+          if(isReplace){
+            // Reemplazar foto en slot específico
+            return cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/fotos-encabezado-slot',
+              { usuario: currentUser.name, idx: idx, foto: fotoUrl });
+          } else {
+            // Agregar nueva foto
+            return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
+              { usuario: currentUser.name, fotos: [fotoUrl] });
+          }
         })
         .then(function(d){
           if(!d.ok) alert(d.error||'Error al guardar foto');
@@ -9601,8 +9751,17 @@ function renderCdgv2Fotos(meta){
     });
   });
 
-  // Nota: borrar foto de encabezado no implementado en v1 de CDG v2
-  // (requiere que el server soporte reemplazar el array completo con lock).
+  // Click en overlay "Cambiar" de foto existente → abrir input de reemplazo
+  grid.querySelectorAll('.cdg-foto-replace-overlay').forEach(function(overlay){
+    overlay.addEventListener('click', function(e){
+      e.stopPropagation();
+      var idx = parseInt(overlay.dataset.idx);
+      var slot = grid.querySelector('.cdg-foto-slot[data-idx="'+idx+'"]');
+      if(!slot) return;
+      var inp = slot.querySelector('.cdg-foto-replace-inp');
+      if(inp) inp.click();
+    });
+  });
 }
 
 /* ── HALLAZGOS CDG v2 ───────────────────────────────────────────── */
@@ -9871,6 +10030,8 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
   var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');
   var costoUnit = costoRaw ? parseFloat(costoRaw) : null;
+  var tarimaRaw = (document.getElementById('cdgv2-add-tarima').value||'').trim();
+  var tarima    = tarimaRaw ? parseInt(tarimaRaw) : null;
   var msg  = document.getElementById('cdgv2-add-msg');
   if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
   // Validar que el SKU fue consultado y existe antes de guardar
@@ -9888,6 +10049,7 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
     usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
     costoUnit: costoUnit,
+    tarima: tarima,
     fotos: cdgv2AddFotos.slice()
   }).then(function(d){
     if(!d.ok && !d.aviso){
@@ -9900,6 +10062,7 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
     document.getElementById('cdgv2-add-desc').placeholder = 'Ingresá el SKU primero';
     document.getElementById('cdgv2-add-qty').value   = '';
     document.getElementById('cdgv2-add-costo').value = '';
+    document.getElementById('cdgv2-add-tarima').value = '';
     document.getElementById('cdgv2-add-desc-auto').textContent = '';
     cdgv2SkuValidado     = null;
     cdgv2SkuValidadoPara = '';
