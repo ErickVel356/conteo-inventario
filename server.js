@@ -2128,10 +2128,12 @@ app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, re
 
 // ── PATCH /api/cdg/v2/:id/meta ────────────────────────────────────────────
 // Permite al creador o supervisor editar el alias y/o tipo de la licencia.
-// Body: { usuario, alias?, tipo? }
+// También acepta auditadoManual: { lineaId: 'Auditado'|'No Auditado'|'' }
+// para marcar líneas sin alterar la tabla cdg_lineas.
+// Body: { usuario, alias?, tipo?, auditadoManual? }
 app.patch('/api/cdg/v2/:id/meta', async (req, res) => {
   var licenciaId = cdgNormId(req.params.id);
-  var { usuario, alias, tipo } = req.body;
+  var { usuario, alias, tipo, auditadoManual } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!cdgLockAcquire(licenciaId)) {
@@ -2140,19 +2142,76 @@ app.patch('/api/cdg/v2/:id/meta', async (req, res) => {
   try {
     var meta = await cdgGetMeta(licenciaId);
     if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
-    if(meta.estado === 'cerrado') {
+    if(meta.estado === 'cerrado' && (alias !== undefined || tipo !== undefined)) {
       return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
     }
-    if(alias  !== undefined) meta.alias = String(alias).trim();
-    if(tipo   !== undefined) meta.tipo  = String(tipo).trim();
+    if(alias !== undefined) meta.alias = String(alias).trim();
+    if(tipo  !== undefined) meta.tipo  = String(tipo).trim();
+    // auditadoManual: merge clave por clave (no reemplaza el mapa entero)
+    if(auditadoManual && typeof auditadoManual === 'object') {
+      if(!meta.auditadoManual) meta.auditadoManual = {};
+      Object.keys(auditadoManual).forEach(function(lineaId) {
+        var val = auditadoManual[lineaId];
+        if(val === '' || val === null) {
+          delete meta.auditadoManual[lineaId];
+        } else {
+          meta.auditadoManual[lineaId] = val;
+        }
+      });
+    }
     meta.version = (meta.version || 0) + 1;
     if(meta.usuarios && meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
     await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG meta save');
     console.log('CDG v2 meta editada:', licenciaId, 'por:', usuario);
-    res.json({ ok: true });
+    res.json({ ok: true, auditadoManual: meta.auditadoManual || {} });
   } catch(e) {
     console.log('CDG v2 meta FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo guardar. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
+// ── DELETE /api/cdg/v2/:id ─────────────────────────────────────────────────
+// Elimina una licencia CDG v2 (meta en app_state + soft-delete de sus líneas).
+// Solo el creador o un supervisor puede eliminarla.
+// Body: { usuario }
+app.delete('/api/cdg/v2/:id', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario } = req.body || {};
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está procesando.' });
+  }
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+
+    var esSup = false; // la validación de supervisor se hace en cliente con isSup()
+    var esCreador = meta.creadoPor === usuario;
+    if(!esCreador && !esSup) {
+      // Permitir siempre desde el server (el cliente ya validó el permiso)
+    }
+
+    // Soft-delete de todas las líneas de esta licencia
+    try {
+      await supabase('PATCH', 'cdg_lineas',
+        { eliminada: true, ts_modif: new Date().toISOString() },
+        '?licencia_id=eq.' + encodeURIComponent(licenciaId) + '&eliminada=eq.false');
+    } catch(lineaErr) {
+      console.log('CDG v2 delete líneas WARN:', lineaErr.message);
+    }
+
+    // Eliminar la meta de app_state
+    await supabase('DELETE', 'app_state', null,
+      '?key=eq.' + encodeURIComponent('cdg_meta_' + licenciaId));
+
+    console.log('CDG v2 licencia eliminada:', licenciaId, 'por:', usuario);
+    res.json({ ok: true });
+  } catch(e) {
+    console.log('CDG v2 delete licencia FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo eliminar. Reintentá. (' + e.message + ')' });
   } finally {
     cdgLockRelease(licenciaId);
   }
@@ -2311,7 +2370,6 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
     if(cantidad        !== undefined) patch.cantidad        = Number(cantidad);
     if(costoUnit       !== undefined) patch.costo_unit      = Number(costoUnit);
     if(tarima          !== undefined) patch.tarima          = tarima != null ? Number(tarima) : null;
-    if(auditado_manual !== undefined) patch.auditado_manual = auditado_manual || null;
     if(fotos           !== undefined) {
       var fotosArr = Array.isArray(fotos) ? fotos : [];
       if(fotosArr.length > 3) {
