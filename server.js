@@ -6511,114 +6511,426 @@ app.delete('/api/bod/sesion/:id/papel-trabajo-sku', bodGuard, async (req, res) =
 
 // ── GET /api/bod/sesion/:id/tarimas ──────────────────────────────────────
 app.get('/api/bod/sesion/:id/tarimas', bodGuard, async (req, res) => {
-  try {
-    var sesId = String(req.params.id).trim();
-    var rows  = await supabase('GET', 'bod_tarimas', null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=creado_en.asc&select=*');
-    res.json({ ok:true, rows: Array.isArray(rows) ? rows : [] });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+  // DEPRECATED (server v23): bod_tarimas no se usa — usar bod_lineas via /api/bod/sesion/:id/lineas
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
 });
+;
 
 // ── POST /api/bod/sesion/:id/tarimas ─────────────────────────────────────
 // Body: { licencia_bolson, correlativo, sku, descripcion, cantidad, estructura, operador }
 app.post('/api/bod/sesion/:id/tarimas', bodGuard, async (req, res) => {
-  try {
-    var sesId = String(req.params.id).trim();
-    var b     = req.body || {};
-    var sku   = String(b.sku||'').trim().toUpperCase();
-    var corr  = String(b.correlativo||'').trim().toUpperCase();
-    var lb    = String(b.licencia_bolson||'').trim().toUpperCase();
-    var operador = String(b.operador||'').trim();
-    if(!sku || !corr || !lb || !operador)
-      return res.status(400).json({ ok:false, error:'sku, correlativo, licencia_bolson y operador requeridos.' });
-    var row = {
-      sesion_id:       sesId,
-      licencia_bolson: lb,
-      fecha_licencia:  new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'}),
-      correlativo:     corr,
-      sku:             sku,
-      descripcion:     String(b.descripcion||'').trim(),
-      cantidad:        Number(b.cantidad)||0,
-      estructura:      String(b.estructura||'').trim(),
-      operador:        operador,
-      creado_en:       new Date().toISOString()
-    };
-    var saved = await supabase('POST', 'bod_tarimas', [row], '?select=*');
-    res.json({ ok:true, row: Array.isArray(saved)?saved[0]:null });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+  // DEPRECATED (server v23): bod_tarimas no se usa — captura via /api/bod/sesion/:id/linea
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
 });
+;
 
 // ── DELETE /api/bod/sesion/:id/tarimas/:lineId ────────────────────────────
 // Solo puede borrar el operador que creó la línea
 app.delete('/api/bod/sesion/:id/tarimas/:lineId', bodGuard, async (req, res) => {
-  try {
-    var sesId  = String(req.params.id).trim();
-    var lineId = String(req.params.lineId).trim();
-    var usuario = String((req.body||{}).usuario||'').trim();
-    // Verify ownership
-    var rows = await supabase('GET','bod_tarimas',null,
-      '?id=eq.'+encodeURIComponent(lineId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=operador');
-    if(!Array.isArray(rows)||!rows[0])
-      return res.status(404).json({ ok:false, error:'Línea no encontrada.' });
-    if(rows[0].operador !== usuario)
-      return res.status(403).json({ ok:false, error:'Solo el operador que creó la línea puede borrarla.' });
-    await supabase('DELETE','bod_tarimas',null,
-      '?id=eq.'+encodeURIComponent(lineId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
-    res.json({ ok:true });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+  // DEPRECATED (server v23): bod_tarimas no se usa — borrar via /api/bod/linea/:lineaId
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
 });
+;
 
 // ── GET /api/bod/sesion/:id/teorico ──────────────────────────────────────
 // Retorna el teórico WMS persistido para esta sesión
 app.get('/api/bod/sesion/:id/teorico', bodGuard, async (req, res) => {
-  try {
-    var sesId = String(req.params.id).trim();
-    var rows  = await supabase('GET','bod_teorico',null,
-      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc&select=*');
-    res.json({ ok:true, rows: Array.isArray(rows)?rows:[], count: Array.isArray(rows)?rows.length:0 });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+  // DEPRECATED (server v23): usar bod_teorico_952 via /api/bod/sesion/:id/teorico-952
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
 });
+;
 
 // ── POST /api/bod/sesion/:id/teorico/upload ───────────────────────────────
 // Sube Excel WMS con columnas: sku, descripcion, cantidad
 // Borra el teórico anterior y reemplaza con el nuevo
 app.post('/api/bod/sesion/:id/teorico/upload', bodGuard, upload.single('file'), async (req, res) => {
-  try {
-    var sesId  = String(req.params.id).trim();
-    var usuario = String(req.body.usuario||'').trim();
-    if(!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
-    var wb = XLSX.read(req.file.buffer, { type:'buffer' });
-    var ws = wb.Sheets[wb.SheetNames[0]];
-    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
-    if(!raw.length) return res.status(400).json({ ok:false, error:'El archivo está vacío.' });
-    // Normalizar columnas (case-insensitive)
-    var rows = [];
-    var now = new Date().toISOString();
-    raw.forEach(function(r) {
-      var keys = Object.keys(r).reduce(function(m,k){ m[k.toLowerCase().trim()]=k; return m; },{});
-      var sku = String(r[keys['sku']||keys['codigo']||keys['code']||'']||'').trim().toUpperCase();
-      var qty = Number(r[keys['cantidad']||keys['qty']||keys['quantity']||keys['cant']||'']||0);
-      var desc = String(r[keys['descripcion']||keys['description']||keys['nombre']||'']||'').trim();
-      if(sku) rows.push({ sesion_id:sesId, sku:sku, descripcion:desc, cantidad:qty,
-        subido_por:usuario, subido_en:now });
-    });
-    if(!rows.length) return res.status(400).json({ ok:false, error:'No se encontraron filas con SKU válido.' });
-    // Reemplazar teórico anterior (DELETE + INSERT)
-    await supabase('DELETE','bod_teorico',null,'?sesion_id=eq.'+encodeURIComponent(sesId));
-    // Insert en lotes de 200
-    for(var i=0;i<rows.length;i+=200){
-      await supabase('POST','bod_teorico',rows.slice(i,i+200),'?select=id');
-    }
-    console.log('BOD teórico upload: '+rows.length+' SKUs para sesión '+sesId+' por '+usuario);
-    res.json({ ok:true, procesadas:rows.length });
-  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+  // DEPRECATED (server v23): usar bod_teorico_952 via /api/bod/sesion/:id/teorico-952/upload
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
 });
+;
 
 // ── DELETE /api/bod/sesion/:id/teorico ────────────────────────────────────
 app.delete('/api/bod/sesion/:id/teorico', bodGuard, async (req, res) => {
+  // DEPRECATED (server v23): usar bod_teorico_952 via DELETE /api/bod/sesion/:id/teorico-952/all
+  res.status(501).json({ ok:false, error:'Endpoint reemplazado.' });
+});
+;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BODEGA CDG v23 — Endpoints nuevos (sab 14-jun-2026)
+//  Tablas: bod_licencia_hija (nueva), bod_teorico_952 (existente),
+//          bod_manifiestos_control, bod_papel_trabajo, bod_lineas, bod_sesiones
+//  Fórmula Diferencia: Teórico 952 − Físico s/Auditoría
+//    dif = 0  → Cuadrado
+//    dif < 0  → Sobrante físico  (PT: "Solicitar traslado a 952")
+//    dif > 0  → Faltante físico  (PT: "Se queda en bolsón")
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers locales ──────────────────────────────────────────────────────
+function bodEstadoAuditoria(dif) {
+  if(dif === 0)  return 'Cuadrado';
+  if(dif < 0)   return 'Sobrante físico';
+  return 'Faltante físico';
+}
+function bodSeguimientoPT(dif) {
+  if(dif === 0) return 'Cuadrado';
+  if(dif < 0)  return 'Solicitar traslado a 952';
+  return 'Se queda en bolsón';
+}
+// Normaliza headers de Excel (quita acentos, trim, lowercase, reemplaza espacios/puntos)
+function bodNormHeader(h) {
+  return String(h||'').toLowerCase().trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[\s.#]+/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'');
+}
+
+// ── PATCH /api/bod/linea/:lineaId/fisico-audit ────────────────────────────
+// Tab 2 Detalle: guarda Físico s/Auditoría, devuelve diferencia + estado
+// Body: { fisico_auditoria, teorico_952, usuario }
+app.patch('/api/bod/linea/:lineaId/fisico-audit', bodGuard, async (req, res) => {
+  try {
+    var linId = String(req.params.lineaId).trim();
+    var b     = req.body || {};
+    var fisico    = Number(b.fisico_auditoria);
+    var teo       = Number(b.teorico_952 || 0);
+    var usuario   = String(b.usuario || '').trim();
+    if(isNaN(fisico) || fisico < 0)
+      return res.status(400).json({ ok:false, error:'fisico_auditoria debe ser >= 0.' });
+    var rows = await supabase('GET','bod_lineas',null,
+      '?id=eq.'+encodeURIComponent(linId)+'&limit=1&select=id,sesion_id,operador');
+    if(!Array.isArray(rows)||!rows.length)
+      return res.status(404).json({ ok:false, error:'Línea no encontrada.' });
+    var dif    = teo - fisico;
+    var estado = bodEstadoAuditoria(dif);
+    var now    = new Date().toISOString();
+    await supabase('PATCH','bod_lineas',
+      { cantidad_audit: fisico, auditado: true, auditado_por: usuario,
+        ts_auditado: now, ts_modif: now },
+      '?id=eq.'+encodeURIComponent(linId));
+    invalidarCacheSesion(rows[0].sesion_id);
+    res.json({ ok:true, diferencia: dif, estado: estado, seguimiento_pt: bodSeguimientoPT(dif) });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/sesion/:id/teorico-952/upload ───────────────────────────
+// Tab 3 Carga Teórico: sube Excel WMS 952 y persiste en bod_teorico_952
+// Columnas Excel: SKU, Nombre, Cant. 952, Unidad, Exist., Disp.
+// Body (multipart): file + licencia_hija (opcional) + creado_por
+app.post('/api/bod/sesion/:id/teorico-952/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    var sesId       = String(req.params.id).trim();
+    var licenciaHija = String((req.body||{}).licencia_hija||'').trim().toUpperCase();
+    var creadoPor   = String((req.body||{}).creado_por||(req.body||{}).usuario||'').trim();
+    if(!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
+    var wb  = XLSX.read(req.file.buffer, { type:'buffer' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    if(!raw.length) return res.status(400).json({ ok:false, error:'El archivo está vacío.' });
+    // Normalizar headers
+    var keyMap = {};
+    Object.keys(raw[0]).forEach(function(k){ keyMap[bodNormHeader(k)] = k; });
+    // Mapear columnas
+    var skuCol  = keyMap['sku'] || keyMap['codigo'] || keyMap['code'];
+    var nomCol  = keyMap['nombre'] || keyMap['descripcion'] || keyMap['description'];
+    var canCol  = keyMap['cant_952'] || keyMap['cantidad_952'] || keyMap['cant952']
+               || keyMap['cantidad'] || keyMap['cant'];
+    var uniCol  = keyMap['unidad'];
+    var exiCol  = keyMap['exist'] || keyMap['existencia'] || keyMap['existencias'];
+    var disCol  = keyMap['disp'] || keyMap['disponible'] || keyMap['disponibles'];
+    if(!skuCol) return res.status(400).json({ ok:false, error:'No se encontró columna SKU en el archivo.' });
+    var now    = new Date().toISOString();
+    var upserts = [];
+    raw.forEach(function(r){
+      var sku = String(r[skuCol]||'').trim().toUpperCase();
+      if(!sku) return;
+      upserts.push({
+        sesion_id:      sesId,
+        licencia_hija:  licenciaHija || '',
+        sku:            sku,
+        nombre:         String(r[nomCol]||'').trim(),
+        cantidad_952:   Number(r[canCol])||0,
+        unidades:       Number(r[uniCol])||0,
+        existencia:     Number(r[exiCol])||0,
+        disponible:     Number(r[disCol])||0,
+        creado_por:     creadoPor,
+        actualizado_en: now
+      });
+    });
+    if(!upserts.length)
+      return res.status(400).json({ ok:false, error:'No se encontraron SKUs válidos.' });
+    // Reemplazar teórico anterior para esta sesión + licencia_hija
+    var delQuery = '?sesion_id=eq.'+encodeURIComponent(sesId);
+    if(licenciaHija) delQuery += '&licencia_hija=eq.'+encodeURIComponent(licenciaHija);
+    await supabase('DELETE','bod_teorico_952',null,delQuery);
+    for(var i=0;i<upserts.length;i+=200){
+      await supabase('POST','bod_teorico_952',upserts.slice(i,i+200),
+        '?on_conflict=sesion_id,licencia_hija,sku');
+    }
+    cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
+    console.log('BOD teórico-952 upload: '+upserts.length+' SKUs sesión='+sesId+' por '+creadoPor);
+    res.json({ ok:true, procesadas:upserts.length, subido_en:now });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/sesion/:id/teorico-952/all ────────────────────────────
+// Limpia el teórico 952 de una sesión (con confirmación desde cliente)
+app.delete('/api/bod/sesion/:id/teorico-952/all', bodGuard, async (req, res) => {
+  try {
+    var sesId        = String(req.params.id).trim();
+    var licenciaHija = String((req.body||{}).licencia_hija||'').trim().toUpperCase();
+    var delQ = '?sesion_id=eq.'+encodeURIComponent(sesId);
+    if(licenciaHija) delQ += '&licencia_hija=eq.'+encodeURIComponent(licenciaHija);
+    await supabase('DELETE','bod_teorico_952',null,delQ);
+    cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/sesion/:id/licencia-hija ─────────────────────────────────
+// Lista filas de bod_licencia_hija para la sesión (+ filtro opcional manifiesto_id)
+app.get('/api/bod/sesion/:id/licencia-hija', bodGuard, async (req, res) => {
+  try {
+    var sesId  = String(req.params.id).trim();
+    var mId    = String(req.query.manifiesto_id||'').trim();
+    var ck     = 'bod:lichija:'+sesId+':'+(mId||'*');
+    var cached = cacheGet(ck);
+    if(cached) return res.json(cached);
+    var q = '?sesion_id=eq.'+encodeURIComponent(sesId)+'&order=sku.asc&select=*';
+    if(mId) q += '&manifiesto_id=eq.'+encodeURIComponent(mId);
+    var rows = await supabase('GET','bod_licencia_hija',null,q);
+    var resp = { ok:true, rows:Array.isArray(rows)?rows:[] };
+    cacheSet(ck, resp, 30000);
+    res.json(resp);
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/sesion/:id/licencia-hija/upload ─────────────────────────
+// Sube Excel licencia hija WMS y persiste en bod_licencia_hija
+// Columnas: Número, # Ingreso, Doc. SAP, Fecha, Tipo, Lineas, Status,
+//           SKU, Nombre, Cant., Unidad, Unidades, Origen, Destino
+// Body: file + manifiesto_id + usuario
+app.post('/api/bod/sesion/:id/licencia-hija/upload', bodGuard, upload.single('file'), async (req, res) => {
   try {
     var sesId = String(req.params.id).trim();
-    await supabase('DELETE','bod_teorico',null,'?sesion_id=eq.'+encodeURIComponent(sesId));
+    var mId   = String((req.body||{}).manifiesto_id||'').trim();
+    var usu   = String((req.body||{}).usuario||'').trim();
+    if(!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
+    var wb  = XLSX.read(req.file.buffer, { type:'buffer' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    if(!raw.length) return res.status(400).json({ ok:false, error:'Archivo vacío.' });
+    // Normalizar headers
+    var km = {};
+    Object.keys(raw[0]).forEach(function(k){ km[bodNormHeader(k)] = k; });
+    var skuCol  = km['sku'] || km['codigo'] || km['code'];
+    var numCol  = km['numero'] || km['numero_licencia'] || km['licencia'];
+    var ingCol  = km['ingreso'] || km['_ingreso'];
+    var sapCol  = km['doc_sap'] || km['doc__sap'] || km['docsap'] || km['sap'];
+    var fecCol  = km['fecha'];
+    var tipCol  = km['tipo'];
+    var linCol  = km['lineas'];
+    var staCol  = km['status'] || km['estado'];
+    var nomCol  = km['nombre'] || km['descripcion'];
+    var canCol  = km['cant'] || km['cantidad'] || km['cant_'];
+    var uniCol  = km['unidad'];
+    var uniSCol = km['unidades'];
+    var oriCol  = km['origen'];
+    var desCol  = km['destino'];
+    if(!skuCol) return res.status(400).json({ ok:false, error:'No se encontró columna SKU.' });
+    var now  = new Date().toISOString();
+    var rows = [];
+    raw.forEach(function(r){
+      var sku = String(r[skuCol]||'').trim().toUpperCase();
+      if(!sku) return;
+      rows.push({
+        sesion_id:       sesId,
+        manifiesto_id:   mId||null,
+        numero_licencia: String(r[numCol]||'').trim().toUpperCase(),
+        ingreso:         String(r[ingCol]||'').trim(),
+        doc_sap:         String(r[sapCol]||'').trim(),
+        fecha_wms:       String(r[fecCol]||'').trim(),
+        tipo:            String(r[tipCol]||'').trim(),
+        lineas:          Number(r[linCol])||null,
+        status_wms:      String(r[staCol]||'').trim(),
+        sku:             sku,
+        nombre:          String(r[nomCol]||'').trim(),
+        cantidad:        Number(r[canCol])||0,
+        unidad:          String(r[uniCol]||'').trim(),
+        unidades:        Number(r[uniSCol])||0,
+        origen:          String(r[oriCol]||'').trim(),
+        destino:         String(r[desCol]||'').trim(),
+        subido_por:      usu,
+        subido_en:       now
+      });
+    });
+    if(!rows.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos.' });
+    // Reemplazar: borrar anterior para esta sesión + manifiesto_id
+    var delQ = '?sesion_id=eq.'+encodeURIComponent(sesId);
+    if(mId) delQ += '&manifiesto_id=eq.'+encodeURIComponent(mId);
+    await supabase('DELETE','bod_licencia_hija',null,delQ);
+    for(var i=0;i<rows.length;i+=200){
+      await supabase('POST','bod_licencia_hija',rows.slice(i,i+200),'?select=id');
+    }
+    cacheInvalidatePrefix('bod:lichija:'+sesId+':');
+    console.log('BOD lic-hija upload: '+rows.length+' filas sesion='+sesId+' PT='+mId+' por '+usu);
+    res.json({ ok:true, procesadas:rows.length, subido_en:now });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/sesion/:id/licencia-hija ──────────────────────────────
+app.delete('/api/bod/sesion/:id/licencia-hija', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String((req.body||{}).manifiesto_id||'').trim();
+    var delQ  = '?sesion_id=eq.'+encodeURIComponent(sesId);
+    if(mId) delQ += '&manifiesto_id=eq.'+encodeURIComponent(mId);
+    await supabase('DELETE','bod_licencia_hija',null,delQ);
+    cacheInvalidatePrefix('bod:lichija:'+sesId+':');
     res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── PATCH /api/bod/sesion/:id/manifiestos-control/:mid/correlativo ─────────
+// Corrección manual del correlativo PT (permite editar el ## final)
+// Body: { correlativo, usuario }
+app.patch('/api/bod/sesion/:id/manifiestos-control/:mid/correlativo', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mid).trim();
+    var { correlativo, usuario } = req.body || {};
+    correlativo = String(correlativo||'').trim().toUpperCase();
+    if(!/^PT-\d{4}-\d{2}-\d{2}-\d{2}$/.test(correlativo))
+      return res.status(400).json({ ok:false, error:'Formato inválido. Esperado: PT-YYYY-MM-DD-## (ej: PT-2026-06-14-01).' });
+    // Verificar que no exista duplicado en esta sesión
+    var dup = await supabase('GET','bod_manifiestos_control',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&correlativo=eq.'+encodeURIComponent(correlativo)
+      +'&id=neq.'+encodeURIComponent(mId)
+      +'&estado=neq.eliminado&limit=1&select=id').catch(function(){return[];});
+    if(Array.isArray(dup)&&dup.length)
+      return res.status(409).json({ ok:false, error:'Ya existe otro PT activo con ese correlativo.' });
+    var now = new Date().toISOString();
+    await supabase('PATCH','bod_manifiestos_control',
+      { correlativo:correlativo, actualizado_por:String(usuario||''), actualizado_en:now },
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
+    invalidarCacheSesion(sesId);
+    res.json({ ok:true, correlativo:correlativo });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/sesion/:id/manifiestos-control/:mid/manifiesto-data ───────
+// Compila todos los datos necesarios para generar el manifiesto exportable.
+// Fuentes: bod_manifiestos_control, bod_furgon_cierres, bod_papel_trabajo,
+//          bod_licencia_hija, bod_teorico_952
+// Fórmula: Diferencia = Teórico 952 − Físico s/Auditoría
+app.get('/api/bod/sesion/:id/manifiestos-control/:mid/manifiesto-data', bodGuard, async (req, res) => {
+  try {
+    var sesId = String(req.params.id).trim();
+    var mId   = String(req.params.mid).trim();
+
+    // 1. PT header (bod_manifiestos_control)
+    var ptRows = await supabase('GET','bod_manifiestos_control',null,
+      '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId)+'&limit=1&select=*');
+    if(!Array.isArray(ptRows)||!ptRows.length)
+      return res.status(404).json({ ok:false, error:'PT no encontrado.' });
+    var pt = ptRows[0];
+
+    // 2. Furgón/cierre data (bod_furgon_cierres)
+    var furgRows = await supabase('GET','bod_furgon_cierres',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(mId)+'&limit=1&select=*')
+      .catch(function(){ return []; });
+    var cierreData = Array.isArray(furgRows)&&furgRows[0] ? furgRows[0] : {};
+
+    // 3. Papel de Trabajo lines (bod_papel_trabajo)
+    var papelRows = await supabase('GET','bod_papel_trabajo',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(mId)+'&order=sku.asc&select=*');
+    var papelLineas = Array.isArray(papelRows) ? papelRows : [];
+
+    // 4. Licencia hija WMS (bod_licencia_hija) → columna WMS en manifiesto
+    var licHijaRows = await supabase('GET','bod_licencia_hija',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)
+      +'&manifiesto_id=eq.'+encodeURIComponent(mId)+'&select=sku,cantidad,destino')
+      .catch(function(){ return []; });
+    // Indexar por SKU para lookup rápido
+    var licHijaMap = {};
+    if(Array.isArray(licHijaRows)) licHijaRows.forEach(function(r){
+      if(!licHijaMap[r.sku]) licHijaMap[r.sku] = 0;
+      licHijaMap[r.sku] += Number(r.cantidad)||0;
+    });
+
+    // 5. Teórico 952 (bod_teorico_952) → columna 952 en papel de trabajo
+    var teoRows = await supabase('GET','bod_teorico_952',null,
+      '?sesion_id=eq.'+encodeURIComponent(sesId)+'&select=sku,cantidad_952')
+      .catch(function(){ return []; });
+    var teoMap = {};
+    if(Array.isArray(teoRows)) teoRows.forEach(function(r){
+      teoMap[r.sku] = Number(r.cantidad_952)||0;
+    });
+
+    // 6. Enriquecer líneas del papel de trabajo con datos calculados
+    var lineasEnriquecidas = papelLineas.map(function(p){
+      var teo952   = teoMap[p.sku] || 0;
+      var fisico   = Number(p.fisico_auditoria)||0;
+      var wms      = licHijaMap[p.sku] || 0;
+      var dif      = teo952 - fisico;               // Fórmula canónica
+      var validado = !!p.validado;
+      var difPost  = validado ? 0 : dif;
+      var pct      = teo952 > 0 ? Math.round((fisico / teo952) * 100) : (fisico > 0 ? 100 : 0);
+      return {
+        sku:                p.sku,
+        nombre:             p.nombre || '',
+        estado_papel:       p.estado_papel || 'No auditado',
+        fisico_auditoria:   fisico,
+        cantidad_952:       teo952,
+        cantidad_wms:       wms,
+        diferencia:         dif,
+        seguimiento:        bodSeguimientoPT(dif),
+        validado:           validado,
+        diferencia_post:    difPost,
+        porcentaje_auditado: pct,
+        tarimas:            p.tarimas || '',
+        tr999:              p.tr999 || ''
+      };
+    });
+
+    // 7. Calcular porcentaje global de cobertura
+    var totalFisico = lineasEnriquecidas.reduce(function(s,l){return s+l.fisico_auditoria;},0);
+    var total952    = lineasEnriquecidas.reduce(function(s,l){return s+l.cantidad_952;},0);
+    var pctGlobal   = total952 > 0 ? Math.round((totalFisico/total952)*100) : 0;
+
+    res.json({
+      ok:          true,
+      generado_en: new Date().toISOString(),
+      pt: {
+        id:             pt.id,
+        correlativo:    pt.correlativo,
+        estado:         pt.estado,
+        auditor_lider:  pt.auditor_lider,
+        colaboradores:  pt.colaboradores || [],
+        creado_por:     pt.creado_por,
+        furgon:         cierreData.furgon   || pt.furgon   || '',
+        placa:          cierreData.placa    || '',
+        marchamo:       cierreData.marchamo || '',
+        licencia_hija:  cierreData.licencia_hija || pt.licencia_hija || '',
+        destino_tr999:  cierreData.destino_tr999 || pt.destino_tr999 || '',
+        observacion:    cierreData.observacion   || ''
+      },
+      skus:           lineasEnriquecidas,
+      total_lineas:   lineasEnriquecidas.length,
+      total_fisico:   totalFisico,
+      total_952:      total952,
+      pct_auditado:   pctGlobal,
+      // Campos fijos del manifiesto
+      campos_fijos: {
+        direccion_origen:  '27 Calle Bodega C 41-55 Zona 5 Calzada la Paz',
+        direccion_destino: 'BODEGA NODUS (Hamilton)',
+        autorizacion_envio:['ASTRID DUARTE','CINTYA RIVERA','HUVALDO PEREZ'],
+        encargado_pedido:  'HUVALDO PEREZ',
+        numero_transporte: 'TH 243',
+        tipo_transporte:   'TRANSPORTE'
+      }
+    });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
