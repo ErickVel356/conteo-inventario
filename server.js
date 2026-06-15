@@ -2159,11 +2159,24 @@ app.patch('/api/cdg/v2/:id/meta', async (req, res) => {
         }
       });
     }
+    // tarimaMap: merge clave por clave — lineaId → número de tarima
+    var tarimaMap = req.body.tarimaMap;
+    if(tarimaMap && typeof tarimaMap === 'object') {
+      if(!meta.tarimaMap) meta.tarimaMap = {};
+      Object.keys(tarimaMap).forEach(function(lineaId) {
+        var val = tarimaMap[lineaId];
+        if(val === null || val === undefined || val === '') {
+          delete meta.tarimaMap[lineaId];
+        } else {
+          meta.tarimaMap[lineaId] = Number(val);
+        }
+      });
+    }
     meta.version = (meta.version || 0) + 1;
     if(meta.usuarios && meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
     await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG meta save');
     console.log('CDG v2 meta editada:', licenciaId, 'por:', usuario);
-    res.json({ ok: true, auditadoManual: meta.auditadoManual || {} });
+    res.json({ ok: true, auditadoManual: meta.auditadoManual || {}, tarimaMap: meta.tarimaMap || {} });
   } catch(e) {
     console.log('CDG v2 meta FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo guardar. Reintentá. (' + e.message + ')' });
@@ -2284,7 +2297,6 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
       descripcion:  descripcion || '',
       cantidad:     Number(cantidad),
       costo_unit:   costoUnit !== undefined ? Number(costoUnit) : null,
-      tarima:       tarima != null ? Number(tarima) : null,
       autor:        usuario,
       fotos:        fotosArr,
       ts_creacion:  now,
@@ -2369,7 +2381,6 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
     if(descripcion     !== undefined) patch.descripcion     = descripcion;
     if(cantidad        !== undefined) patch.cantidad        = Number(cantidad);
     if(costoUnit       !== undefined) patch.costo_unit      = Number(costoUnit);
-    if(tarima          !== undefined) patch.tarima          = tarima != null ? Number(tarima) : null;
     if(fotos           !== undefined) {
       var fotosArr = Array.isArray(fotos) ? fotos : [];
       if(fotosArr.length > 3) {
