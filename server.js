@@ -6190,8 +6190,8 @@ app.post('/api/bod/sesion/:id/papel-trabajo', bodGuard, async (req, res) => {
 
     if(!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
 
-    // on_conflict usa el índice único real de la tabla: sesion_id,licencia_hija,furgon,sku
-    // manifiesto_id se almacena como dato adicional, no forma parte del unique key
+    // on_conflict usa el índice único real: sesion_id,licencia_hija,furgon,sku
+    // Con sesion_id='GLOBAL', licencia_hija='', furgon='' → único por sku global
     await supabase('POST', 'bod_papel_trabajo', upserts, '?on_conflict=sesion_id,licencia_hija,furgon,sku');
 
     cacheInvalidatePrefix('bod:papel:'+sesId+':');
@@ -6432,11 +6432,12 @@ app.patch('/api/bod/sesion/:id/manifiestos-control/:mId/guardar', bodGuard, asyn
     destino_tr999 = String(destino_tr999||''  ).trim().toUpperCase();
     observacion   = String(observacion||''  ).trim();
     var now = new Date().toISOString();
-    // 1. Actualizar bod_manifiestos_control con todos los campos editables
+    // 1. Actualizar bod_manifiestos_control con todos los campos editables del PT
+    var { auditor_lider: aud_lider_body } = req.body || {};
     await supabase('PATCH','bod_manifiestos_control',
       { furgon:furgon, placa:placa, marchamo:marchamo, licencia_hija:licencia_hija,
         destino_tr999:destino_tr999, observacion:observacion,
-        auditor_lider:String(req.body.auditor_lider||'').trim(),
+        auditor_lider:String(aud_lider_body||'').trim(),
         actualizado_por:usuario, actualizado_en:now },
       '?id=eq.'+encodeURIComponent(mId)+'&sesion_id=eq.'+encodeURIComponent(sesId));
     // 2. Upsert bod_furgon_cierres por manifiesto_id (crear si no existe, actualizar si existe)
@@ -6935,3 +6936,347 @@ app.get('/api/bod/sesion/:id/manifiestos-control/:mid/manifiesto-data', bodGuard
     });
   } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+//  NUEVOS ENDPOINTS GLOBALES POR FECHA — Bodega CDG v3
+//  No usan sesion_id como discriminador. Global por fecha_trabajo (día).
+//  Tablas nuevas: bod_teorico_global, bod_pts, bod_pts_papel
+//  Regla: no toca endpoints existentes. No usa DROP.
+// ══════════════════════════════════════════════════════════════════════════
+
+function bodHoyGT() {
+  return new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+}
+
+// ── GET /api/bod/teorico-952-global ───────────────────────────────────────
+// Devuelve el teórico 952 global para una fecha_trabajo.
+// Query: ?fecha=YYYY-MM-DD (default: hoy GT)
+app.get('/api/bod/teorico-952-global', bodGuard, async (req, res) => {
+  try {
+    var fecha = String(req.query.fecha || bodHoyGT()).trim();
+    var rows = await supabase('GET', 'bod_teorico_global', null,
+      '?fecha_trabajo=eq.' + encodeURIComponent(fecha) + '&order=sku.asc&select=sku,nombre,cantidad_952,unidades,existencia,disponible');
+    res.json({ ok:true, fecha:fecha, rows: Array.isArray(rows) ? rows : [] });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/teorico-952-global/upload ───────────────────────────────
+// Sube/reemplaza el teórico 952 global para una fecha.
+// Body: multipart — file + fecha (opcional, default hoy) + creado_por
+app.post('/api/bod/teorico-952-global/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    var fecha     = String((req.body || {}).fecha     || bodHoyGT()).trim();
+    var creadoPor = String((req.body || {}).creado_por || '').trim();
+    if (!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
+
+    var wb  = XLSX.read(req.file.buffer, { type:'buffer' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    if (!raw.length) return res.status(400).json({ ok:false, error:'El archivo está vacío.' });
+
+    // Normalizar headers
+    var km = {};
+    Object.keys(raw[0]).forEach(function(k){ km[bodNormHeader(k)] = k; });
+    var skuCol = km['sku'] || km['codigo'] || km['code'];
+    var nomCol = km['nombre'] || km['descripcion'];
+    var canCol = km['cant_952'] || km['cantidad_952'] || km['cant952'] || km['cantidad'] || km['cant'];
+    var uniCol = km['unidad'];
+    var exiCol = km['exist'] || km['existencia'];
+    var disCol = km['disp']  || km['disponible'];
+    if (!skuCol) return res.status(400).json({ ok:false, error:'No se encontró columna SKU.' });
+
+    var now = new Date().toISOString();
+    var upserts = [];
+    raw.forEach(function(r){
+      var sku = String(r[skuCol]||'').trim().toUpperCase();
+      if (!sku) return;
+      upserts.push({
+        fecha_trabajo: fecha,
+        sku:           sku,
+        nombre:        String(r[nomCol]||'').trim(),
+        cantidad_952:  Number(r[canCol]) || 0,
+        unidades:      Number(r[uniCol]) || 0,
+        existencia:    Number(r[exiCol]) || 0,
+        disponible:    Number(r[disCol]) || 0,
+        creado_por:    creadoPor,
+        actualizado_en: now
+      });
+    });
+    if (!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos.' });
+
+    // Reemplazar teórico del día
+    await supabase('DELETE', 'bod_teorico_global', null, '?fecha_trabajo=eq.' + encodeURIComponent(fecha));
+    for (var i = 0; i < upserts.length; i += 200) {
+      await supabase('POST', 'bod_teorico_global', upserts.slice(i, i+200),
+        '?on_conflict=fecha_trabajo,sku');
+    }
+    console.log('BOD teorico-global upload: ' + upserts.length + ' SKUs fecha=' + fecha + ' por ' + creadoPor);
+    res.json({ ok:true, procesadas: upserts.length, fecha:fecha });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/teorico-952-global ────────────────────────────────────
+app.delete('/api/bod/teorico-952-global', bodGuard, async (req, res) => {
+  try {
+    var fecha = String(req.query.fecha || req.body && req.body.fecha || bodHoyGT()).trim();
+    await supabase('DELETE', 'bod_teorico_global', null, '?fecha_trabajo=eq.' + encodeURIComponent(fecha));
+    res.json({ ok:true, fecha:fecha });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/pts ───────────────────────────────────────────────────────
+// Lista PTs globales para una fecha.
+app.get('/api/bod/pts', bodGuard, async (req, res) => {
+  try {
+    var fecha = String(req.query.fecha || bodHoyGT()).trim();
+    var rows = await supabase('GET', 'bod_pts', null,
+      '?fecha_trabajo=eq.' + encodeURIComponent(fecha) + '&estado=neq.borrado&order=creado_en.asc&select=*');
+    res.json({ ok:true, pts: Array.isArray(rows) ? rows : [], fecha:fecha });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/pts ─────────────────────────────────────────────────────
+// Crea un PT nuevo. Genera correlativo PT-YYYY-MM-DD-## automáticamente.
+app.post('/api/bod/pts', bodGuard, async (req, res) => {
+  try {
+    var { fecha, creado_por } = req.body || {};
+    fecha      = String(fecha      || bodHoyGT()).trim();
+    creado_por = String(creado_por || '').trim();
+
+    // Siguiente correlativo del día
+    var existentes = await supabase('GET', 'bod_pts', null,
+      '?fecha_trabajo=eq.' + encodeURIComponent(fecha) + '&select=correlativo').catch(function(){ return []; });
+    var nextNum = (Array.isArray(existentes) ? existentes.length : 0) + 1;
+    var correlativo = 'PT-' + fecha + '-' + String(nextNum).padStart(2, '0');
+    // Evitar duplicados si ya existe ese correlativo
+    var dup = Array.isArray(existentes) && existentes.find(function(e){ return e.correlativo === correlativo; });
+    if (dup) nextNum++; correlativo = 'PT-' + fecha + '-' + String(nextNum).padStart(2, '0');
+
+    var now = new Date().toISOString();
+    var pt = {
+      correlativo:    correlativo,
+      fecha_trabajo:  fecha,
+      estado:         'en_proceso',
+      creado_por:     creado_por,
+      auditor_lider:  '',
+      colaboradores:  [],
+      furgon:         '',
+      placa:          '',
+      marchamo:       '',
+      licencia_hija:  '',
+      destino_tr999:  '',
+      observacion:    '',
+      carga_no:       '',
+      creado_en:      now,
+      actualizado_en: now
+    };
+    var saved = await supabase('POST', 'bod_pts', [pt], '?select=*');
+    var created = Array.isArray(saved) ? saved[0] : pt;
+    res.json({ ok:true, pt: created });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── PATCH /api/bod/pts/:ptId ──────────────────────────────────────────────
+// Actualiza campos de un PT (furgon, placa, marchamo, etc.)
+app.patch('/api/bod/pts/:ptId', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    var { usuario, furgon, placa, marchamo, licencia_hija, destino_tr999, observacion, carga_no, auditor_lider, estado } = req.body || {};
+    var now = new Date().toISOString();
+    var patch = { actualizado_en: now };
+    if (usuario      !== undefined) patch.actualizado_por = String(usuario     || '').trim();
+    if (furgon       !== undefined) patch.furgon          = String(furgon      || '').trim();
+    if (placa        !== undefined) patch.placa           = String(placa       || '').trim().toUpperCase();
+    if (marchamo     !== undefined) patch.marchamo        = String(marchamo    || '').trim().toUpperCase();
+    if (licencia_hija!== undefined) patch.licencia_hija   = String(licencia_hija||'').trim().toUpperCase();
+    if (destino_tr999!== undefined) patch.destino_tr999   = String(destino_tr999||'').trim().toUpperCase();
+    if (observacion  !== undefined) patch.observacion     = String(observacion || '').trim();
+    if (carga_no     !== undefined) patch.carga_no        = String(carga_no    || '').trim();
+    if (auditor_lider!== undefined) patch.auditor_lider   = String(auditor_lider||'').trim();
+    if (estado       !== undefined) patch.estado          = String(estado      || '').trim();
+    await supabase('PATCH', 'bod_pts', patch, '?id=eq.' + encodeURIComponent(ptId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/pts/:ptId ─────────────────────────────────────────────
+app.delete('/api/bod/pts/:ptId', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    await supabase('PATCH', 'bod_pts', { estado:'borrado', actualizado_en:new Date().toISOString() },
+      '?id=eq.' + encodeURIComponent(ptId));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/pts/:ptId/papel ──────────────────────────────────────────
+app.get('/api/bod/pts/:ptId/papel', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    var rows = await supabase('GET', 'bod_pts_papel', null,
+      '?pt_id=eq.' + encodeURIComponent(ptId) + '&order=creado_en.asc&select=*');
+    res.json({ ok:true, rows: Array.isArray(rows) ? rows : [] });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/pts/:ptId/papel ────────────────────────────────────────
+// Upsert de SKU en papel de trabajo. Unique: pt_id + sku.
+app.post('/api/bod/pts/:ptId/papel', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    var { skus, usuario } = req.body || {};
+    if (!Array.isArray(skus) || !skus.length)
+      return res.status(400).json({ ok:false, error:'skus requeridos' });
+
+    var now = new Date().toISOString();
+    var upserts = skus.map(function(s){
+      var validado = !!s.validado;
+      return {
+        pt_id:            ptId,
+        sku:              String(s.sku || '').trim().toUpperCase(),
+        nombre:           String(s.nombre || ''),
+        fisico_auditoria: Number(s.fisico_auditoria) || 0,
+        cantidad_952:     Number(s.cantidad_952) || 0,
+        diferencia:       Number(s.diferencia) || 0,
+        seguimiento:      String(s.seguimiento || ''),
+        validado:         validado,
+        validado_por:     String(s.validado_por || ''),
+        validado_en:      validado ? (s.validado_en || now) : null,
+        tarimas:          String(s.tarimas || ''),
+        estado_papel:     String(s.estado_papel || ''),
+        origen:           String(s.origen || 'creado'),
+        wms_cantidad:     s.wms_cantidad !== undefined ? Number(s.wms_cantidad) : null,
+        creado_por:       String(s.creado_por || usuario || ''),
+        creado_en:        s.creado_en || now,
+        actualizado_en:   now
+      };
+    }).filter(function(r){ return !!r.sku; });
+
+    if (!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos' });
+    await supabase('POST', 'bod_pts_papel', upserts, '?on_conflict=pt_id,sku');
+    res.json({ ok:true, guardados: upserts.length });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── DELETE /api/bod/pts/:ptId/papel/:sku ─────────────────────────────────
+app.delete('/api/bod/pts/:ptId/papel/:sku', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    var sku  = String(req.params.sku).trim().toUpperCase();
+    await supabase('DELETE', 'bod_pts_papel', null,
+      '?pt_id=eq.' + encodeURIComponent(ptId) + '&sku=eq.' + encodeURIComponent(sku));
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── POST /api/bod/pts/:ptId/licencia-hija/upload ─────────────────────────
+// Sube licencia hija WMS para un PT. Guarda en bod_pts_licencia_hija.
+app.post('/api/bod/pts/:ptId/licencia-hija/upload', bodGuard, upload.single('file'), async (req, res) => {
+  try {
+    var ptId      = String(req.params.ptId).trim();
+    var creadoPor = String((req.body || {}).creado_por || '').trim();
+    if (!req.file) return res.status(400).json({ ok:false, error:'No se recibió archivo.' });
+
+    var wb  = XLSX.read(req.file.buffer, { type:'buffer' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    if (!raw.length) return res.status(400).json({ ok:false, error:'Archivo vacío.' });
+
+    var km = {};
+    Object.keys(raw[0]).forEach(function(k){ km[bodNormHeader(k)] = k; });
+    var numCol  = km['numero'] || km['licencia'] || km['num'];
+    var skuCol  = km['sku'] || km['codigo'];
+    var nomCol  = km['nombre'] || km['descripcion'];
+    var canCol  = km['cant'] || km['cantidad'] || km['cantidades'];
+    var uniCol  = km['unidad'];
+    var oriCol  = km['origen'];
+    var desCol  = km['destino'];
+    if (!skuCol) return res.status(400).json({ ok:false, error:'No se encontró columna SKU.' });
+
+    var now = new Date().toISOString();
+    var upserts = [];
+    raw.forEach(function(r){
+      var sku = String(r[skuCol]||'').trim().toUpperCase();
+      if (!sku) return;
+      upserts.push({
+        pt_id:      ptId,
+        sku:        sku,
+        nombre:     String(r[nomCol]||'').trim(),
+        cantidad:   Number(r[canCol]) || 0,
+        unidad:     String(r[uniCol]||''),
+        numero:     String(r[numCol]||'').trim().toUpperCase(),
+        origen:     String(r[oriCol]||''),
+        destino:    String(r[desCol]||''),
+        creado_por: creadoPor,
+        creado_en:  now
+      });
+    });
+    if (!upserts.length) return res.status(400).json({ ok:false, error:'Sin SKUs válidos.' });
+
+    // Reemplazar licencia hija del PT
+    await supabase('DELETE', 'bod_pts_licencia_hija', null, '?pt_id=eq.' + encodeURIComponent(ptId));
+    for (var i = 0; i < upserts.length; i += 200) {
+      await supabase('POST', 'bod_pts_licencia_hija', upserts.slice(i, i+200), '?on_conflict=pt_id,sku');
+    }
+    res.json({ ok:true, procesadas: upserts.length });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── GET /api/bod/pts/:ptId/licencia-hija ─────────────────────────────────
+app.get('/api/bod/pts/:ptId/licencia-hija', bodGuard, async (req, res) => {
+  try {
+    var ptId = String(req.params.ptId).trim();
+    var rows = await supabase('GET', 'bod_pts_licencia_hija', null,
+      '?pt_id=eq.' + encodeURIComponent(ptId) + '&order=sku.asc&select=sku,nombre,cantidad,unidad,origen,destino');
+    res.json({ ok:true, rows: Array.isArray(rows) ? rows : [] });
+  } catch(e) { res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// ── SQL helper: Supabase table creation via RPC (if tables don't exist) ──
+// Tables needed: bod_teorico_global, bod_pts, bod_pts_papel, bod_pts_licencia_hija
+// These must be created in Supabase dashboard or via migration.
+// Schema reference:
+//
+// bod_teorico_global:
+//   id uuid default gen_random_uuid() primary key,
+//   fecha_trabajo date not null,
+//   sku text not null,
+//   nombre text,
+//   cantidad_952 numeric default 0,
+//   unidades numeric default 0,
+//   existencia numeric default 0,
+//   disponible numeric default 0,
+//   creado_por text,
+//   actualizado_en timestamptz,
+//   unique(fecha_trabajo, sku)
+//
+// bod_pts:
+//   id uuid default gen_random_uuid() primary key,
+//   correlativo text not null,
+//   fecha_trabajo date not null,
+//   estado text default 'en_proceso',
+//   creado_por text, auditor_lider text, colaboradores jsonb default '[]',
+//   furgon text, placa text, marchamo text, licencia_hija text,
+//   destino_tr999 text, observacion text, carga_no text,
+//   creado_en timestamptz, actualizado_en timestamptz, actualizado_por text
+//
+// bod_pts_papel:
+//   id uuid default gen_random_uuid() primary key,
+//   pt_id uuid references bod_pts(id),
+//   sku text not null,
+//   nombre text, fisico_auditoria numeric default 0, cantidad_952 numeric default 0,
+//   diferencia numeric default 0, seguimiento text, validado boolean default false,
+//   validado_por text, validado_en timestamptz, tarimas text, estado_papel text,
+//   origen text default 'creado', wms_cantidad numeric,
+//   creado_por text, creado_en timestamptz, actualizado_en timestamptz,
+//   unique(pt_id, sku)
+//
+// bod_pts_licencia_hija:
+//   id uuid default gen_random_uuid() primary key,
+//   pt_id uuid references bod_pts(id),
+//   sku text not null,
+//   nombre text, cantidad numeric default 0, unidad text,
+//   numero text, origen text, destino text,
+//   creado_por text, creado_en timestamptz,
+//   unique(pt_id, sku)
+
