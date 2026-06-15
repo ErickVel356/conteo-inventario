@@ -10783,6 +10783,7 @@ function bodAudTab4(tb){
   tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando…</div>';
   bodFetch('GET','/api/bod/pts?fecha='+fecha).then(function(d){
     _audDB.pts=d.ok?(d.pts||[]):[];
+
     var h='<div style="margin-bottom:.7rem;display:flex;gap:.5rem;align-items:center">'
       +'<button class="btn btn-sm btn-dark" id="t4-gen-pt">＋ Generar PT</button>'
       +'<span id="t4-gen-msg" style="font-size:.76rem"></span></div>';
@@ -10790,40 +10791,67 @@ function bodAudTab4(tb){
     if(!_audDB.pts.length){
       h+='<div style="color:#aaa;font-size:.82rem">Sin PTs. Presioná "Generar PT".</div>';
     } else {
+      // TABLA HORIZONTAL — igual que la referencia y el Word
+      h+='<div style="overflow-x:auto"><table style="width:100%;font-size:.75rem;border-collapse:collapse;white-space:nowrap">'
+        +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+        +'<th style="padding:5px 7px;text-align:left">Correlativo</th>'
+        +'<th style="padding:5px 7px;text-align:left">Estado</th>'
+        +'<th style="padding:5px 7px">Furgón</th>'
+        +'<th style="padding:5px 7px">Placa</th>'
+        +'<th style="padding:5px 7px">Marchamo</th>'
+        +'<th style="padding:5px 7px">Lic. Hija</th>'
+        +'<th style="padding:5px 7px">TR999</th>'
+        +'<th style="padding:5px 7px">Observaciones</th>'
+        +'<th style="padding:5px 7px">Carga</th>'
+        +'<th style="padding:5px 7px">Creador</th>'
+        +'<th style="padding:5px 7px">Auditor</th>'
+        +'<th style="padding:5px 7px">Colaboradores</th>'
+        +'<th style="padding:5px 7px;text-align:left">Acciones</th>'
+        +'</tr></thead><tbody id="t4-tbody">';
+
       _audDB.pts.forEach(function(m){
         var bloq=m.estado==='finalizado'||m.estado==='anulado';
+        // Estado badge
         var estC=m.estado==='finalizado'?'#1e7e34':m.estado==='anulado'?'#c0392b':'#1565c0';
         var estL=m.estado==='finalizado'?'Finalizado':m.estado==='anulado'?'Anulado':'En Proceso';
-        h+='<div class="t4-pt-card" data-mid="'+bodEscA(m.id)+'" style="border:1px solid #e0e0e0;border-radius:8px;padding:.7rem;margin-bottom:.6rem;background:#fff">'
-          +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.45rem">'
-          +'<strong style="font-size:.84rem">'+bodEscA(m.correlativo||m.id)+'</strong>'
-          +'<span style="font-size:.71rem;color:'+estC+';border:1px solid '+estC+';border-radius:10px;padding:1px 8px">'+estL+'</span>'
-          +'<span style="font-size:.71rem;color:#888;margin-left:auto">'+bodEscA(m.creado_por||'')+'</span>'
+        // Campos: readonly por defecto, editables cuando el usuario hace clic en Editar
+        // Usamos data-editing="false" para controlar estado
+        var rdonly = bloq ? ' disabled' : ' readonly';
+        h+='<tr class="t4-pt-row" data-mid="'+bodEscA(m.id)+'" data-editing="false" style="border-bottom:1px solid #eee;vertical-align:middle">'
+          +'<td style="padding:5px 7px;font-weight:700">'+bodEscA(m.correlativo||m.id)+'</td>'
+          +'<td style="padding:5px 7px"><span style="font-size:.71rem;color:'+estC+';border:1px solid '+estC+';border-radius:10px;padding:1px 8px">'+estL+'</span></td>'
+          // Campos inline editables
+          +t4TD('furgon',m.furgon||'',rdonly,'70px')
+          +t4TD('placa',m.placa||'',rdonly,'80px')
+          +t4TD('marchamo',m.marchamo||'',rdonly,'80px')
+          +t4TD('licencia_hija',m.licencia_hija||'',rdonly,'90px')
+          +t4TD('destino_tr999',m.destino_tr999||'',rdonly,'110px')
+          +t4TD('observacion',m.observacion||'',rdonly,'100px')
+          +t4TD('carga_no',m.carga_no||'',rdonly,'70px')
+          +'<td style="padding:5px 7px;color:#888;font-size:.72rem">'+bodEscA(m.creado_por||'')+'</td>'
+          +t4TD('auditor_lider',m.auditor_lider||'',rdonly,'90px')
+          +'<td style="padding:5px 7px;color:#888;font-size:.72rem">'+bodEscA((m.colaboradores||[]).join(', ')||'—')+'</td>'
+          // Acciones
+          +'<td style="padding:5px 7px;white-space:nowrap">'
+          +'<div style="display:flex;gap:4px;flex-wrap:wrap">'
+          +(!bloq?'<button class="btn btn-xs b-t4-edit" data-mid="'+bodEscA(m.id)+'" style="font-size:.69rem">Editar</button>':'')
+          +(!bloq?'<button class="btn btn-xs b-t4-continuar" data-mid="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff;font-size:.69rem">'+(m.auditor_lider?'Continuar':'Empezar')+'</button>':'')
+          +(m.estado==='finalizado'?'<button class="btn btn-xs b-t4-reabrir" data-mid="'+bodEscA(m.id)+'" style="font-size:.69rem">Reabrir</button>':'')
+          +'<button class="btn btn-xs b-t4-lich" data-mid="'+bodEscA(m.id)+'" style="font-size:.69rem">Subir Lic. Hija WMS</button>'
+          +(m.estado==='finalizado'?'<button class="btn btn-xs b-t4-manif" data-mid="'+bodEscA(m.id)+'" style="background:#1e7e34;color:#fff;font-size:.69rem">Generar Manifiesto</button>':'')
+          +(!bloq?'<button class="btn btn-xs b-t4-borrar" data-mid="'+bodEscA(m.id)+'" style="background:#c0392b;color:#fff;font-size:.69rem">Borrar</button>':'')
           +'</div>'
-          +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.35rem;margin-bottom:.45rem">'
-          +t4C('Furgón','furgon',m.furgon||'','text',bloq)
-          +t4C('Placa','placa',m.placa||'','text',bloq)
-          +t4C('Marchamo','marchamo',m.marchamo||'','text',bloq)
-          +t4C('Lic. Hija','licencia_hija',m.licencia_hija||'','text',bloq)
-          +t4C('TR999','destino_tr999',m.destino_tr999||'','text',bloq)
-          +t4C('Carga No.','carga_no',m.carga_no||'','text',bloq)
-          +t4C('Auditor','auditor_lider',m.auditor_lider||'','text',bloq)
-          +t4C('Observaciones','observacion',m.observacion||'','text',bloq)
+          // Upload licencia hija (oculto)
+          +'<div class="t4-lich-wrap" data-mid="'+bodEscA(m.id)+'" style="display:none;margin-top:4px;padding:4px;background:#f8f9fa;border-radius:5px">'
+          +'<input type="file" class="t4-lich-file" accept=".xlsx,.xls" style="font-size:.73rem">'
+          +'<button class="btn btn-xs t4-lich-up-btn" data-mid="'+bodEscA(m.id)+'" style="margin-left:4px">⬆ Subir</button>'
+          +'<span class="t4-lich-msg" style="font-size:.72rem;margin-left:4px"></span>'
           +'</div>'
-          +'<div style="display:flex;gap:.35rem;flex-wrap:wrap">'
-          +(!bloq?'<button class="btn btn-xs b-t4-guardar" data-mid="'+bodEscA(m.id)+'">💾 Guardar</button>':'')
-          +(!bloq?'<button class="btn btn-xs b-t4-continuar" data-mid="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff">▶ '+(m.auditor_lider?'Continuar':'Empezar')+'</button>':'')
-          +(!bloq?'<button class="btn btn-xs b-t4-lich" data-mid="'+bodEscA(m.id)+'">📤 Subir Lic. Hija WMS</button>':'')
-          +(m.estado==='finalizado'?'<button class="btn btn-xs b-t4-manif" data-mid="'+bodEscA(m.id)+'" style="background:#1e7e34;color:#fff">📄 Generar Manifiesto</button>':'')
-          +(!bloq?'<button class="btn btn-xs b-t4-borrar" data-mid="'+bodEscA(m.id)+'" style="background:#c0392b;color:#fff">✕ Borrar</button>':'')
-          +'</div>'
-          +'<div class="t4-pt-msg" style="font-size:.75rem;margin-top:.3rem"></div>'
-          +'<div class="t4-lich-wrap" data-mid="'+bodEscA(m.id)+'" style="display:none;margin-top:.45rem;background:#f8f9fa;border-radius:6px;padding:.45rem">'
-          +'<input type="file" class="t4-lich-file" accept=".xlsx,.xls" style="font-size:.75rem">'
-          +'<button class="btn btn-xs t4-lich-up-btn" data-mid="'+bodEscA(m.id)+'" style="margin-left:5px">⬆ Subir</button>'
-          +'<span class="t4-lich-msg" style="font-size:.74rem;margin-left:5px"></span>'
-          +'</div></div>';
+          +'<div class="t4-pt-msg" style="font-size:.73rem;margin-top:2px;color:#c0392b"></div>'
+          +'</td>'
+          +'</tr>';
       });
+      h+='</tbody></table></div>';
     }
     tb.innerHTML=h;
 
@@ -10833,25 +10861,48 @@ function bodAudTab4(tb){
       msg.innerHTML='<span style="color:#888">Generando…</span>';
       bodFetch('POST','/api/bod/pts',{fecha:fecha,creado_por:usr})
         .then(function(d){
-          if(d.ok){msg.innerHTML='<span style="color:#1e7e34">✅ '+bodEscA(d.pt&&d.pt.correlativo||'PT creado')+'</span>';setTimeout(function(){bodAudTab4(tb);},500);}
-          else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+          if(d.ok){
+            msg.innerHTML='<span style="color:#1e7e34">✅ '+bodEscA(d.pt&&d.pt.correlativo||'PT creado')+'</span>';
+            setTimeout(function(){bodAudTab4(tb);},500);
+          } else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
         }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
     });
 
-    // Guardar
-    tb.querySelectorAll('.b-t4-guardar').forEach(function(btn){
+    // Editar / Guardar cambios (toggle)
+    tb.querySelectorAll('.b-t4-edit').forEach(function(btn){
       btn.addEventListener('click',function(){
-        var card=btn.closest('.t4-pt-card');
-        var msg=card.querySelector('.t4-pt-msg');
+        var row=btn.closest('.t4-pt-row');
         var mId=btn.dataset.mid;
-        var datos={usuario:usr};
-        card.querySelectorAll('.t4-campo-inp').forEach(function(inp){datos[inp.dataset.campo]=inp.value.trim();});
-        msg.innerHTML='<span style="color:#888">Guardando…</span>';
-        bodFetch('PATCH','/api/bod/pts/'+encodeURIComponent(mId),datos)
-          .then(function(d){
-            msg.innerHTML=d.ok?'<span style="color:#1e7e34">✅ Guardado</span>':'<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
-            if(d.ok) setTimeout(function(){bodAudTab4(tb);},800);
-          }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
+        var isEditing=row.dataset.editing==='true';
+        if(!isEditing){
+          // Habilitar campos
+          row.querySelectorAll('.t4-campo-inp').forEach(function(inp){inp.removeAttribute('readonly');});
+          btn.textContent='Guardar cambios';
+          btn.style.background='#1565c0'; btn.style.color='#fff';
+          row.dataset.editing='true';
+        } else {
+          // Guardar
+          var datos={usuario:usr};
+          row.querySelectorAll('.t4-campo-inp').forEach(function(inp){datos[inp.dataset.campo]=inp.value.trim();});
+          var msg=row.querySelector('.t4-pt-msg');
+          if(msg) msg.textContent='Guardando…';
+          bodFetch('PATCH','/api/bod/pts/'+encodeURIComponent(mId),datos)
+            .then(function(d){
+              if(d.ok){
+                // Bloquear campos de nuevo
+                row.querySelectorAll('.t4-campo-inp').forEach(function(inp){inp.setAttribute('readonly','');});
+                btn.textContent='Editar';
+                btn.style.background=''; btn.style.color='';
+                row.dataset.editing='false';
+                if(msg) msg.textContent='';
+                // Actualizar _audDB.pts local
+                var ptLocal=_audDB.pts.find(function(p){return p.id===mId;});
+                if(ptLocal) Object.assign(ptLocal,datos);
+              } else {
+                if(msg) msg.textContent=d.error||'Error al guardar';
+              }
+            }).catch(function(){if(msg) msg.textContent='Error de red.';});
+        }
       });
     });
 
@@ -10865,12 +10916,21 @@ function bodAudTab4(tb){
       });
     });
 
+    // Reabrir PT
+    tb.querySelectorAll('.b-t4-reabrir').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        bodFetch('PATCH','/api/bod/pts/'+encodeURIComponent(btn.dataset.mid),{usuario:usr,estado:'en_proceso'})
+          .then(function(d){if(d.ok)bodAudTab4(tb);else alert(d.error||'Error');})
+          .catch(function(){alert('Error de red.');});
+      });
+    });
+
     // Subir Lic. Hija WMS
     tb.querySelectorAll('.b-t4-lich').forEach(function(btn){
       btn.addEventListener('click',function(){
         var mId=btn.dataset.mid;
-        var div=tb.querySelector('.t4-lich-wrap[data-mid="'+mId+'"]');
-        if(div) div.style.display=div.style.display==='none'?'':'none';
+        var wrap=tb.querySelector('.t4-lich-wrap[data-mid="'+mId+'"]');
+        if(wrap) wrap.style.display=wrap.style.display==='none'?'':'none';
       });
     });
     tb.querySelectorAll('.t4-lich-up-btn').forEach(function(btn){
@@ -10884,7 +10944,7 @@ function bodAudTab4(tb){
         var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('creado_por',usr);
         fetch('/api/bod/pts/'+encodeURIComponent(mId)+'/licencia-hija/upload',{method:'POST',body:fd})
           .then(function(r){return r.json();})
-          .then(function(d){if(msg)msg.textContent=d.ok?('✅ '+d.procesadas+' filas'):('Error: '+(d.error||'?'));})
+          .then(function(d){if(msg)msg.textContent=d.ok?('✅ '+d.procesadas+' filas cargadas'):('Error: '+(d.error||'?'));})
           .catch(function(){if(msg)msg.textContent='Error de red.';});
       });
     });
@@ -10892,28 +10952,23 @@ function bodAudTab4(tb){
     // Generar Manifiesto
     tb.querySelectorAll('.b-t4-manif').forEach(function(btn){
       btn.addEventListener('click',function(){
-        var card=btn.closest('.t4-pt-card');
-        var msg=card.querySelector('.t4-pt-msg');
         var mId=btn.dataset.mid;
         var pt=_audDB.pts.find(function(p){return p.id===mId;})||{};
-        msg.innerHTML='<span style="color:#888">Preparando…</span>';
+        var row=btn.closest('.t4-pt-row');
+        var msg=row?row.querySelector('.t4-pt-msg'):null;
+        if(msg) msg.textContent='Preparando…';
         Promise.all([
           bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/papel'),
           bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/licencia-hija').catch(function(){return{ok:true,rows:[]};})
         ]).then(function(rs){
           var lineas=rs[0].ok?(rs[0].rows||[]):[];
           var lich=rs[1].ok?(rs[1].rows||[]):[];
-          if(!lineas.length){msg.innerHTML='<span style="color:#c0392b">El PT no tiene líneas.</span>';return;}
+          if(!lineas.length){if(msg)msg.textContent='El PT no tiene líneas.';return;}
           var lichMap={};
           lich.forEach(function(r){lichMap[r.sku]=(Number(r.cantidad)||0);});
-          var data={
-            pt:{correlativo:pt.correlativo,furgon:pt.furgon,placa:pt.placa,marchamo:pt.marchamo,
-                licencia_hija:pt.licencia_hija,destino_tr999:pt.destino_tr999,carga_no:pt.carga_no,auditor_lider:pt.auditor_lider},
-            skus:lineas, lichMap:lichMap
-          };
-          msg.innerHTML='';
-          audMostrarSelectorExport(data,pt,false);
-        }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
+          if(msg) msg.textContent='';
+          audMostrarSelectorExport(lineas,lichMap,pt);
+        }).catch(function(){if(msg)msg.textContent='Error de red.';});
       });
     });
 
@@ -10930,106 +10985,122 @@ function bodAudTab4(tb){
   }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar PTs.</div>';});
 }
 
-function t4C(label,campo,valor,tipo,disabled){
-  return '<div><label style="font-size:.7rem;font-weight:600;color:#555;display:block;margin-bottom:1px">'+bodEscA(label)+'</label>'
-    +'<input type="'+tipo+'" class="t4-campo-inp" data-campo="'+campo+'" value="'+bodEscA(valor)+'"'
-    +' style="width:100%;font-size:.77rem;padding:3px 5px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box"'
-    +(disabled?' disabled':'')+' autocomplete="off"></div>';
+// Celda de campo editable en la tabla de PTs
+function t4TD(campo,valor,rdonly,width){
+  return '<td style="padding:4px 6px">'
+    +'<input type="text" class="t4-campo-inp" data-campo="'+campo+'" value="'+bodEscA(valor)+'"'
+    +' style="width:'+width+';font-size:.73rem;padding:2px 5px;border:1px solid #ddd;border-radius:4px"'
+    +rdonly+' autocomplete="off"></td>';
 }
 
-// ── Selector de exportación ───────────────────────────────────────────────
-function audMostrarSelectorExport(data,pt,esMuestra){
+// ── Selector de formato de exportación ───────────────────────────────────
+function audMostrarSelectorExport(lineas,lichMap,pt){
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
-  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.4rem;width:300px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
-    +'<h3 style="font-size:.9rem;font-weight:700;margin:0 0 .35rem">Generar Manifiesto</h3>'
+  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.4rem;width:310px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
+    +'<h3 style="font-size:.9rem;font-weight:700;margin:0 0 .3rem">Generar Manifiesto</h3>'
     +'<p style="font-size:.77rem;color:#666;margin:0 0 .9rem">'+bodEscA(pt.correlativo||'')+'</p>'
-    +'<div style="display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem">'
-    +'<button id="exp-excel" class="btn btn-sm" style="background:#1e7e34;color:#fff">📊 Excel (.xlsx)</button>'
-    +'<button id="exp-csv" class="btn btn-sm" style="background:#1565c0;color:#fff">📋 CSV</button>'
+    +'<p style="font-size:.78rem;font-weight:600;margin:0 0 .35rem">Versión:</p>'
+    +'<div style="display:flex;flex-direction:column;gap:.3rem;margin-bottom:.7rem">'
+    +'<button id="exp-manif-xls" class="btn btn-sm" style="background:#1e7e34;color:#fff">📊 Excel — Manifiesto (Físico / WMS)</button>'
+    +'<button id="exp-muestra-xls" class="btn btn-sm" style="background:#1565c0;color:#fff">📊 Excel — Muestra (WMS / Físico)</button>'
+    +'<button id="exp-manif-csv" class="btn btn-sm" style="background:#555;color:#fff">📋 CSV — Manifiesto</button>'
+    +'<button id="exp-muestra-csv" class="btn btn-sm" style="background:#777;color:#fff">📋 CSV — Muestra</button>'
     +'</div>'
     +'<button id="exp-cancel" class="btn btn-xs" style="width:100%;background:#f5f5f5;color:#555">Cancelar</button>'
     +'</div>';
   document.body.appendChild(ov);
-  document.getElementById('exp-cancel').addEventListener('click',function(){ov.remove();});
   ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
-  document.getElementById('exp-excel').addEventListener('click',function(){ov.remove();audGenerarExcel(data,pt,esMuestra);});
-  document.getElementById('exp-csv').addEventListener('click',function(){ov.remove();audGenerarCSV(data,pt,esMuestra);});
+  document.getElementById('exp-cancel').addEventListener('click',function(){ov.remove();});
+  document.getElementById('exp-manif-xls' ).addEventListener('click',function(){ov.remove();audGenerarExcel(lineas,lichMap,pt,false);});
+  document.getElementById('exp-muestra-xls').addEventListener('click',function(){ov.remove();audGenerarExcel(lineas,lichMap,pt,true);});
+  document.getElementById('exp-manif-csv' ).addEventListener('click',function(){ov.remove();audGenerarCSV(lineas,lichMap,pt,false);});
+  document.getElementById('exp-muestra-csv').addEventListener('click',function(){ov.remove();audGenerarCSV(lineas,lichMap,pt,true);});
 }
 
-function audGenerarExcel(data,pt,esMuestra){
-  if(typeof XLSX==='undefined'){alert('Librería XLSX no disponible.');return;}
-  var skus=data.skus||[];
-  var lichMap=data.lichMap||{};
-  var cf={d1:'27 Calle Bodega C 41-55 Zona 5 Calzada la Paz',d2:'BODEGA NODUS (Hamilton)'};
-  var fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
-  var wb=XLSX.utils.book_new();
-  var rows=[
-    ['CARGA ENVÍO A BODEGA'],
-    ['Marchamo:', pt.marchamo||''],
-    ['Licencia:', pt.licencia_hija||''],
-    ['Dirección:', cf.d1],
-    ['Destino:', cf.d2],
-    ['Ubicación:', pt.destino_tr999||''],
-    ['Fecha:', fecha],
-    ['Carga No.:', pt.carga_no||''],
-    [],
-    ['CODIGO','ESTATUS','% AUDITADO','DESCRIPCIÓN', esMuestra?'WMS':'CANTIDAD', esMuestra?'VALIDADO':'WMS','DIFERENCIA']
-  ];
-  // Calcular % auditado por SKU
-  var pctMap={};
-  var totMap={};
-  skus.forEach(function(s){
-    totMap[s.sku]=(totMap[s.sku]||0)+Number(s.fisico_auditoria||0);
-    if(s.estado_papel==='Auditado') pctMap[s.sku]=(pctMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+// ── Generador Excel — formato del ejemplo del Word ────────────────────────
+// Manifiesto normal : CANTIDAD = Físico,  columna "WMS"    = dato WMS/licencia hija
+// Muestra           : CANTIDAD = WMS,     columna "VALIDADO"= Físico
+function audGenerarExcel(lineas,lichMap,pt,esMuestra){
+  if(typeof XLSX==='undefined'){alert('Librería XLSX no disponible en el navegador.');return;}
+
+  // % auditado por SKU (cantidad auditada / total del SKU)
+  var totalPorSku={}, audPorSku={};
+  lineas.forEach(function(s){
+    var fis=Number(s.fisico_auditoria||0);
+    totalPorSku[s.sku]=(totalPorSku[s.sku]||0)+fis;
+    if(s.estado_papel==='Auditado') audPorSku[s.sku]=(audPorSku[s.sku]||0)+fis;
   });
-  skus.forEach(function(s){
+
+  var fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  var colWMS=esMuestra?'VALIDADO':'WMS';
+
+  // Filas del Excel — mismo formato que el ejemplo adjunto
+  var rows=[
+    ['','','CARGA ENVÍO A BODEGA','','','','',''],
+    ['','','','','','','',''],
+    ['','','','','','Marchamo:',pt.marchamo||'',''],
+    ['','Herramientas Poderosas','','','','Licencia:',pt.licencia_hija||'',''],
+    ['','','DIRECCIÓN:','27 Calle Bodega C 41-55 Zona 5 Calzada la Paz','','UBICACIÓN:',pt.destino_tr999||'',''],
+    ['','DIRECCIÓN DESTINO:','BODEGA NODUS (Hamilón)','','Fecha:',fecha,'',''],
+    ['','','','','','Carga No.',pt.carga_no||'',''],
+    ['','','','','','','',''],
+    ['','CODIGO','ESTATUS','DESCRIPCION','CANTIDAD',colWMS,'DIFERENCIA','']
+  ];
+
+  lineas.forEach(function(s){
     var fis=Number(s.fisico_auditoria||0);
     var wms=lichMap[s.sku]||0;
-    var tot=totMap[s.sku]||1;
-    var pct=Math.round(((pctMap[s.sku]||0)/tot)*100)+'%';
+    var tot=totalPorSku[s.sku]||1;
+    var pct=Math.round(((audPorSku[s.sku]||0)/tot)*100)+'%';
     var cant=esMuestra?wms:fis;
     var val=esMuestra?fis:wms;
     var dif=wms-fis;
-    rows.push([s.sku,s.estado_papel||'No auditado',pct,s.nombre||'',cant,val,dif]);
+    rows.push(['',s.sku,s.estado_papel||'No auditado',s.nombre||'',cant,val,dif,'']);
   });
-  rows.push([],[]);
-  rows.push(['AUTORIZACIÓN DE ENVÍO:','','NOMBRE Y FIRMA QUIEN RECIBE:']);
-  rows.push(['ASTRID DUARTE']);rows.push(['CINTYA RIVERA']);rows.push(['HUVALDO PEREZ']);
-  rows.push([]);
-  rows.push(['ENCARGADO DE PEDIDO: HUVALDO PEREZ']);
+
+  rows.push(['','','','','','','','']);
+  rows.push(['','','','','','','','']);
+  rows.push(['','AUTORIZACIÓN DE ENVÍO','','NOMBRE Y FIRMA QUIEN RECIBE','','','','']);
+  rows.push(['','ASTRID DUARTE','','','','','','']);
+  rows.push(['','CINTYA RIVERA','TH 243','','','','','']);
+  rows.push(['','HUVALDO PEREZ','TRANSPORTE','','','','','']);
+  rows.push(['','','','','','','','']);
+  rows.push(['','ENCARGADO DE PEDIDO','','AUDITOR / VALIDADOR','','','','']);
+  rows.push(['','HUVALDO PEREZ','','pt.auditor_lider' in pt ? pt.auditor_lider : '','','','','']);
+
   var ws=XLSX.utils.aoa_to_sheet(rows);
+  var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Manifiesto');
-  var fn=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuestra?'-muestra':'')+'.xlsx';
+  var fn=((pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_'))+(esMuestra?'-muestra':'-manifiesto')+'.xlsx';
   XLSX.writeFile(wb,fn);
 }
 
-function audGenerarCSV(data,pt,esMuestra){
-  var skus=data.skus||[];
-  var lichMap=data.lichMap||{};
-  var pctMap={};var totMap={};
-  skus.forEach(function(s){
-    totMap[s.sku]=(totMap[s.sku]||0)+Number(s.fisico_auditoria||0);
-    if(s.estado_papel==='Auditado') pctMap[s.sku]=(pctMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+// ── Generador CSV ─────────────────────────────────────────────────────────
+function audGenerarCSV(lineas,lichMap,pt,esMuestra){
+  var totalPorSku={}, audPorSku={};
+  lineas.forEach(function(s){
+    var fis=Number(s.fisico_auditoria||0);
+    totalPorSku[s.sku]=(totalPorSku[s.sku]||0)+fis;
+    if(s.estado_papel==='Auditado') audPorSku[s.sku]=(audPorSku[s.sku]||0)+fis;
   });
   var colWMS=esMuestra?'VALIDADO':'WMS';
-  var lines=['\uFEFF'+'CODIGO,ESTATUS,DESCRIPCION,% AUDITADO,'+(esMuestra?'WMS':'CANTIDAD')+','+colWMS+',DIFERENCIA'];
-  skus.forEach(function(s){
+  var lines=['\uFEFF'+'CODIGO,ESTATUS,DESCRIPCION,CANTIDAD,'+colWMS+',DIFERENCIA'];
+  lineas.forEach(function(s){
     var fis=Number(s.fisico_auditoria||0);
     var wms=lichMap[s.sku]||0;
-    var tot=totMap[s.sku]||1;
-    var pct=Math.round(((pctMap[s.sku]||0)/tot)*100)+'%';
     var cant=esMuestra?wms:fis;
     var val=esMuestra?fis:wms;
-    lines.push(['"'+s.sku+'"','"'+(s.estado_papel||'No auditado')+'"','"'+(s.nombre||'')+'"','"'+pct+'"',cant,val,wms-fis].join(','));
+    var dif=wms-fis;
+    lines.push(['"'+s.sku+'"','"'+(s.estado_papel||'No auditado')+'"','"'+(s.nombre||'')+'"',cant,val,dif].join(','));
   });
   var a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'}));
-  a.download=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuestra?'-muestra':'')+'.csv';
+  a.download=((pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_'))+(esMuestra?'-muestra':'-manifiesto')+'.csv';
   a.click();
 }
 
-// ── Tab 5: Papel de Trabajo — scoped al PT activo ─────────────────────────
+
 function bodAudTab5(tb){
   if(!_audDB.ptActivo){
     tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.5rem">▶ Usá <strong>Empezar</strong> en Control de Manifiestos para trabajar el Papel de Trabajo.</div>';
