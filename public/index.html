@@ -9259,9 +9259,11 @@ function renderCdgv2Lista(licencias){
     +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Correlativo</th>'
     +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Tipo</th>'
     +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Creado por</th>'
+    +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Fecha</th>'
     +'<th class="tc" style="padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Líneas</th>'
     +'<th style="text-align:left;padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0">Usuarios</th>'
     +'<th class="tc" style="padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Estado</th>'
+    +'<th class="tc" style="padding:8px 10px;font-size:.78rem;color:#555;border-bottom:2px solid #e0e0e0;white-space:nowrap">Acción</th>'
     +'</tr></thead><tbody>';
 
   unicas.forEach(function(l, idx){
@@ -9270,16 +9272,34 @@ function renderCdgv2Lista(licencias){
     var estadoFg    = l.estado === 'activo' ? '#2e7d32' : '#c62828';
     var usuarios    = (l.usuarios || []).join(', ') || '—';
     var rowBg       = idx % 2 === 0 ? '#fff' : '#fafaf8';
+    // Formatear fecha de creación (solo fecha, sin hora)
+    var fechaFmt = '—';
+    if(l.fechaCreacion) {
+      try {
+        var d = new Date(l.fechaCreacion);
+        fechaFmt = d.toLocaleDateString('es-GT', { day:'2-digit', month:'2-digit', year:'2-digit' });
+      } catch(e){}
+    }
+    // Solo creador o supervisor puede eliminar
+    var esSup = typeof isSup === 'function' && isSup();
+    var esCreadorLista = currentUser && l.creadoPor === currentUser.name;
+    var btnEliminar = (esSup || esCreadorLista)
+      ? '<button class="cdgv2-lista-del-btn" data-id="'+escH(l.id)+'" data-lineas="'+l.totalLineas+'"'
+        +' style="background:#fdecea;color:#c0392b;font-size:.72rem;padding:3px 8px;border-radius:5px;'
+        +'border:1px solid #f5c6cb;cursor:pointer;white-space:nowrap" title="Eliminar licencia">🗑 Borrar</button>'
+      : '';
     html += '<tr class="cdgv2-lic-item" data-id="'+escH(l.id)+'" style="background:'+rowBg+';cursor:pointer" '
       +'onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\''+rowBg+'\'">'
       +'<td style="padding:10px 10px;font-weight:700;font-size:.9rem;white-space:nowrap">'+escH(l.id)+'</td>'
       +'<td style="padding:10px 10px;font-size:.82rem;color:#555;white-space:nowrap">'+escH(l.tipo)+'</td>'
       +'<td style="padding:10px 10px;font-size:.82rem;color:#666;white-space:nowrap">'+escH(l.creadoPor)+'</td>'
+      +'<td style="padding:10px 10px;font-size:.78rem;color:#888;white-space:nowrap">'+escH(fechaFmt)+'</td>'
       +'<td class="tc" style="padding:10px 10px;font-size:.88rem;font-weight:600">'+l.totalLineas+'</td>'
       +'<td style="padding:10px 10px;font-size:.78rem;color:#888">'+escH(usuarios)+'</td>'
       +'<td class="tc" style="padding:10px 10px">'
         +'<span style="font-size:.72rem;padding:3px 10px;border-radius:10px;background:'+estadoColor+';color:'+estadoFg+';font-weight:600;white-space:nowrap">'+estadoText+'</span>'
       +'</td>'
+      +'<td class="tc" style="padding:10px 10px">'+btnEliminar+'</td>'
       +'</tr>';
   });
 
@@ -9287,8 +9307,29 @@ function renderCdgv2Lista(licencias){
   el.innerHTML = html;
 
   el.querySelectorAll('.cdgv2-lic-item').forEach(function(item){
-    item.addEventListener('click', function(){
+    item.addEventListener('click', function(e){
+      // No abrir licencia si se hizo clic en el botón de borrar
+      if(e.target.classList.contains('cdgv2-lista-del-btn') || e.target.closest('.cdgv2-lista-del-btn')) return;
       cdgv2AbrirLicencia(item.dataset.id);
+    });
+  });
+
+  el.querySelectorAll('.cdgv2-lista-del-btn').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      var lid     = btn.dataset.id;
+      var nLineas = parseInt(btn.dataset.lineas)||0;
+      var aviso   = nLineas > 0
+        ? '⚠️ La licencia "'+lid+'" tiene '+nLineas+' línea(s) capturadas.\n\n¿Seguro que querés eliminarla? Esta acción no se puede deshacer.'
+        : '¿Eliminás la licencia "'+lid+'"? Esta acción no se puede deshacer.';
+      if(!confirm(aviso)) return;
+      if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
+      btn.textContent = 'Borrando…'; btn.disabled = true;
+      cdgv2Fetch('DELETE', '/api/cdg/v2/'+lid, { usuario: currentUser.name })
+        .then(function(d){
+          if(!d.ok){ alert(d.error||'Error al eliminar'); btn.textContent='🗑 Borrar'; btn.disabled=false; return; }
+          cdgv2CargarLista();
+        }).catch(function(){ alert('Sin conexión'); btn.textContent='🗑 Borrar'; btn.disabled=false; });
     });
   });
 }
@@ -9575,7 +9616,8 @@ function renderCdgv2Lineas(){
       : '';
 
     var tarimaFmt  = l.tarima != null ? String(l.tarima) : '—';
-    var auditado   = l.auditado_manual || '';
+    var audMap     = (cdgv2LicenciaActual && cdgv2LicenciaActual.auditadoManual) || {};
+    var auditado   = audMap[l.id] || '';
     var audBg      = auditado === 'Auditado' ? '#e8f5e9' : auditado === 'No Auditado' ? '#fdecea' : '#f5f5f3';
     var audFg      = auditado === 'Auditado' ? '#2e7d32' : auditado === 'No Auditado' ? '#c0392b' : '#888';
     var audSelect  = !cerrada
@@ -9620,22 +9662,30 @@ function renderCdgv2Lineas(){
     });
   });
 
-  // Handler cambio auditado_manual
+  // Handler cambio auditado_manual (guardado en meta, sin alterar cdg_lineas)
   el.querySelectorAll('.cdgv2-auditado-sel').forEach(function(sel){
     sel.addEventListener('change', function(){
       var lid   = sel.dataset.id;
       var valor = sel.value;
       var lmeta = cdgv2LicenciaActual;
-      var linea = cdgv2Lineas.find(function(x){ return x.id === lid; });
-      if(!linea || !currentUser) return;
-      // Actualizar visualmente de inmediato
+      if(!lmeta || !currentUser) return;
+      // Actualizar mapa local de inmediato para que el siguiente render lo refleje
+      if(!lmeta.auditadoManual) lmeta.auditadoManual = {};
+      if(valor) lmeta.auditadoManual[lid] = valor;
+      else      delete lmeta.auditadoManual[lid];
+      // Actualizar color del select de inmediato
       var bg = valor==='Auditado'?'#e8f5e9':valor==='No Auditado'?'#fdecea':'#f5f5f3';
       var fg = valor==='Auditado'?'#2e7d32':valor==='No Auditado'?'#c0392b':'#888';
       sel.style.background = bg; sel.style.color = fg;
-      cdgv2Fetch('PATCH', '/api/cdg/v2/'+(lmeta?lmeta.id:'?')+'/linea/'+lid,
-        { usuario: linea.autor, auditado_manual: valor })
+      // Persistir en meta (no en cdg_lineas — no requiere columna extra en Supabase)
+      var patch = {};
+      patch[lid] = valor;
+      cdgv2Fetch('PATCH', '/api/cdg/v2/'+lmeta.id+'/meta',
+        { usuario: currentUser.name, auditadoManual: patch })
         .then(function(d){
           if(!d.ok) alert(d.error||'Error al guardar estado auditado');
+          // Sincronizar mapa con lo que devolvió el server
+          if(d.auditadoManual) lmeta.auditadoManual = d.auditadoManual;
         }).catch(function(){ alert('Sin conexión'); });
     });
   });
