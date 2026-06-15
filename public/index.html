@@ -10037,6 +10037,14 @@ var BOD_PREFIJOS = {
 var BOD_ENABLED_CLIENT = false;
 window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
 
+// RGIS_LIST también se expone aquí para que el login (script anterior) lo encuentre
+// si por alguna razón el bloque de login corrió antes de que window.RGIS_LIST estuviera listo.
+window.RGIS_LIST = window.RGIS_LIST || [
+  'Operador 1','Operador 2','Operador 3','Operador 4','Operador 5',
+  'Operador 6','Operador 7','Operador 8',
+  'Operador 9','Operador 10','Operador 11','Operador 12','Operador 13','Operador 14'
+];
+
 // ── Estado interno ───────────────────────────────────────────────────────
 var _bodCapturaSesion = null;   // sesión activa en captura
 var _bodAudSesion     = null;   // sesión activa en auditoría
@@ -10099,7 +10107,7 @@ function bodLookupSku(q, sesId, cb){
 // ══════════════════════════════════════════════════════════════════════════
 
 function bodMostrarMenuPrincipal(){
-  if(!BOD_ENABLED_CLIENT){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
+  if(!window.BOD_ENABLED_CLIENT){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
   if(!window.currentUser){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
   var role = window.currentUser.role;
   if(role!=='bodega'&&role!=='supervisor'&&role!=='contador'){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
@@ -10279,7 +10287,7 @@ function bodRenderPanelCaptura(el){
     +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Cód. Barra / SKU</label>'
     +'<input type="text" id="cap-barra" placeholder="Escanear o escribir" style="width:150px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" autocorrect="off"></div>'
     +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">SKU</label>'
-    +'<input type="text" id="cap-sku" placeholder="SKU" style="width:120px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" readonly></div>'
+    +'<input type="text" id="cap-sku" placeholder="SKU" style="width:120px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" autocapitalize="characters"></div>'
     +'<div style="flex:1;min-width:140px"><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Descripción</label>'
     +'<input type="text" id="cap-desc" placeholder="Descripción" style="width:100%;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off"></div>'
     +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Tarima</label>'
