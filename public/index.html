@@ -8700,6 +8700,7 @@ var wmsSkus           = [];    // array del WMS: [{sku, descripcion, cantidad}]
 var wmsLineasCDG      = [];    // líneas capturadas CDG vigentes
 var wmsFilasComp      = [];    // resultado de comparación (array completo)
 var wmsFiltroActivo   = 'todos';
+var wmsAuditadoMap    = {};    // SKU (upper) → 'Auditado'|'No Auditado'|'' para la comparación
 
 // Navegar a pg-cdg-manifiesto: cargar lista de licencias
 document.getElementById('sm-cdg-manifiesto').addEventListener('click', function(){
@@ -8893,10 +8894,28 @@ function wmsCargarEstado(licId){
     var licResp  = results[1];
 
     wmsSkus = wmsResp.ok ? (wmsResp.skus || []) : [];
+    wmsAuditadoMap = {};
 
     // Líneas CDG vigentes según fuente
     if(fuente === 'colaborativo') {
       wmsLineasCDG = licResp.ok ? (licResp.lineas || []).filter(function(l){ return !l.eliminada; }) : [];
+      // Construir mapa SKU → estado auditado desde meta.auditadoManual
+      var audMeta = (licResp.ok && licResp.meta && licResp.meta.auditadoManual) ? licResp.meta.auditadoManual : {};
+      wmsAuditadoMap = {};
+      wmsLineasCDG.forEach(function(l){
+        var skuUp = String(l.sku||'').trim().toUpperCase();
+        if(!skuUp) return;
+        var estado = audMeta[l.id] || '';
+        // Si hay cualquier estado establecido para ese SKU, lo asignamos.
+        // Prioridad: 'No Auditado' > 'Auditado' > '' (si hay discrepancia entre líneas del mismo SKU)
+        if(!wmsAuditadoMap[skuUp]) {
+          wmsAuditadoMap[skuUp] = estado;
+        } else if(estado === 'No Auditado') {
+          wmsAuditadoMap[skuUp] = 'No Auditado';
+        } else if(estado === 'Auditado' && wmsAuditadoMap[skuUp] === '') {
+          wmsAuditadoMap[skuUp] = 'Auditado';
+        }
+      });
     } else {
       wmsLineasCDG = licResp.lineas || [];
     }
@@ -9057,6 +9076,7 @@ function wmsRenderizarTabla(){
     +'<th class="tc">Teórico WMS</th>'
     +'<th class="tc">Validado CDG</th>'
     +'<th class="tc">Diferencia</th>'
+    +'<th class="tc" style="min-width:110px">Estado</th>'
     +'</tr></thead><tbody>';
   filas.forEach(function(f){
     var bg   = colores[f.estado] || '#fff';
@@ -9064,12 +9084,19 @@ function wmsRenderizarTabla(){
                  : f.diferencia < 0   ? '#c0392b' : '#1b5e20';
     var difStr   = f.diferencia > 0 ? '+'+f.diferencia.toLocaleString('es-GT')
                  : f.diferencia.toLocaleString('es-GT');
+    var audVal  = wmsAuditadoMap[String(f.sku||'').toUpperCase()] || '';
+    var audBg   = audVal==='Auditado' ? '#e8f5e9' : audVal==='No Auditado' ? '#fdecea' : '#f5f5f3';
+    var audFg   = audVal==='Auditado' ? '#2e7d32' : audVal==='No Auditado' ? '#c0392b' : '#aaa';
+    var audHtml = audVal
+      ? '<span style="font-size:.72rem;padding:2px 8px;border-radius:5px;font-weight:600;background:'+audBg+';color:'+audFg+'">'+escH(audVal)+'</span>'
+      : '<span style="font-size:.72rem;color:#ccc">—</span>';
     h += '<tr style="background:'+bg+'">'
       +'<td style="font-weight:600;font-size:.85rem">'+escH(f.sku)+'</td>'
       +'<td style="font-size:.82rem;color:#444">'+(f.descripcion ? escH(f.descripcion) : '<span style="color:#aaa">sin descripción</span>')+'</td>'
       +'<td class="tc">'+f.cantWMS.toLocaleString('es-GT')+'</td>'
       +'<td class="tc">'+f.cantCDG.toLocaleString('es-GT')+'</td>'
       +'<td class="tc" style="font-weight:600;color:'+difColor+'">'+difStr+'</td>'
+      +'<td class="tc">'+audHtml+'</td>'
       +'</tr>';
   });
   h += '</tbody></table>';
@@ -9165,16 +9192,17 @@ function wmsExportarManifiesto(){
   hdrRows.push([]); // fila vacía
 
   // Fila de encabezados de columna
-  var colHdr = ['CODIGO', 'DESCRIPCION', 'CANTIDAD', 'VALIDADO EN CDG', 'DIFERENCIA'];
+  var colHdr = ['CODIGO', 'DESCRIPCION', 'CANTIDAD', 'VALIDADO EN CDG', 'DIFERENCIA', 'ESTADO'];
   var dataRows = wmsFilasComp.map(function(f){
-    return [f.sku, f.descripcion || 'sin descripción registrada', f.cantWMS, f.cantCDG, f.diferencia];
+    var audVal = wmsAuditadoMap[String(f.sku||'').toUpperCase()] || '';
+    return [f.sku, f.descripcion || 'sin descripción registrada', f.cantWMS, f.cantCDG, f.diferencia, audVal || '—'];
   });
 
   // Totales
   var totWMS = wmsFilasComp.reduce(function(a,f){ return a+f.cantWMS; }, 0);
   var totCDG = wmsFilasComp.reduce(function(a,f){ return a+f.cantCDG; }, 0);
   dataRows.push([]);
-  dataRows.push(['TOTALES', '', totWMS, totCDG, totCDG - totWMS]);
+  dataRows.push(['TOTALES', '', totWMS, totCDG, totCDG - totWMS, '']);
 
   // Construir libro con SheetJS
   try {
@@ -9191,7 +9219,8 @@ function wmsExportarManifiesto(){
       { wch: 45 }, // DESCRIPCION
       { wch: 14 }, // CANTIDAD
       { wch: 16 }, // VALIDADO EN CDG
-      { wch: 12 }  // DIFERENCIA
+      { wch: 12 }, // DIFERENCIA
+      { wch: 14 }  // ESTADO
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, 'Manifiesto');
