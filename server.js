@@ -2126,6 +2126,38 @@ app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, re
   }
 });
 
+// ── PATCH /api/cdg/v2/:id/meta ────────────────────────────────────────────
+// Permite al creador o supervisor editar el alias y/o tipo de la licencia.
+// Body: { usuario, alias?, tipo? }
+app.patch('/api/cdg/v2/:id/meta', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario, alias, tipo } = req.body;
+
+  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(meta.estado === 'cerrado') {
+      return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
+    }
+    if(alias  !== undefined) meta.alias = String(alias).trim();
+    if(tipo   !== undefined) meta.tipo  = String(tipo).trim();
+    meta.version = (meta.version || 0) + 1;
+    if(meta.usuarios && meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG meta save');
+    console.log('CDG v2 meta editada:', licenciaId, 'por:', usuario);
+    res.json({ ok: true });
+  } catch(e) {
+    console.log('CDG v2 meta FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
 // ── GET /api/cdg/v2/:id ────────────────────────────────────────────────────
 // Polling del estado de la licencia. El cliente pasa su último timestamp
 // conocido de líneas para recibir solo el delta.
@@ -2160,7 +2192,7 @@ app.get('/api/cdg/v2/:id', async (req, res) => {
 // fotos[]: array de paths en Storage (ya subidos antes de llamar este endpoint)
 app.post('/api/cdg/v2/:id/linea', async (req, res) => {
   var licenciaId = cdgNormId(req.params.id);
-  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos, tarima } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!sku)     return res.status(400).json({ ok: false, error: 'falta sku' });
@@ -2193,6 +2225,7 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
       descripcion:  descripcion || '',
       cantidad:     Number(cantidad),
       costo_unit:   costoUnit !== undefined ? Number(costoUnit) : null,
+      tarima:       tarima != null ? Number(tarima) : null,
       autor:        usuario,
       fotos:        fotosArr,
       ts_creacion:  now,
@@ -2253,11 +2286,11 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
 
 // ── PATCH /api/cdg/v2/:id/linea/:lineaId ──────────────────────────────────
 // Edita una línea propia (datos o fotos). Solo el autor puede editar su línea.
-// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos? }
+// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos?, tarima?, auditado_manual? }
 app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
   var licenciaId = cdgNormId(req.params.id);
   var lineaId    = req.params.lineaId;
-  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos, tarima, auditado_manual } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!cdgLockAcquire(licenciaId)) {
@@ -2273,11 +2306,13 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
 
     // Construir patch solo con campos enviados
     var patch = {};
-    if(sku       !== undefined) patch.sku          = String(sku).trim();
-    if(descripcion !== undefined) patch.descripcion = descripcion;
-    if(cantidad  !== undefined) patch.cantidad      = Number(cantidad);
-    if(costoUnit !== undefined) patch.costo_unit    = Number(costoUnit);
-    if(fotos     !== undefined) {
+    if(sku             !== undefined) patch.sku             = String(sku).trim();
+    if(descripcion     !== undefined) patch.descripcion     = descripcion;
+    if(cantidad        !== undefined) patch.cantidad        = Number(cantidad);
+    if(costoUnit       !== undefined) patch.costo_unit      = Number(costoUnit);
+    if(tarima          !== undefined) patch.tarima          = tarima != null ? Number(tarima) : null;
+    if(auditado_manual !== undefined) patch.auditado_manual = auditado_manual || null;
+    if(fotos           !== undefined) {
       var fotosArr = Array.isArray(fotos) ? fotos : [];
       if(fotosArr.length > 3) {
         return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
@@ -2426,6 +2461,50 @@ app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
   } catch(e) {
     console.log('CDG v2 fotos encabezado FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudieron guardar las fotos. Reintentá. (' + e.message + ')' });
+  } finally {
+    cdgLockRelease(licenciaId);
+  }
+});
+
+// ── PATCH /api/cdg/v2/:id/fotos-encabezado-slot ───────────────────────────
+// Reemplaza la foto de encabezado en un slot específico (0-4).
+// Body: { usuario, idx, foto }
+app.patch('/api/cdg/v2/:id/fotos-encabezado-slot', async (req, res) => {
+  var licenciaId = cdgNormId(req.params.id);
+  var { usuario, idx, foto } = req.body;
+
+  if(!usuario)              return res.status(400).json({ ok: false, error: 'falta usuario' });
+  if(foto === undefined)    return res.status(400).json({ ok: false, error: 'falta foto' });
+  var slotIdx = parseInt(idx);
+  if(isNaN(slotIdx) || slotIdx < 0 || slotIdx > 4) {
+    return res.status(400).json({ ok: false, error: 'idx inválido (0-4)' });
+  }
+  if(!cdgLockAcquire(licenciaId)) {
+    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
+  }
+  try {
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
+    if(!cdgAceptaLineas(meta)) {
+      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado });
+    }
+    var fotos = (meta.fotosEncabezado || []).slice();
+    // Rellenar con strings vacíos hasta el índice necesario
+    while(fotos.length <= slotIdx) fotos.push('');
+    fotos[slotIdx] = foto;
+    meta.fotosEncabezado = fotos;
+    meta.version = (meta.version || 0) + 1;
+    if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
+    var metaFresh = await cdgGetMeta(licenciaId);
+    if(metaFresh && metaFresh.estado === 'cerrado') {
+      return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras subías la foto.' });
+    }
+    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG fotos slot save');
+    console.log('CDG v2 foto encabezado reemplazada:', licenciaId, 'slot:', slotIdx);
+    res.json({ ok: true, fotosEncabezado: meta.fotosEncabezado });
+  } catch(e) {
+    console.log('CDG v2 fotos slot FAILED:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la foto. Reintentá. (' + e.message + ')' });
   } finally {
     cdgLockRelease(licenciaId);
   }
