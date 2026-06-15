@@ -509,135 +509,45 @@ textarea.field-inp{resize:vertical;min-height:72px}
       </div>
     </div>
 
-    <!-- ── MÓDULO BODEGA CDG v2 ─────────────────────────────────────────────
-         Clean rewrite jue 12-jun-2026. State: window._bod. No parches.
+    <!-- ── MÓDULO BODEGA CDG v3 ─────────────────────────────────────────────
+         Reconstrucción desde cero jun-2026. Fuente: Bloqque_Bodega_CDG.docx
+         No usa /api/state. Tablas: bod_sesiones, bod_lineas, bod_teorico_952,
+         bod_manifiestos_control, bod_papel_trabajo, bod_licencia_hija, sku_catalog
     ─────────────────────────────────────────────────────────────────────── -->
 
-    <!-- MENÚ PRINCIPAL -->
-        <div id="pg-bod-menu" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG — Armado de Tarimas</p>
+    <!-- MENÚ BODEGA CDG -->
+    <div id="pg-bod-menu" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Módulo Bodega CDG</p>
       <div class="submenu-list">
         <div class="submenu-item" id="sm-bod-captura">
           <div class="si-icon">📦</div>
-          <div class="si-text">
-            <div class="si-title">Capturar tarima</div>
-            <div class="si-sub">Registrar ítems por tarima</div>
-          </div>
+          <div class="si-body"><div class="si-title">Captura de Tarima</div><div class="si-sub">Registrar tarimas y SKUs por operador</div></div>
         </div>
         <div class="submenu-item" id="sm-bod-auditoria" style="display:none">
           <div class="si-icon">🔍</div>
-          <div class="si-text">
-            <div class="si-title">Auditar sesión</div>
-            <div class="si-sub">Supervisores y contadores</div>
-          </div>
+          <div class="si-body"><div class="si-title">Auditar Sesión</div><div class="si-sub">Tarimas · Detalle · Teórico · Manifiestos · Papel de Trabajo</div></div>
         </div>
         <div class="submenu-item" id="sm-bod-barra-sku" style="display:none">
           <div class="si-icon">📋</div>
-          <div class="si-text">
-            <div class="si-title">Catálogo barra-SKU</div>
-            <div class="si-sub">Solo supervisores</div>
-          </div>
+          <div class="si-body"><div class="si-title">Catálogo Barra-SKU</div><div class="si-sub">Base de datos de códigos y SKUs</div></div>
         </div>
       </div>
     </div>
 
-    <!-- CATÁLOGO BARRA-SKU (sin cambios, funciona bien) -->
+    <!-- CATÁLOGO BARRA-SKU -->
     <div id="pg-bod-barra-sku" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.75rem">Catálogo barra-SKU — Carga masiva</p>
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <p style="font-size:.82rem;color:#555;margin:0 0 .75rem">
-          Seleccioná un archivo <strong>Excel (.xlsx)</strong> con columnas
-          <code>barra</code>, <code>sku</code> y <code>descripcion</code>.
-        </p>
-        <label class="btn btn-dark" style="cursor:pointer;display:inline-block;position:relative">
-          📂 Elegir archivo…
-          <input type="file" id="inp-bod-barra-sku" accept=".xlsx,.xls,.csv"
-                 style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">
-        </label>
-        <span id="bod-barra-sku-nombre" style="margin-left:.75rem;font-size:.83rem;color:#555"></span>
-        <div style="margin-top:.75rem">
-          <button class="btn btn-dark" id="btn-bod-barra-sku-upload" disabled>⬆️ Subir catálogo</button>
-        </div>
-        <div id="bod-barra-sku-msg" style="font-size:.82rem;margin-top:.6rem"></div>
-      </div>
+      <div id="bod-barra-contenido"></div>
     </div>
 
     <!-- CAPTURA DE TARIMA -->
-        <!-- ── BODEGA: CAPTURA DE TARIMA ──────────────────────────── -->
     <div id="pg-bod-captura" class="page">
-      <!-- Encabezado sesión -->
-      <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Licencia (Bolsón)</label>
-            <input type="text" class="field-inp" id="bod-licencia" placeholder="Ej: U25-162000" autocomplete="off" style="text-transform:uppercase">
-          </div>
-          <div style="min-width:130px">
-            <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Fecha trabajo</label>
-            <input type="date" class="field-inp" id="bod-fecha">
-          </div>
-          <button class="btn btn-dark" id="btn-bod-abrir-sesion">Abrir sesión</button>
-        </div>
-        <div id="bod-sesion-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        <div id="bod-sesion-info" style="font-size:.78rem;color:#888;margin-top:3px"></div>
-      </div>
-
-      <!-- Formulario captura (oculto hasta tener sesión) -->
-      <div id="bod-form-captura" style="display:none">
-        <div class="card" style="padding:.85rem 1rem;margin-bottom:.75rem">
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-            <div style="min-width:100px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Tarima</label>
-              <select class="field-inp" id="bod-sel-tarima" style="font-size:.85rem;padding:6px 8px">
-                <!-- Generado por JS: A1-A100 -->
-              </select>
-            </div>
-            <div style="min-width:130px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Barra (opcional)</label>
-              <input type="text" class="field-inp" id="bod-barra" placeholder="Escanear o escribir" autocomplete="off" inputmode="text">
-            </div>
-            <div style="min-width:80px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">SKU</label>
-              <input type="text" class="field-inp" id="bod-sku" placeholder="SKU" autocomplete="off" inputmode="numeric">
-            </div>
-            <div style="flex:2;min-width:130px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Descripción</label>
-              <input type="text" class="field-inp" id="bod-desc" placeholder="Autofill o manual">
-            </div>
-            <div style="min-width:70px">
-              <label style="font-size:.75rem;color:#666;display:block;margin-bottom:3px;text-transform:uppercase">Cantidad</label>
-              <input type="number" class="field-inp" id="bod-cantidad" value="1" min="1" step="1" style="width:70px">
-            </div>
-            <button class="btn btn-dark" id="btn-bod-agregar">+ Agregar</button>
-          </div>
-          <div id="bod-captura-msg" style="font-size:.82rem;margin-top:.5rem"></div>
-        </div>
-
-        <!-- Tabla últimos 15 -->
-        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.4rem;flex-wrap:wrap">
-          <div style="font-size:.78rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.3px">Últimas capturas</div>
-          <select id="bod-filtro-operador" class="field-inp" style="font-size:.78rem;padding:3px 8px;max-width:150px">
-            <option value="mis">Mis capturas</option>
-            <option value="todos">Todos</option>
-          </select>
-        </div>
-        <div class="tbl-wrap">
-          <table>
-            <thead><tr>
-              <th>Operador</th><th>Tarima</th><th>Barra</th>
-              <th>SKU</th><th>Descripción</th><th class="tc">Cant.</th><th>Hora</th>
-            </tr></thead>
-            <tbody id="bod-tabla-capturas"></tbody>
-          </table>
-        </div>
-      </div>
+      <div id="bod-captura-contenido"></div>
     </div>
 
-    <!-- AUDITAR SESIÓN — contenido 100% renderizado por JS -->
+    <!-- AUDITAR SESIÓN -->
     <div id="pg-bod-auditoria" class="page">
       <div id="bod-aud-contenido"></div>
     </div>
-
 
     <!-- ── PÁGINA: SUBMENÚ HAMILTON ──────────────────────────── -->
     <div id="pg-hamilton" class="page">
@@ -10105,1273 +10015,1253 @@ document.getElementById('btn-topbar-back').addEventListener('click', function(){
 <script>
 (function(){ 'use strict';
 
+// ══════════════════════════════════════════════════════════════════════════
+//  BODEGA CDG v3 — Reconstrucción desde cero
+//  Fuente: Bloqque_Bodega_CDG.docx (jun-2026)
+//  No usa /api/state. Endpoints: /api/bod/*
+//  Tablas: bod_sesiones, bod_lineas, bod_teorico_952,
+//          bod_manifiestos_control, bod_papel_trabajo,
+//          bod_licencia_hija, sku_catalog
+// ══════════════════════════════════════════════════════════════════════════
+
 // ── Constantes ──────────────────────────────────────────────────────────
 var BODEGA_LIST = ['Huvaldo Pérez','Ader Chávez','Angie Suar','Duma Pérez','Edgar Soto','Alejandra Galeros','Sharon Hernández'];
-window.BODEGA_LIST = BODEGA_LIST; // exponer para el login en script anterior
+window.BODEGA_LIST = BODEGA_LIST;
 
-window.RGIS_ACCESS_KEY = 'CLAVE_RGIS_AQUI';
-window.RGIS_LIST = ['Operador 1','Operador 2','Operador 3','Operador 4','Operador 5',
-  'Operador 6','Operador 7','Operador 8',
-  'Operador 9','Operador 10','Operador 11','Operador 12','Operador 13','Operador 14'];
+// Prefijo de tarima por operador (A=Huvaldo, B=Ader, ...)
+var BOD_PREFIJOS = {
+  'Huvaldo Pérez':'A','Ader Chávez':'B','Angie Suar':'C','Duma Pérez':'D',
+  'Edgar Soto':'E','Alejandra Galeros':'F','Sharon Hernández':'G'
+};
 
 var BOD_ENABLED_CLIENT = false;
 window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
 
-// ── Estado interno (no toca variables globales del resto de la app) ──────
-var bodSesionActual  = null;  // objeto sesión abierta
-var bodLineas        = [];    // array de líneas de la sesión
-var bodPollTimer     = null;
+// ── Estado interno ───────────────────────────────────────────────────────
+var _bodCapturaSesion = null;   // sesión activa en captura
+var _bodAudSesion     = null;   // sesión activa en auditoría
+var _bodAudTab        = '4-control'; // tab activo en auditoría
+var _bodAudPtActivo   = null;   // PT activo en papel de trabajo
+var _bodTeorico       = {};     // mapa sku→cantidad_952 del teórico cargado
 
-// ── Inicialización: consultar status al servidor ─────────────────────────
-function bodEnsureAudPoll(){
-  if(!bodAudPollTimer){
-    bodAudPollTimer = setInterval(bodAuditoriaAutoRefresh, 5000);
-  }
-}
-
-function bodInit() {
-  fetch('/api/bod/status')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      BOD_ENABLED_CLIENT = !!(d && d.enabled);
-      window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
-      if(BOD_ENABLED_CLIENT) {
-        // Mostrar botón bodega en menú si supervisor
-        bodMostrarMenuPrincipal();
-        // Mostrar opción auditoria a supervisores en pg-bod-menu
-        var audBtn   = document.getElementById('sm-bod-auditoria');
-        var barraBtn = document.getElementById('sm-bod-barra-sku');
-        if(audBtn   && typeof isSup === 'function' && isSup()) audBtn.style.display   = '';
-        if(barraBtn && typeof isSup === 'function' && isSup()) barraBtn.style.display = '';
-      }
-    })
-    .catch(function(){
-      BOD_ENABLED_CLIENT = false;
-      window.BOD_ENABLED_CLIENT = false;
-    });
-  bodEnsureAudPoll();
-}
-
-// ── Helpers de rol BOD ───────────────────────────────────────────────────
+// ── Helpers de rol ──────────────────────────────────────────────────────
 function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
 function isBodAuditor() { return !!(window.currentUser && (window.currentUser.role === 'supervisor' || window.currentUser.role === 'contador')); }
-function bodTarimaPrefix(nombre) {
-  var map = { 'Huvaldo Pérez':'A', 'Ader Chávez':'B', 'Angie Suar':'C', 'Duma Pérez':'D', 'Edgar Soto':'E',
-              'Alejandra Galeros':'F', 'Sharon Hernández':'G' };
-  return map[nombre] || 'A';
+
+function bodEscA(s){ var d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML; }
+
+function bodFetch(method, path, body){
+  var opts = { method:method, headers:{'Content-Type':'application/json'} };
+  if(body) opts.body = JSON.stringify(body);
+  return fetch(path, opts).then(function(r){ return r.json(); });
 }
 
-// Mostrar tarjeta bodega en pg-menu solo si habilitado y usuario correcto
-function bodMostrarMenuPrincipal() {
-  if(!BOD_ENABLED_CLIENT) {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
-  if(!window.currentUser) {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
+function bodHoyGT(){
+  return new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+}
+
+function bodFmtFecha(iso){
+  if(!iso) return '';
+  var d = iso.slice(0,10).split('-');
+  return d[2]+'/'+d[1]+'/'+d[0];
+}
+
+function bodCurrentUser(){ return window.currentUser ? window.currentUser.name : ''; }
+
+// ── Prefijo tarima por operador ──────────────────────────────────────────
+function bodPrefijo(nombre){
+  return BOD_PREFIJOS[nombre] || 'X';
+}
+
+// ── Lookup SKU desde sku_catalog y bod_lineas ────────────────────────────
+function bodLookupSku(q, sesId, cb){
+  // q puede ser barra o sku
+  var q2 = String(q||'').trim().toUpperCase();
+  if(!q2){ cb(null); return; }
+  // Intentar por barra primero
+  bodFetch('GET','/api/bod/barra/'+encodeURIComponent(q2))
+    .then(function(d){
+      if(d && d.ok && d.encontrado){
+        cb({ sku:d.sku, descripcion:d.descripcion||'' });
+      } else {
+        // Buscar en sku_catalog por sku
+        bodFetch('GET','/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(q2))
+          .then(function(d2){
+            var r = d2 && d2.results && d2.results[0];
+            cb(r ? { sku:r.sku, descripcion:r.descripcion||'' } : { sku:q2, descripcion:'' });
+          }).catch(function(){ cb({ sku:q2, descripcion:'' }); });
+      }
+    }).catch(function(){ cb({ sku:q2, descripcion:'' }); });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  MENÚ BODEGA CDG
+// ══════════════════════════════════════════════════════════════════════════
+
+function bodMostrarMenuPrincipal(){
+  if(!BOD_ENABLED_CLIENT){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
+  if(!window.currentUser){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
   var role = window.currentUser.role;
-  if(role !== 'bodega' && role !== 'supervisor' && role !== 'contador') {
-    var mcBodX = document.getElementById('mc-bodega'); if(mcBodX) mcBodX.remove(); return;
-  }
-  // Scope bodega: entra directo a pg-bod-menu, no necesita tarjeta en pg-menu
-  if(window.ACCESS_SCOPE === 'bodega') return;
-  // Agregar tarjeta mc-bodega si no existe
+  if(role!=='bodega'&&role!=='supervisor'&&role!=='contador'){ var c=document.getElementById('mc-bodega'); if(c)c.remove(); return; }
+  if(window.ACCESS_SCOPE==='bodega') return; // bodega va directo a pg-bod-menu
   var mcBod = document.getElementById('mc-bodega');
-  if(!mcBod) {
-    var menuCards = document.querySelector('#pg-menu .menu-grid, #pg-menu .menu-cards, #pg-menu .main-menu');
+  if(!mcBod){
+    var menuCards = document.querySelector('#pg-menu .menu-grid');
     if(!menuCards) return;
     var card = document.createElement('div');
-    card.className = 'menu-card';
-    card.id = 'mc-bodega';
-    card.innerHTML = '<div class="mc-icon">📦</div><div class="mc-title">Bodega CDG</div><div class="mc-sub">Armado de Tarimas</div>';
-    card.addEventListener('click', function(){
-      if(typeof navTo === 'function') navTo('pg-bod-menu','📦 Bodega CDG');
+    card.className='menu-card'; card.id='mc-bodega';
+    card.innerHTML='<div class="mc-icon">📦</div><div class="mc-title">Bodega CDG</div><div class="mc-sub">Armado de Tarimas</div>';
+    card.addEventListener('click',function(){
+      if(typeof navTo==='function') navTo('pg-bod-menu','📦 Bodega CDG');
       bodAbrirMenu();
     });
     menuCards.appendChild(card);
   }
 }
 
-// ── Menú bodega ──────────────────────────────────────────────────────────
-function bodAbrirMenu() {
-  var captBtn   = document.getElementById('sm-bod-captura');
-  var audBtn    = document.getElementById('sm-bod-auditoria');
-  var barraBtn  = document.getElementById('sm-bod-barra-sku');
-  // Mostrar/ocultar según rol
-  if(captBtn)   captBtn.style.display   = (isBodBodega() || (typeof isSup==='function' && isSup())) ? '' : 'none';
-  if(audBtn)    audBtn.style.display    = isBodAuditor() ? '' : 'none';
-  if(barraBtn)  barraBtn.style.display  = (typeof isSup==='function' && isSup()) ? '' : 'none';
-  // FIX (vie 12-jun-2026, v5.2.31): cablear clicks de submenu (solo una vez)
-  if(!window._bodMenuWired) {
+function bodAbrirMenu(){
+  var captBtn  = document.getElementById('sm-bod-captura');
+  var audBtn   = document.getElementById('sm-bod-auditoria');
+  var barraBtn = document.getElementById('sm-bod-barra-sku');
+  if(captBtn)  captBtn.style.display  = (isBodBodega()||(typeof isSup==='function'&&isSup())) ? '' : 'none';
+  if(audBtn)   audBtn.style.display   = isBodAuditor() ? '' : 'none';
+  if(barraBtn) barraBtn.style.display = isBodAuditor() ? '' : 'none';
+  if(!window._bodMenuWired){
     window._bodMenuWired = true;
-    if(captBtn) captBtn.addEventListener('click', function(){
-      navTo('pg-bod-captura', '📦 Capturar tarima');
-      if(typeof bodIniciarCaptura === 'function') bodIniciarCaptura();
-    });
-    if(audBtn) audBtn.addEventListener('click', function(){
-      navTo('pg-bod-auditoria', '🔍 Auditar sesión');
-      _bodAudSesion = null; _bodAudManifAct = null;
-      if(typeof bodRenderAuditoria === 'function') bodRenderAuditoria();
-    });
-    if(barraBtn) barraBtn.addEventListener('click', function(){
-      navTo('pg-bod-barra-sku', '📋 Catálogo barra-SKU');
-      if(typeof bodWireBarraSku === 'function') bodWireBarraSku();
-    });
+    if(captBtn) captBtn.addEventListener('click',function(){ navTo('pg-bod-captura','📦 Capturar tarima'); bodRenderCaptura(); });
+    if(audBtn)  audBtn.addEventListener('click',function(){ navTo('pg-bod-auditoria','🔍 Auditar sesión'); _bodAudSesion=null; bodRenderAuditoria(); });
+    if(barraBtn) barraBtn.addEventListener('click',function(){ navTo('pg-bod-barra-sku','📋 Catálogo Barra-SKU'); bodRenderBarraSku(); });
   }
 }
 
-// Exponer al scope global para que afterLogin (fuera del IIFE) pueda llamarlas
-window.bodMostrarMenuPrincipal = function(){
-  BOD_ENABLED_CLIENT = !!window.BOD_ENABLED_CLIENT || BOD_ENABLED_CLIENT;
-  window.BOD_ENABLED_CLIENT = BOD_ENABLED_CLIENT;
-  return bodMostrarMenuPrincipal();
-};
+window.bodMostrarMenuPrincipal = bodMostrarMenuPrincipal;
 window.bodAbrirMenu = bodAbrirMenu;
 
+// ══════════════════════════════════════════════════════════════════════════
+//  CLEANUP
+// ══════════════════════════════════════════════════════════════════════════
 window.bodCleanup = function(){
-  // FIX (vie 12-jun-2026, v5.2.31): variables old code → guardadas con typeof
-  bodSesionActual = null;
-  bodLineas = [];
-  if(typeof bodAuditoriaData    !== 'undefined') bodAuditoriaData    = null;
-  if(typeof bodFurgonAsignaciones !== 'undefined') bodFurgonAsignaciones = [];
-  if(typeof bodAudLastRefresh   !== 'undefined') bodAudLastRefresh   = 0;
-  if(typeof bodAudPollTimer     !== 'undefined' && bodAudPollTimer){ clearInterval(bodAudPollTimer); bodAudPollTimer = null; }
-  // Reset new audit state
-  window._bodMenuWired = false; // allow re-wiring on next login
-  _bodAudSesion = null;
-  _bodAudManifAct = null;
-  _bodAudTeorico = {};
-  _bodAudTab = '4-control';
-  // Limpiar UI
-  var mcBod = document.getElementById('mc-bodega');
-  if(mcBod) mcBod.remove();
-  var captBtn = document.getElementById('sm-bod-captura');
-  var audBtn  = document.getElementById('sm-bod-auditoria');
-  var barraBtn = document.getElementById('sm-bod-barra-sku');
-  if(captBtn)  captBtn.style.display  = 'none';
-  if(audBtn)   audBtn.style.display   = 'none';
-  if(barraBtn) barraBtn.style.display = 'none';
-  var audCont = document.getElementById('bod-aud-contenido');
-  if(audCont) audCont.innerHTML = '';
+  _bodCapturaSesion = null;
+  _bodAudSesion     = null;
+  _bodAudPtActivo   = null;
+  _bodTeorico       = {};
+  window._bodMenuWired = false;
+  var el; 
+  el=document.getElementById('bod-captura-contenido'); if(el) el.innerHTML='';
+  el=document.getElementById('bod-aud-contenido');     if(el) el.innerHTML='';
+  el=document.getElementById('bod-barra-contenido');   if(el) el.innerHTML='';
 };
 
-// ── Helper fetch bodega ───────────────────────────────────────────────────
-function bodFetch(method, path, body) {
-  var opts = { method: method, headers: {'Content-Type':'application/json'} };
-  if(body) opts.body = JSON.stringify(body);
-  return fetch(path, opts).then(function(r){ return r.json(); });
+// ══════════════════════════════════════════════════════════════════════════
+//  CATÁLOGO BARRA-SKU
+// ══════════════════════════════════════════════════════════════════════════
+function bodRenderBarraSku(){
+  var el=document.getElementById('bod-barra-contenido'); if(!el) return;
+  el.innerHTML='<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.8rem">Catálogo Barra-SKU</div>'
+    +'<p style="font-size:.82rem;color:#555;margin-bottom:.8rem">Cargá un Excel con columnas <strong>sku</strong> y <strong>descripcion</strong> (y opcionalmente <strong>barra</strong>) para actualizar el catálogo.</p>'
+    +'<input type="file" id="bod-barra-file" accept=".xlsx,.xls" style="font-size:.82rem;margin-bottom:.6rem"><br>'
+    +'<button class="btn btn-sm btn-dark" id="bod-barra-upload-btn">⬆ Subir catálogo</button>'
+    +'<div id="bod-barra-msg" style="font-size:.78rem;margin-top:.5rem"></div>';
+  document.getElementById('bod-barra-upload-btn').addEventListener('click',function(){
+    var fi=document.getElementById('bod-barra-file');
+    var msg=document.getElementById('bod-barra-msg');
+    if(!fi||!fi.files[0]){ msg.innerHTML='<span style="color:#c0392b">Seleccioná un archivo.</span>'; return; }
+    msg.innerHTML='<span style="color:#888">Subiendo…</span>';
+    var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('usuario',bodCurrentUser());
+    fetch('/api/bod/barra-sku/upload',{method:'POST',body:fd}).then(function(r){return r.json();})
+      .then(function(d){ msg.innerHTML=d.ok?'<span style="color:#1e7e34">✅ '+d.procesadas+' registros cargados</span>':'<span style="color:#c0392b">Error: '+bodEscA(d.error)+'</span>'; })
+      .catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+  });
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  BODEGA CDG v2 — Módulo funcional completo (sab 14-jun-2026)
-//  Tabs: 1.Tarimas · 2.Detalle · 3.Carga Teórico · 4.Control Manifiestos · 5.Papel de Trabajo
-//  Fórmula Diferencia = Teórico 952 − Físico s/Auditoría
-//    dif=0  → Cuadrado
-//    dif<0  → Sobrante físico  (PT: Solicitar traslado a 952)
-//    dif>0  → Faltante físico  (PT: Se queda en bolsón)
-//  NO hay pestaña Manifiesto — es archivo exportable desde Tab 4 / Tab 5.
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ── Estado central ──────────────────────────────────────────────────────────
-var _bodAudSesion   = null;   // { id, licencia_id, fecha, estado }
-var _bodAudTab      = '4-control';
-var _bodAudManifAct = null;   // PT activo para Tab 5
-var _bodAudTeorico  = {};     // cache { sku: { nombre, cantidad_952 } }
-var _bodAudLicHija  = {};     // cache { sku: cantidad_wms }
-var _bodFiltroTar   = '';     // filtro tarima Tab1→Tab2
-var _bodAudPollTimer= null;
-
-// ── Helper de escape HTML ─────────────────────────────────────────────────
-function bodEscA(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// ── Cálculo de diferencia (fórmula canónica) ──────────────────────────────
-function bodCalcDif(teo952, fisico){ return (Number(teo952)||0) - (Number(fisico)||0); }
-function bodEstado(dif){
-  if(dif===0) return 'Cuadrado';
-  return dif<0 ? 'Sobrante f\xedsico' : 'Faltante f\xedsico';
-}
-function bodSeguimiento(dif){
-  if(dif===0) return 'Cuadrado';
-  return dif<0 ? 'Solicitar traslado a 952' : 'Se queda en bols\xf3n';
-}
-function bodColorDif(dif){
-  if(dif===0) return '#1e7e34';
-  return dif<0 ? '#8e44ad' : '#c0392b';
-}
-
-// ── SKU Lookup unificado ──────────────────────────────────────────────────
-// Retorna { sku, nombre, cantidad_952, cantidad_wms }
-function bodSKULookup(val, sesId, mId, cb){
-  val = String(val||'').trim().toUpperCase();
-  if(!val) return cb && cb({});
-  var result = { sku: val, nombre: '', cantidad_952: 0, cantidad_wms: 0 };
-  // 1. Teorico cache
-  if(_bodAudTeorico[val]){
-    result.nombre     = _bodAudTeorico[val].nombre || '';
-    result.cantidad_952 = _bodAudTeorico[val].cantidad_952 || 0;
-  }
-  // 2. Licencia hija cache
-  if(_bodAudLicHija[val]) result.cantidad_wms = _bodAudLicHija[val] || 0;
-
-  // 3. Try barcode lookup
-  fetch('/api/bod/barra/'+encodeURIComponent(val))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d && d.ok && d.sku){
-        result.sku    = d.sku;
-        result.nombre = result.nombre || d.descripcion || '';
-      }
-      // 4. sku_catalog via CDG endpoint
-      return fetch('/api/cdg/v2/sku-catalog/buscar?q='+encodeURIComponent(result.sku));
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d && d.ok && d.resultados && d.resultados.length){
-        var hit = d.resultados.find(function(x){ return String(x.sku)===result.sku; }) || d.resultados[0];
-        if(!result.nombre && hit) result.nombre = hit.descripcion || '';
-      }
-      if(cb) cb(result);
-    })
-    .catch(function(){ if(cb) cb(result); });
-}
-
-// ── Cargar caches de Teórico 952 y Licencia Hija para la sesión/PT ────────
-function bodCargarTeorico(sesId, cb){
-  fetch('/api/bod/sesion/'+encodeURIComponent(sesId)+'/teorico-952')
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      _bodAudTeorico = {};
-      if(d.ok && d.rows) d.rows.forEach(function(r){
-        _bodAudTeorico[r.sku] = { nombre:r.nombre, cantidad_952:Number(r.cantidad_952)||0 };
-      });
-      if(cb) cb();
-    }).catch(function(){ if(cb) cb(); });
-}
-function bodCargarLicHija(sesId, mId, cb){
-  var q = '/api/bod/sesion/'+encodeURIComponent(sesId)+'/licencia-hija';
-  if(mId) q += '?manifiesto_id='+encodeURIComponent(mId);
-  fetch(q).then(function(r){ return r.json(); })
-    .then(function(d){
-      _bodAudLicHija = {};
-      if(d.ok && d.rows) d.rows.forEach(function(r){
-        _bodAudLicHija[r.sku] = (_bodAudLicHija[r.sku]||0) + (Number(r.cantidad)||0);
-      });
-      if(cb) cb();
-    }).catch(function(){ if(cb) cb(); });
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
 //  CAPTURA DE TARIMA
-//  bodIniciarCaptura() → Panel de Licencias Bolsón + form de captura
-// ═══════════════════════════════════════════════════════════════════════════
-function bodIniciarCaptura(){
-  var el = document.getElementById('bod-captura-content');
-  if(!el) return;
-  el.innerHTML = '<div style="color:#888;font-size:.82rem;padding:.4rem">Cargando licencias\u2026</div>';
-  bodFetch('GET','/api/bod/sesiones?limit=30')
-    .then(function(d){
-      var slist = d.ok ? (d.sesiones||[]) : [];
-      var usr = window.currentUser ? window.currentUser.name : '';
-      var html = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.6rem">'
-               + 'Panel de Licencias Bols\xf3n</div>'
-               + '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-               + '<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.45rem">+ Crear licencia bols\xf3n</div>'
-               + '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">'
-               + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Licencia bols\xf3n</label>'
-               + '<input type="text" id="cap-nueva-lic" class="field-inp" placeholder="U25-163312" style="width:155px;font-size:.82rem;padding:4px 8px" autocomplete="off"></div>'
-               + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Fecha de trabajo</label>'
-               + '<input type="date" id="cap-nueva-fecha" class="field-inp" style="width:140px;font-size:.82rem;padding:4px 8px"></div>'
-               + '<button class="btn btn-sm btn-dark" id="cap-btn-crear">\u2795 Crear licencia</button>'
-               + '<span id="cap-crear-msg" style="font-size:.76rem"></span></div></div>';
-      if(!slist.length){
-        html += '<div style="color:#aaa;font-size:.82rem">Sin licencias. Cre\xe1 una arriba.</div>';
-      } else {
-        html += '<div class="tbl-wrap"><table style="font-size:.8rem"><thead><tr>'
-              + '<th>Licencia bols\xf3n</th><th>Fecha</th><th>Estado</th><th>Creado por</th>'
-              + '<th class="tc">SKUs reg.</th><th>Acciones</th></tr></thead><tbody>';
-        slist.forEach(function(s){
-          var estBg = s.estado==='cerrada' ? '#e8f5e9' : '#e3f2fd';
-          var estFg = s.estado==='cerrada' ? '#1b5e20' : '#1565c0';
-          html += '<tr><td style="font-weight:600;color:#1565c0">'+bodEscA(s.licencia_id||'—')+'</td>'
-                + '<td>'+bodEscA(s.fecha||'—')+'</td>'
-                + '<td><span style="background:'+estBg+';color:'+estFg+';padding:1px 7px;border-radius:8px;font-size:.72rem">'+bodEscA(s.estado||'—')+'</span></td>'
-                + '<td style="font-size:.76rem;color:#555">'+bodEscA(s.creado_por||'—')+'</td>'
-                + '<td class="tc">'+bodEscA(s.total_lineas||0)+'</td>'
-                + '<td><button class="btn btn-xs cap-btn-entrar" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha||'')+'"'
-                +  ' style="background:#1565c0;color:#fff;font-size:.7rem;margin-right:4px">\u25b6 Empezar</button>'
-                + (s.estado!=='cerrada' ? '<button class="btn btn-xs cap-btn-borrar" data-id="'+bodEscA(s.id)+'" data-creador="'+bodEscA(s.creado_por||'')+'"'
-                +  ' style="background:#fdecea;color:#c0392b;font-size:.7rem">Borrar</button>' : '')
-                + '</td></tr>';
-        });
-        html += '</tbody></table></div>';
-      }
-      html += '<div id="cap-form-wrap" style="display:none;margin-top:.75rem"></div>';
-      el.innerHTML = html;
-      // Wire: crear
-      var btnCrear = document.getElementById('cap-btn-crear');
-      if(btnCrear) btnCrear.addEventListener('click', function(){
-        var lic   = (document.getElementById('cap-nueva-lic')||{value:''}).value.trim().toUpperCase();
-        var fecha = (document.getElementById('cap-nueva-fecha')||{value:''}).value.trim();
-        var msg   = document.getElementById('cap-crear-msg');
-        if(!lic)   { if(msg) msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 la licencia.</span>'; return; }
-        if(!fecha) { if(msg) msg.innerHTML='<span style="color:#c0392b">Selecci\xf3n la fecha.</span>'; return; }
-        if(msg) msg.innerHTML='<span style="color:#888">Creando\u2026</span>';
-        bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, fecha_trabajo:fecha, tipo:'recoleccion', creado_por:usr })
-          .then(function(d){
-            if(!d.ok){ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; return; }
-            if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 Creada</span>';
-            setTimeout(function(){ bodIniciarCaptura(); }, 600);
-          }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; });
-      });
-      // Wire: entrar
-      el.querySelectorAll('.cap-btn-entrar').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          bodSesionActual = { id:btn.dataset.id, licencia_id:btn.dataset.lic, fecha:btn.dataset.fecha };
-          var wrap = document.getElementById('cap-form-wrap');
-          if(wrap){ wrap.style.display=''; bodRenderCapForm(wrap); }
-        });
-      });
-      // Wire: borrar
-      el.querySelectorAll('.cap-btn-borrar').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          if(!confirm('¿Borrar la sesi\xf3n? Solo si est\xe1 vac\xeda o fue creada por error.')) return;
-          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(btn.dataset.id),{ usuario:usr })
-            .then(function(d){
-              if(d.ok) bodIniciarCaptura();
-              else alert(d.error||'No se pudo borrar (puede tener l\xedneas).');
-            }).catch(function(){ alert('Sin conexi\xf3n'); });
-        });
-      });
-    }).catch(function(){ if(el) el.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
+// ══════════════════════════════════════════════════════════════════════════
+
+function bodRenderCaptura(){
+  var el=document.getElementById('bod-captura-contenido'); if(!el) return;
+  el.innerHTML='<div style="color:#888;font-size:.82rem">Cargando licencias…</div>';
+  bodFetch('GET','/api/bod/sesiones?limit=50')
+    .then(function(d){ bodRenderPanelLicencias(el, d.ok?(d.sesiones||[]):[]); })
+    .catch(function(){ el.innerHTML='<div style="color:#c0392b">Error de conexión.</div>'; });
 }
 
-// ── Form de captura de SKUs por tarima ────────────────────────────────────
-function bodRenderCapForm(container){
-  var ses = bodSesionActual;
-  if(!ses) return;
-  var usr = window.currentUser ? window.currentUser.name : '';
-  var prefix = bodTarimaPrefix(usr);
-  // Build tarima options
-  var optsHtml = '';
-  var prefijos = (typeof isSup==='function' && isSup()) ? ['A','B','C','D','E','F','G'] : [prefix];
-  prefijos.forEach(function(p){
-    for(var n=1;n<=99;n++){
-      var num = n<10?'0'+n:''+n;
-      optsHtml += '<option value="'+p+num+'">'+p+num+'</option>';
-    }
-  });
-  container.innerHTML = '<div style="background:#e3f2fd;border-radius:6px;padding:.4rem .85rem;margin-bottom:.5rem;font-size:.78rem;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-    + '<span style="font-weight:700;color:#1565c0">\uD83D\uDCCB '+bodEscA(ses.licencia_id)+'</span>'
-    + '<span style="color:#888">\xb7 '+bodEscA(ses.fecha||'')+'</span>'
-    + '<button id="cap-volver" class="btn btn-xs" style="margin-left:auto;font-size:.7rem;background:#e8f4ff;color:#1565c0">\u21a9 Volver</button></div>'
-    + '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.5rem">'
-    + '<div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap">'
-    + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label>'
-    + '<select id="cap-sel-tarima" class="field-inp" style="padding:4px 8px;font-size:.82rem">'+optsHtml+'</select></div>'
-    + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">C\xf3d. barra / SKU</label>'
-    + '<input type="text" id="cap-barra" class="field-inp" placeholder="Escanear o escribir" autocomplete="off" style="width:150px;padding:4px 8px;font-size:.82rem" inputmode="numeric"></div>'
-    + '<div style="flex:2;min-width:130px"><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label>'
-    + '<input type="text" id="cap-desc" class="field-inp" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:.78rem;background:#f0f0f0;color:#555" readonly></div>'
-    + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Cantidad</label>'
-    + '<input type="number" id="cap-cant" class="field-inp" value="1" min="1" step="1" style="width:65px;padding:4px 7px;font-size:.82rem;text-align:center"></div>'
-    + '<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Estructura</label>'
-    + '<input type="text" id="cap-estruct" class="field-inp" placeholder="Opt." style="width:80px;padding:4px 7px;font-size:.82rem"></div>'
-    + '<button class="btn btn-sm" id="cap-btn-agregar" style="background:#1565c0;color:#fff;font-size:.76rem;align-self:flex-end">+ Agregar</button>'
-    + '<span id="cap-add-msg" style="font-size:.76rem;align-self:center"></span>'
-    + '</div></div>'
-    + '<div id="cap-tabla-wrap"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
-  // Load existing lines
-  bodCapCargarLineas(ses.id);
-  // Wire volver
-  var bv = document.getElementById('cap-volver');
-  if(bv) bv.addEventListener('click', function(){
-    container.style.display='none'; container.innerHTML='';
-    bodSesionActual=null;
-  });
-  // Wire barra → desc auto
-  var barraI = document.getElementById('cap-barra');
-  var descI  = document.getElementById('cap-desc');
-  var _bt = null;
-  if(barraI){
-    barraI.addEventListener('input', function(){
-      clearTimeout(_bt); var v=barraI.value.trim();
-      if(v.length>=3) _bt=setTimeout(function(){
-        bodSKULookup(v, ses.id, null, function(r){
-          if(descI) descI.value = r.nombre||'';
-        });
-      },500);
+function bodRenderPanelLicencias(el, sesiones){
+  var usr = bodCurrentUser();
+  var h = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.8rem">Panel de Licencias Bolsón</div>';
+  // Crear nueva licencia
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:1rem;background:#f8f9fa;border-radius:8px;padding:.65rem .9rem">'
+    +'<span style="font-size:.78rem;font-weight:600;color:#555">Nueva licencia:</span>'
+    +'<input type="text" id="bod-nueva-lic" placeholder="U25-####" style="width:110px;font-size:.82rem;padding:4px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" autocapitalize="characters">'
+    +'<input type="date" id="bod-nueva-fecha" value="'+bodHoyGT()+'" style="font-size:.82rem;padding:4px 8px;border:1px solid #ddd;border-radius:6px">'
+    +'<button class="btn btn-sm btn-dark" id="bod-crear-lic-btn">＋ Crear Licencia</button>'
+    +'<span id="bod-crear-msg" style="font-size:.76rem"></span>'
+    +'</div>';
+  // Tabla de licencias
+  h += '<div style="overflow-x:auto"><table style="width:100%;font-size:.78rem;border-collapse:collapse">'
+    +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+    +'<th style="padding:6px 8px;text-align:left">Licencia Bolsón</th>'
+    +'<th style="padding:6px 8px;text-align:left">Fecha</th>'
+    +'<th style="padding:6px 8px;text-align:center">SKUs</th>'
+    +'<th style="padding:6px 8px;text-align:center">Acciones</th>'
+    +'</tr></thead><tbody id="bod-lic-tbody">';
+  if(!sesiones.length){
+    h+='<tr><td colspan="4" style="padding:12px 8px;color:#aaa;text-align:center">Sin licencias creadas</td></tr>';
+  } else {
+    sesiones.forEach(function(s){
+      h+='<tr style="border-bottom:1px solid #f0f0f0">'
+        +'<td style="padding:6px 8px;font-weight:600">'+bodEscA(s.licencia_id||s.id)+'</td>'
+        +'<td style="padding:6px 8px;color:#555">'+bodEscA(bodFmtFecha(s.fecha_trabajo))+'</td>'
+        +'<td style="padding:6px 8px;text-align:center">'+bodEscA(s.total_skus||0)+'</td>'
+        +'<td style="padding:6px 8px;text-align:center;white-space:nowrap">'
+        +'<button class="btn btn-xs b-empezar" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha_trabajo||'')+'" style="background:#1565c0;color:#fff;margin-right:4px">▶ Empezar</button>'
+        +'<button class="btn btn-xs b-borrar-lic" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" style="background:#c0392b;color:#fff">✕ Borrar</button>'
+        +'</td></tr>';
     });
   }
-  // Wire + Agregar
-  var btnA = document.getElementById('cap-btn-agregar');
-  if(btnA) btnA.addEventListener('click', function(){
-    var bv2 = (document.getElementById('cap-barra')||{value:''}).value.trim().toUpperCase();
-    var desc = (document.getElementById('cap-desc')||{value:''}).value.trim();
-    var cant = Number((document.getElementById('cap-cant')||{value:1}).value)||1;
-    var tar  = (document.getElementById('cap-sel-tarima')||{value:'A01'}).value;
-    var estr = (document.getElementById('cap-estruct')||{value:''}).value.trim();
-    var msg  = document.getElementById('cap-add-msg');
-    if(!bv2){ if(msg) msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 SKU o barra.</span>'; return; }
-    if(msg) msg.innerHTML='<span style="color:#888">Guardando\u2026</span>';
-    btnA.disabled=true;
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/linea',
-      { tarima:tar, barra:bv2.match(/^\d{8,}$/)?bv2:null, sku:bv2, descripcion:desc,
-        cantidad:cant, estructura:estr, operador:usr })
+  h += '</tbody></table></div>';
+  el.innerHTML = h;
+
+  // Crear licencia
+  document.getElementById('bod-crear-lic-btn').addEventListener('click',function(){
+    var licInput = document.getElementById('bod-nueva-lic');
+    var fechaInput = document.getElementById('bod-nueva-fecha');
+    var msg = document.getElementById('bod-crear-msg');
+    var lic = (licInput.value||'').trim().toUpperCase();
+    var fecha = (fechaInput.value||'').trim();
+    if(!lic){ msg.innerHTML='<span style="color:#c0392b">Ingresá la licencia (ej: U25-1234).</span>'; return; }
+    if(!fecha){ msg.innerHTML='<span style="color:#c0392b">Ingresá la fecha.</span>'; return; }
+    msg.innerHTML='<span style="color:#888">Creando…</span>';
+    bodFetch('POST','/api/bod/sesion',{ licencia_id:lic, fecha_trabajo:fecha, tipo:'recoleccion', creado_por:usr })
       .then(function(d){
         if(d.ok){
-          if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+bv2+'</span>';
-          if(barraI)barraI.value=''; if(descI)descI.value='';
-          if(document.getElementById('cap-cant')) document.getElementById('cap-cant').value='1';
-          if(document.getElementById('cap-estruct')) document.getElementById('cap-estruct').value='';
-          if(barraI) barraI.focus();
-          bodCapCargarLineas(ses.id);
-        } else { if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; }
-        btnA.disabled=false;
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; btnA.disabled=false; });
+          msg.innerHTML='<span style="color:#1e7e34">✅ Licencia lista</span>';
+          setTimeout(function(){ bodRenderCaptura(); },600);
+        } else {
+          msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+        }
+      }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
   });
-  if(barraI) barraI.addEventListener('keydown', function(e){ if(e.key==='Enter'&&btnA) btnA.click(); });
+
+  // Empezar captura
+  el.querySelectorAll('.b-empezar').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      _bodCapturaSesion = { id:btn.dataset.id, licencia_id:btn.dataset.lic, fecha_trabajo:btn.dataset.fecha };
+      bodRenderPanelCaptura(el);
+    });
+  });
+
+  // Borrar licencia
+  el.querySelectorAll('.b-borrar-lic').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      if(!confirm('¿Borrar licencia '+btn.dataset.lic+'? Se eliminarán todas sus líneas.')) return;
+      bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(btn.dataset.id),{ usuario:usr })
+        .then(function(d){
+          if(d.ok){ bodRenderCaptura(); }
+          else alert('No se pudo borrar: '+(d.error||'Error'));
+        }).catch(function(){ alert('Error de red.'); });
+    });
+  });
 }
 
-function bodCapCargarLineas(sesId){
-  var tw = document.getElementById('cap-tabla-wrap');
-  if(!tw) return;
+function bodRenderPanelCaptura(el){
+  var ses = _bodCapturaSesion;
+  if(!ses){ bodRenderCaptura(); return; }
+  var usr = bodCurrentUser();
+  var prefix = bodPrefijo(usr);
+
+  el.innerHTML = '<div style="font-size:.82rem;font-weight:700;color:#1565c0;margin-bottom:.4rem">📦 Captura — <span style="color:#333">'+bodEscA(ses.licencia_id||ses.id)+'</span>'
+    +' <span style="color:#888;font-weight:400;font-size:.75rem">'+bodEscA(bodFmtFecha(ses.fecha_trabajo))+'</span>'
+    +' <button id="bod-cap-volver" style="margin-left:8px;font-size:.72rem;background:none;border:1px solid #ccc;border-radius:4px;padding:1px 6px;cursor:pointer;color:#555">↩ Volver</button></div>'
+    // Bloque de ingreso
+    +'<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.8rem">'
+    +'<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+    +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Cód. Barra / SKU</label>'
+    +'<input type="text" id="cap-barra" placeholder="Escanear o escribir" style="width:150px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" autocorrect="off"></div>'
+    +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">SKU</label>'
+    +'<input type="text" id="cap-sku" placeholder="SKU" style="width:120px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off" readonly></div>'
+    +'<div style="flex:1;min-width:140px"><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Descripción</label>'
+    +'<input type="text" id="cap-desc" placeholder="Descripción" style="width:100%;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off"></div>'
+    +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Tarima</label>'
+    +'<input type="text" id="cap-tarima" placeholder="'+prefix+'01" style="width:70px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px" autocomplete="off"></div>'
+    +'<div><label style="font-size:.73rem;font-weight:600;display:block;margin-bottom:2px">Cantidad</label>'
+    +'<input type="number" id="cap-cant" placeholder="0" min="1" style="width:80px;font-size:.84rem;padding:5px 8px;border:1px solid #ddd;border-radius:6px"></div>'
+    +'<button class="btn btn-sm btn-dark" id="cap-agregar-btn" style="align-self:flex-end">+ Agregar</button>'
+    +'</div>'
+    +'<div id="cap-linea-msg" style="font-size:.76rem;margin-top:.35rem"></div>'
+    +'</div>'
+    // Tabla
+    +'<div style="overflow-x:auto"><table style="width:100%;font-size:.76rem;border-collapse:collapse" id="cap-tabla">'
+    +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+    +'<th style="padding:5px 7px;text-align:left">Tarima</th>'
+    +'<th style="padding:5px 7px;text-align:left">SKU</th>'
+    +'<th style="padding:5px 7px;text-align:left">Descripción</th>'
+    +'<th style="padding:5px 7px;text-align:center">Cant.</th>'
+    +'<th style="padding:5px 7px;text-align:left">Operador</th>'
+    +'<th style="padding:5px 7px;text-align:center">Acción</th>'
+    +'</tr></thead><tbody id="cap-tbody"><tr><td colspan="6" style="padding:10px;color:#aaa;text-align:center">Cargando…</td></tr></tbody>'
+    +'</table></div>';
+
+  document.getElementById('bod-cap-volver').addEventListener('click',function(){
+    _bodCapturaSesion = null; bodRenderCaptura();
+  });
+
+  // Barra/SKU autocomplete
+  var barraI = document.getElementById('cap-barra');
+  var skuI   = document.getElementById('cap-sku');
+  var descI  = document.getElementById('cap-desc');
+  var _bt    = null;
+  barraI.addEventListener('input',function(){
+    clearTimeout(_bt);
+    var v = barraI.value.trim();
+    if(v.length >= 3){
+      _bt = setTimeout(function(){
+        bodLookupSku(v, ses.id, function(r){
+          if(r){ skuI.value=r.sku||''; if(r.descripcion) descI.value=r.descripcion; }
+        });
+      }, 400);
+    }
+  });
+  barraI.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){ document.getElementById('cap-cant').focus(); }
+  });
+
+  // Agregar línea
+  document.getElementById('cap-agregar-btn').addEventListener('click',function(){
+    var msg   = document.getElementById('cap-linea-msg');
+    var barra = barraI.value.trim();
+    var sku   = skuI.value.trim().toUpperCase() || barra.toUpperCase();
+    var desc  = descI.value.trim();
+    var tarima= (document.getElementById('cap-tarima').value||'').trim().toUpperCase();
+    var cant  = Number(document.getElementById('cap-cant').value);
+    if(!sku)   { msg.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+    if(!tarima){ msg.innerHTML='<span style="color:#c0392b">Ingresá la tarima (ej: '+prefix+'01).</span>'; return; }
+    if(!(cant>0)){ msg.innerHTML='<span style="color:#c0392b">La cantidad debe ser mayor a 0.</span>'; return; }
+    msg.innerHTML='<span style="color:#888">Guardando…</span>';
+    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/linea',{
+      tarima:tarima, barra:barra||null, sku:sku, descripcion:desc, cantidad:cant, operador:usr
+    }).then(function(d){
+      if(d.ok){
+        msg.innerHTML='<span style="color:#1e7e34">✅ Línea agregada</span>';
+        barraI.value=''; skuI.value=''; descI.value='';
+        document.getElementById('cap-tarima').value='';
+        document.getElementById('cap-cant').value='';
+        barraI.focus();
+        bodCargarLineasCaptura(ses.id);
+      } else {
+        msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+      }
+    }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+  });
+
+  bodCargarLineasCaptura(ses.id);
+}
+
+function bodCargarLineasCaptura(sesId){
+  var tbody = document.getElementById('cap-tbody'); if(!tbody) return;
+  var usr = bodCurrentUser();
   bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/lineas')
     .then(function(d){
-      var lineas = d.ok ? (d.lineas||[]) : [];
-      var usr = window.currentUser?window.currentUser.name:'';
-      if(!lineas.length){ tw.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin l\xedneas a\xfan.</div>'; return; }
-      var html = '<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-               + '<th>Tarima</th><th>SKU</th><th>Descripci\xf3n</th><th class="tc">Cant.</th>'
-               + '<th>Estructura</th><th>Operador</th><th class="tc">Acci\xf3n</th></tr></thead><tbody>';
-      lineas.filter(function(l){ return !l.eliminada; }).forEach(function(l){
-        var esPropia = l.operador === usr;
-        html += '<tr><td style="font-weight:700">'+bodEscA(l.tarima||'—')+'</td>'
-              + '<td style="font-weight:600">'+bodEscA(l.sku||'')+'</td>'
-              + '<td style="font-size:.76rem">'+bodEscA(l.descripcion||'—')+'</td>'
-              + '<td class="tc">'+Number(l.cantidad||0)+'</td>'
-              + '<td style="font-size:.75rem">'+bodEscA(l.estructura||'—')+'</td>'
-              + '<td style="font-size:.75rem;color:#555">'+bodEscA(l.operador||'—')+'</td>'
-              + '<td class="tc">'+(esPropia
-                ? '<button class="btn btn-xs cap-del" data-id="'+bodEscA(l.id)+'" style="background:#fdecea;color:#c0392b;font-size:.7rem">Borrar</button>'
-                : '<span style="color:#ccc;font-size:.7rem">—</span>')+'</td></tr>';
-      });
-      html += '</tbody></table></div>';
-      tw.innerHTML = html;
-      tw.querySelectorAll('.cap-del').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          if(!confirm('¿Borrar esta l\xednea?')) return;
+      var lineas = d.ok?(d.lineas||[]):[];
+      if(!lineas.length){ tbody.innerHTML='<tr><td colspan="6" style="padding:10px;color:#aaa;text-align:center">Sin líneas. Agregá la primera.</td></tr>'; return; }
+      // Ordenar por tarima luego ts
+      lineas.sort(function(a,b){ return (a.tarima||'').localeCompare(b.tarima||'')||(a.ts_captura||'').localeCompare(b.ts_captura||''); });
+      tbody.innerHTML = lineas.map(function(l){
+        var esMia = (l.operador||'')=== usr;
+        return '<tr style="border-bottom:1px solid #f5f5f5">'
+          +'<td style="padding:5px 7px;font-weight:600">'+bodEscA(l.tarima||'')+'</td>'
+          +'<td style="padding:5px 7px">'+bodEscA(l.sku||'')+'</td>'
+          +'<td style="padding:5px 7px;color:#555">'+bodEscA(l.descripcion||'')+'</td>'
+          +'<td style="padding:5px 7px;text-align:center">'+bodEscA(l.cantidad||0)+'</td>'
+          +'<td style="padding:5px 7px;color:#888">'+bodEscA(l.operador||'')+'</td>'
+          +'<td style="padding:5px 7px;text-align:center">'
+          +(esMia
+            ? '<button class="btn btn-xs b-borrar-lin" data-id="'+bodEscA(l.id)+'" style="background:#c0392b;color:#fff">✕</button>'
+            : '<span style="color:#ccc;font-size:.72rem">—</span>')
+          +'</td></tr>';
+      }).join('');
+      tbody.querySelectorAll('.b-borrar-lin').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Borrar esta línea?')) return;
           bodFetch('DELETE','/api/bod/linea/'+encodeURIComponent(btn.dataset.id),{ usuario:usr })
-            .then(function(d){ if(d.ok) bodCapCargarLineas(sesId); else alert(d.error||'Error'); })
-            .catch(function(){ alert('Sin conexi\xf3n'); });
+            .then(function(d){ if(d.ok) bodCargarLineasCaptura(sesId); else alert(d.error||'Error'); })
+            .catch(function(){ alert('Error de red.'); });
         });
       });
-    }).catch(function(){ if(tw) tw.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>'; });
+    }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" style="padding:10px;color:#c0392b">Error al cargar líneas.</td></tr>'; });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  AUDITAR SESIÓN — Entrada + 5 Pestañas
-// ═══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+//  AUDITAR SESIÓN
+// ══════════════════════════════════════════════════════════════════════════
+
 function bodRenderAuditoria(){
-  var el = document.getElementById('bod-aud-contenido');
-  if(!el) return;
-  if(!_bodAudSesion){ bodRenderAudEntrar(); return; }
-  var ses = _bodAudSesion, tab = _bodAudTab;
-  var tabs = [
-    { id:'1-tarimas', lbl:'1. Tarimas' },
-    { id:'2-detalle', lbl:'2. Detalle' },
-    { id:'3-teorico', lbl:'3. Carga Te\xf3rico' },
-    { id:'4-control', lbl:'4. Control de Manifiestos' },
-    { id:'5-papel',   lbl:'5. Papel de Trabajo' }
-  ];
-  var hdr = '<div style="font-size:.78rem;color:#1565c0;font-weight:700;margin-bottom:.4rem">'
-    + '\uD83D\uDCCB Licencia: '+bodEscA(ses.licencia_id||ses.id)
-    + ' <span style="color:#888;font-weight:400">\xb7 '+bodEscA(ses.fecha||'')+'</span>'
-    + ' <button id="bod-aud-cambiar" style="margin-left:8px;font-size:.72rem;background:none;border:1px solid #ccc;border-radius:4px;padding:1px 6px;cursor:pointer;color:#555">\u21a9 Cambiar</button></div>';
-  var tabsH = '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:.65rem">';
-  tabs.forEach(function(t){
-    var on = t.id===tab;
-    tabsH += '<button class="bod-tab-pill" data-tab="'+t.id+'" style="font-size:.73rem;padding:4px 9px;border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+'">'
-          + t.lbl+'</button>';
-  });
-  tabsH += '</div>';
-  el.innerHTML = hdr + tabsH + '<div id="bod-tab-body"></div>';
-  el.querySelectorAll('.bod-tab-pill').forEach(function(btn){
-    btn.addEventListener('click', function(){ _bodAudTab=btn.dataset.tab; bodRenderAuditoria(); });
-  });
-  var bC = document.getElementById('bod-aud-cambiar');
-  if(bC) bC.addEventListener('click', function(){ _bodAudSesion=null; _bodAudManifAct=null; bodRenderAuditoria(); });
-  switch(tab){
-    case '1-tarimas': bodAudTab1(); break;
-    case '2-detalle': bodAudTab2(); break;
-    case '3-teorico': bodAudTab3(); break;
-    case '4-control': bodAudTab4(); break;
-    case '5-papel':   bodAudTab5(); break;
-  }
-}
-
-function bodRenderAudEntrar(){
   var el = document.getElementById('bod-aud-contenido'); if(!el) return;
-  el.innerHTML = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.6rem">Selecci\xf3n de sesi\xf3n</div>'
-    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.8rem">'
-    + '<input type="text" id="bod-aud-lic" class="field-inp" placeholder="Licencia bols\xf3n" style="width:200px;font-size:.84rem;padding:5px 10px" autocomplete="off">'
-    + '<button class="btn btn-sm btn-dark" id="bod-aud-ok">Entrar \u25b6</button>'
-    + '<span id="bod-aud-msg" style="font-size:.76rem"></span></div>'
-    + '<div id="bod-aud-lista"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
+  if(!_bodAudSesion){ bodRenderAudSeleccion(el); return; }
+  bodRenderAudTabs(el);
+}
+window.bodRenderAuditoria = bodRenderAuditoria;
+
+function bodRenderAudSeleccion(el){
+  el.innerHTML = '<div style="font-size:.82rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.3px;margin-bottom:.6rem">Selección de Sesión</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.8rem">'
+    +'<input type="text" id="bod-aud-lic" class="field-inp" placeholder="Licencia bolsón" style="width:200px;font-size:.84rem;padding:5px 10px" autocomplete="off">'
+    +'<button class="btn btn-sm btn-dark" id="bod-aud-ok">Entrar ▶</button>'
+    +'<span id="bod-aud-msg" style="font-size:.76rem"></span></div>'
+    +'<div id="bod-aud-lista"><div style="color:#888;font-size:.82rem">Cargando…</div></div>';
+
   bodFetch('GET','/api/bod/sesiones?limit=20').then(function(d){
     var lista = document.getElementById('bod-aud-lista'); if(!lista) return;
     var ses = d.ok?(d.sesiones||[]):[];
     if(!ses.length){ lista.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin sesiones activas.</div>'; return; }
-    var h = '<div style="font-size:.75rem;color:#666;margin-bottom:.3rem">Sesiones activas:</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
-    ses.forEach(function(s){ h+='<button class="btn btn-xs b-ses" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha||'')+'" style="font-size:.76rem;background:#e3f2fd;color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</button>'; });
+    var h='<div style="font-size:.75rem;color:#666;margin-bottom:.3rem">Sesiones activas:</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
+    ses.forEach(function(s){
+      h+='<button class="btn btn-xs b-ses" data-id="'+bodEscA(s.id)+'" data-lic="'+bodEscA(s.licencia_id||'')+'" data-fecha="'+bodEscA(s.fecha_trabajo||'')+'" style="font-size:.76rem;background:#e3f2fd;color:#1565c0">'+bodEscA(s.licencia_id||s.id)+'</button>';
+    });
     h+='</div>'; lista.innerHTML=h;
     lista.querySelectorAll('.b-ses').forEach(function(btn){
       btn.addEventListener('click',function(){
-        _bodAudSesion={id:btn.dataset.id,licencia_id:btn.dataset.lic,fecha:btn.dataset.fecha,estado:'abierta'};
-        _bodAudTab='4-control'; bodCargarTeorico(_bodAudSesion.id, function(){ bodRenderAuditoria(); });
+        _bodAudSesion={id:btn.dataset.id,licencia_id:btn.dataset.lic,fecha_trabajo:btn.dataset.fecha};
+        _bodAudTab='4-control';
+        bodCargarTeorico(_bodAudSesion.id,function(){ bodRenderAuditoria(); });
       });
     });
   }).catch(function(){});
-  var btnE=document.getElementById('bod-aud-ok');
+
+  var btnE = document.getElementById('bod-aud-ok');
   if(btnE) btnE.addEventListener('click',function(){
     var lic=(document.getElementById('bod-aud-lic')||{value:''}).value.trim().toUpperCase();
     var msg=document.getElementById('bod-aud-msg');
-    if(!lic){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 la licencia.</span>';return;}
-    if(msg)msg.innerHTML='<span style="color:#888">Buscando\u2026</span>';
-    bodFetch('GET','/api/bod/sesiones?limit=50').then(function(d){
+    if(!lic){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingresá la licencia.</span>';return;}
+    if(msg)msg.innerHTML='<span style="color:#888">Buscando…</span>';
+    bodFetch('GET','/api/bod/sesiones?limit=100').then(function(d){
       var ses=d.ok?(d.sesiones||[]):[];
-      var match=ses.find(function(s){return (s.licencia_id||'').toUpperCase()===lic;});
-      if(match){_bodAudSesion=match;_bodAudTab='4-control';bodCargarTeorico(match.id,function(){bodRenderAuditoria();});}
-      else{if(msg)msg.innerHTML='<span style="color:#c0392b">No se encontr\xf3 sesi\xf3n para '+bodEscA(lic)+'.</span>';}
-    }).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';});
+      var match=ses.find(function(s){return(s.licencia_id||'').toUpperCase()===lic;});
+      if(match){
+        _bodAudSesion=match; _bodAudTab='4-control';
+        bodCargarTeorico(match.id,function(){ bodRenderAuditoria(); });
+      } else {
+        if(msg)msg.innerHTML='<span style="color:#c0392b">No se encontró sesión para '+bodEscA(lic)+'.</span>';
+      }
+    }).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexión</span>';});
   });
-  var inp=document.getElementById('bod-aud-lic'); if(inp) inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnE)btnE.click();});
+  var inp=document.getElementById('bod-aud-lic');
+  if(inp) inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnE)btnE.click();});
 }
 
-// ── Tab 1: Tarimas ────────────────────────────────────────────────────────
-function bodAudTab1(){
-  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.3rem">Cargando tarimas\u2026</div>';
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/lineas')
+function bodCargarTeorico(sesId, cb){
+  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/teorico-952')
     .then(function(d){
-      var lineas=(d.ok?d.lineas||[]:[]).filter(function(l){return !l.eliminada;});
-      // Filters
-      var fHtml='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">'
-        +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label><input type="text" id="f1-tar" class="field-inp" value="'+bodEscA(_bodFiltroTar)+'" placeholder="A01" style="width:72px;padding:3px 7px;font-size:.8rem"></div>'
-        +'<button class="btn btn-sm" id="f1-btn" style="font-size:.76rem">Filtrar</button>'
-        +'<button class="btn btn-xs" id="f1-clr" style="font-size:.74rem;background:#f5f5f5;color:#555">Limpiar</button></div>'
-        +'<div id="t1-cont"></div>';
-      tb.innerHTML=fHtml;
-      function renderTab1(filtTar){
-        var cont=document.getElementById('t1-cont'); if(!cont) return;
-        var grupos={};
-        lineas.filter(function(l){ return !filtTar||(l.tarima||'').toUpperCase()===filtTar.toUpperCase(); })
-          .forEach(function(l){
-            var k=l.tarima||'—';
-            if(!grupos[k]) grupos[k]={tarima:k,licencia:l.licencia_id,operador:l.operador,lineas:[],skus:new Set()};
-            grupos[k].lineas.push(l); grupos[k].skus.add(l.sku);
-          });
-        var gArr=Object.values(grupos);
-        if(!gArr.length){cont.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin tarimas.</div>';return;}
-        var html='<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr>'
-          +'<th>Correlativo</th><th>Licencia bols\xf3n</th><th class="tc">L\xedneas</th>'
-          +'<th class="tc">SKUs \xfanicos</th><th class="tc">Cant. total</th><th>Operador</th><th>Acci\xf3n</th></tr></thead><tbody>';
-        gArr.forEach(function(g){
-          var qty=g.lineas.reduce(function(s,l){return s+Number(l.cantidad||0);},0);
-          html+='<tr><td style="font-weight:700">'+bodEscA(g.tarima)+'</td>'
-            +'<td style="color:#1565c0;font-size:.77rem">'+bodEscA(g.licencia||_bodAudSesion.licencia_id||'—')+'</td>'
-            +'<td class="tc">'+g.lineas.length+'</td><td class="tc">'+g.skus.size+'</td>'
-            +'<td class="tc">'+qty+'</td>'
-            +'<td style="font-size:.75rem;color:#555">'+bodEscA(g.operador||'—')+'</td>'
-            +'<td><button class="btn btn-xs t1-aud" data-t="'+bodEscA(g.tarima)+'" style="background:#27ae60;color:#fff;font-size:.7rem">Auditar</button></td></tr>';
-        });
-        html+='</tbody></table></div>'; cont.innerHTML=html;
-        cont.querySelectorAll('.t1-aud').forEach(function(btn){
-          btn.addEventListener('click',function(){ _bodFiltroTar=btn.dataset.t; _bodAudTab='2-detalle'; bodRenderAuditoria(); });
-        });
-      }
-      renderTab1(_bodFiltroTar);
-      var bf=document.getElementById('f1-btn'); if(bf) bf.addEventListener('click',function(){ renderTab1((document.getElementById('f1-tar')||{value:''}).value.trim()); });
-      var bc=document.getElementById('f1-clr'); if(bc) bc.addEventListener('click',function(){ _bodFiltroTar=''; if(document.getElementById('f1-tar')) document.getElementById('f1-tar').value=''; renderTab1(''); });
-    }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+      _bodTeorico={};
+      if(d.ok&&d.rows) d.rows.forEach(function(r){ _bodTeorico[r.sku]={nombre:r.nombre,cantidad_952:Number(r.cantidad_952)||0}; });
+      if(cb) cb();
+    }).catch(function(){ if(cb) cb(); });
 }
 
-// ── Tab 2: Detalle ────────────────────────────────────────────────────────
-function bodAudTab2(){
+function bodRenderAudTabs(el){
+  var ses=_bodAudSesion, tab=_bodAudTab;
+  var tabs=[
+    {id:'1-tarimas', lbl:'1. Tarimas'},
+    {id:'2-detalle', lbl:'2. Detalle'},
+    {id:'3-teorico', lbl:'3. Carga Teórico'},
+    {id:'4-control', lbl:'4. Control de Manifiestos'},
+    {id:'5-papel',   lbl:'5. Papel de Trabajo'}
+  ];
+  var hdr='<div style="font-size:.78rem;color:#1565c0;font-weight:700;margin-bottom:.4rem">'
+    +'📋 Licencia: '+bodEscA(ses.licencia_id||ses.id)
+    +' <span style="color:#888;font-weight:400;font-size:.72rem">· '+bodEscA(bodFmtFecha(ses.fecha_trabajo))+'</span>'
+    +' <button id="bod-aud-cambiar" style="margin-left:8px;font-size:.72rem;background:none;border:1px solid #ccc;border-radius:4px;padding:1px 6px;cursor:pointer;color:#555">↩ Cambiar</button></div>';
+  var tabsH='<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:.65rem">';
+  tabs.forEach(function(t){
+    var on=t.id===tab;
+    tabsH+='<button class="bod-tab-pill" data-tab="'+t.id+'" style="font-size:.73rem;padding:4px 9px;border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+'">'+t.lbl+'</button>';
+  });
+  tabsH+='</div>';
+  el.innerHTML=hdr+tabsH+'<div id="bod-tab-body"></div>';
+
+  document.getElementById('bod-aud-cambiar').addEventListener('click',function(){
+    _bodAudSesion=null; _bodAudPtActivo=null; bodRenderAuditoria();
+  });
+  el.querySelectorAll('.bod-tab-pill').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      _bodAudTab=btn.dataset.tab; bodRenderAudTabs(el);
+    });
+  });
+
+  // Render tab content
   var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.3rem">Cargando\u2026</div>';
-  var usr=window.currentUser?window.currentUser.name:'';
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/lineas')
-    .then(function(d){
-      var lineas=(d.ok?d.lineas||[]:[]).filter(function(l){return !l.eliminada;});
-      var fHtml='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">'
-        +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">Tarima</label><input type="text" id="f2-tar" class="field-inp" value="'+bodEscA(_bodFiltroTar)+'" placeholder="A01" style="width:72px;padding:3px 7px;font-size:.8rem"></div>'
-        +'<div><label style="font-size:.68rem;color:#888;display:block;margin-bottom:2px">SKU</label><input type="text" id="f2-sku" class="field-inp" style="width:110px;padding:3px 7px;font-size:.8rem" placeholder="Filtrar SKU"></div>'
-        +'<button class="btn btn-sm" id="f2-btn" style="font-size:.76rem">Filtrar</button>'
-        +'<button class="btn btn-xs" id="f2-clr" style="font-size:.74rem;background:#f5f5f5;color:#555">Limpiar</button></div>'
-        +'<div id="t2-cont"></div>';
-      tb.innerHTML=fHtml;
-      function renderTab2(filtTar,filtSku){
-        var cont=document.getElementById('t2-cont'); if(!cont) return;
-        var rows=lineas.filter(function(l){
-          return (!filtTar||(l.tarima||'').toUpperCase()===filtTar.toUpperCase())
-              && (!filtSku||(l.sku||'').toUpperCase().includes(filtSku.toUpperCase()));
-        });
-        if(!rows.length){cont.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin resultados.</div>';return;}
-        var html='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:780px;font-size:.78rem"><thead><tr>'
-          +'<th>Tarima</th><th>SKU</th><th>Descripci\xf3n</th><th class="tc">Capturado</th>'
-          +'<th class="tc">T\xe9oric. 952</th><th class="tc">F\xedsico s/Aud.</th>'
-          +'<th class="tc">Dif.</th><th>Estado</th><th>Auditado por</th><th class="tc">Acci\xf3n</th></tr></thead><tbody>';
-        rows.forEach(function(l){
-          var teo952   = (_bodAudTeorico[l.sku]||{}).cantidad_952||0;
-          var auditado = !!l.auditado;
-          var fisico   = Number(l.cantidad_audit)||0;
-          var dif      = auditado ? bodCalcDif(teo952, fisico) : null;
-          var estadoTxt= auditado ? bodEstado(dif) : '—';
-          var difTxt   = auditado ? dif : '—';
-          var difColor = auditado ? bodColorDif(dif) : '#888';
-          html+='<tr data-id="'+bodEscA(l.id)+'" data-teo="'+teo952+'">'
-            +'<td style="font-weight:700">'+bodEscA(l.tarima||'—')+'</td>'
-            +'<td style="font-weight:600">'+bodEscA(l.sku||'')+'</td>'
-            +'<td style="font-size:.74rem">'+bodEscA(l.descripcion||'—')+'</td>'
-            +'<td class="tc">'+Number(l.cantidad||0)+'</td>'
-            +'<td class="tc" style="color:#555;font-size:.77rem">'+teo952+'</td>'
-            +'<td class="tc"><input type="number" class="det2-fis field-inp" data-id="'+bodEscA(l.id)+'" data-teo="'+teo952+'" min="0" step="1" value="'+(auditado?fisico:'')+'" style="width:65px;padding:2px 4px;font-size:.78rem;text-align:center"></td>'
-            +'<td class="tc det2-dif" style="font-weight:600;color:'+difColor+'">'+difTxt+'</td>'
-            +'<td class="det2-est" style="font-size:.75rem;color:'+difColor+'">'+bodEscA(estadoTxt)+'</td>'
-            +'<td style="font-size:.74rem;color:#555">'+bodEscA(auditado?l.auditado_por||'—':'—')+'</td>'
-            +'<td class="tc"><button class="btn btn-xs det2-btn" data-id="'+bodEscA(l.id)+'" data-auditado="'+auditado+'" style="font-size:.7rem;background:'+(auditado?'#fdecea':'#e8f5e9')+';color:'+(auditado?'#c0392b':'#1e7e34')+'">'+(auditado?'Anular':'Auditar')+'</button></td></tr>';
-        });
-        html+='</tbody></table></div>'; cont.innerHTML=html;
-        // Wire: Físico input → recalculate
-        cont.querySelectorAll('.det2-fis').forEach(function(inp){
-          inp.addEventListener('input',function(){
-            var tr=inp.closest('tr');
-            var teo=Number(inp.dataset.teo||0); var fis=Number(inp.value)||0;
-            var dif=bodCalcDif(teo,fis); var col=bodColorDif(dif);
-            var dEl=tr.querySelector('.det2-dif'); if(dEl){dEl.textContent=dif;dEl.style.color=col;}
-            var eEl=tr.querySelector('.det2-est'); if(eEl){eEl.textContent=bodEstado(dif);eEl.style.color=col;}
-          });
-        });
-        // Wire: Auditar / Anular
-        cont.querySelectorAll('.det2-btn').forEach(function(btn){
-          btn.addEventListener('click',function(){
-            var tr=btn.closest('tr');
-            var lineId=btn.dataset.id; var isAud=btn.dataset.auditado==='true';
-            if(isAud){
-              // Anular
-              bodFetch('POST','/api/bod/linea/'+encodeURIComponent(lineId)+'/unauditar',{usuario:usr,auditor:true})
-                .then(function(d){ if(d.ok) renderTab2(filtTar,filtSku); else alert(d.error||'Error'); })
-                .catch(function(){alert('Sin conexi\xf3n');});
-            } else {
-              // Auditar: get físico value from input
-              var fisInp=tr.querySelector('.det2-fis');
-              var fisico=Number(fisInp?fisInp.value:0)||0;
-              var teo952=Number(tr.dataset.teo||0);
-              bodFetch('PATCH','/api/bod/linea/'+encodeURIComponent(lineId)+'/fisico-audit',
-                {fisico_auditoria:fisico, teorico_952:teo952, usuario:usr})
-                .then(function(d){ if(d.ok) renderTab2(filtTar,filtSku); else alert(d.error||'Error'); })
-                .catch(function(){alert('Sin conexi\xf3n');});
-            }
-          });
-        });
-      }
-      renderTab2(_bodFiltroTar,'');
-      var bf=document.getElementById('f2-btn'); if(bf) bf.addEventListener('click',function(){ renderTab2((document.getElementById('f2-tar')||{value:''}).value.trim(),(document.getElementById('f2-sku')||{value:''}).value.trim()); });
-      var bc=document.getElementById('f2-clr'); if(bc) bc.addEventListener('click',function(){ _bodFiltroTar=''; ['f2-tar','f2-sku'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';}); renderTab2('',''); });
-    }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
+  if(tab==='1-tarimas')  bodAudTab1(tb);
+  else if(tab==='2-detalle')  bodAudTab2(tb);
+  else if(tab==='3-teorico')  bodAudTab3(tb);
+  else if(tab==='4-control')  bodAudTab4(tb);
+  else if(tab==='5-papel')    bodAudTab5(tb);
 }
 
-// ── Tab 3: Carga Teórico 952 ──────────────────────────────────────────────
-function bodAudTab3(){
-  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.3rem">Cargando te\xf3rico\u2026</div>';
-  function renderTeo(){
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico-952')
-      .then(function(d){
-        var rows=d.ok?(d.rows||[]):[];
-        // Update cache
-        _bodAudTeorico={};
-        rows.forEach(function(r){ _bodAudTeorico[r.sku]={nombre:r.nombre,cantidad_952:Number(r.cantidad_952)||0}; });
-        var upH=isBodAuditor()
-          ? '<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.6rem">'
-            + '<div style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">'
-            + '\u2B06\uFE0F Subir te\xf3rico WMS (Excel) \u2014 ubicaci\xf3n 952.006.001</div>'
-            + '<div style="font-size:.75rem;color:#888;margin-bottom:.5rem">Columnas esperadas: SKU \xb7 Nombre \xb7 Cant. 952 \xb7 Unidad \xb7 Exist. \xb7 Disp.</div>'
-            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-            + '<label class="btn btn-sm" style="cursor:pointer;position:relative;font-size:.75rem">\uD83D\uDCC2 Elegir archivo Excel'
-            + '<input type="file" id="teo-file" accept=".xlsx,.xls,.csv" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden"></label>'
-            + '<span id="teo-fname" style="font-size:.76rem;color:#555"></span>'
-            + '<button class="btn btn-sm btn-dark" id="teo-btn" disabled style="font-size:.75rem">\u2B06\uFE0F Subir y guardar</button>'
-            + '<span id="teo-msg" style="font-size:.76rem"></span></div>'
-            + (rows.length?'<button class="btn btn-xs" id="teo-clear" style="margin-top:.4rem;font-size:.7rem;background:#fdecea;color:#c0392b">Limpiar te\xf3rico</button>':'')
-            + '</div>'
-          : '';
-        var infoH = rows.length
-          ? '<div style="background:#e8f5e9;border-radius:6px;padding:.4rem .85rem;margin-bottom:.5rem;font-size:.78rem;display:flex;gap:10px;flex-wrap:wrap">'
-            + '<span style="font-weight:700;color:#1e7e34">\u2705 '+rows.length+' SKUs cargados</span>'
-            + (rows[0].actualizado_en?'<span style="color:#555">\xb7 Actualizado: '+new Date(rows[0].actualizado_en).toLocaleString('es')+'</span>':'')
-            + (rows[0].creado_por?'<span style="color:#555">\xb7 Por: '+bodEscA(rows[0].creado_por)+'</span>':'')
-            + '</div>'
-          : '<div style="background:#fff8e1;border-radius:6px;padding:.4rem .85rem;margin-bottom:.5rem;font-size:.78rem;color:#795548">'
-            + '\u26a0\uFE0F Sin te\xf3rico cargado. Sub\xed el Excel del WMS arriba para habilitar el c\xe1lculo de diferencias.</div>';
-        var tblH = rows.length
-          ? '<div class="tbl-wrap"><table style="font-size:.79rem"><thead><tr><th>SKU</th><th>Nombre</th><th class="tc">Cant. 952</th><th class="tc">Existencia</th><th class="tc">Disponible</th></tr></thead><tbody>'
-            + rows.map(function(r){ return '<tr><td style="font-weight:600">'+bodEscA(r.sku)+'</td><td style="font-size:.75rem">'+bodEscA(r.nombre||'—')+'</td><td class="tc">'+Number(r.cantidad_952||0)+'</td><td class="tc">'+Number(r.existencia||0)+'</td><td class="tc">'+Number(r.disponible||0)+'</td></tr>'; }).join('')
-            + '</tbody></table></div>'
-          : '';
-        tb.innerHTML=upH+infoH+tblH;
-        // Wire file
-        var fi=document.getElementById('teo-file'),fn=document.getElementById('teo-fname'),bu=document.getElementById('teo-btn');
-        if(fi) fi.addEventListener('change',function(){ if(this.files&&this.files[0]){if(fn)fn.textContent=this.files[0].name;if(bu)bu.disabled=false;} });
-        if(bu) bu.addEventListener('click',function(){
-          var f=fi&&fi.files&&fi.files[0]; if(!f) return;
-          if(rows.length && !confirm('Ya hay te\xf3rico cargado ('+rows.length+' SKUs). \xbfReemplazar con el nuevo archivo?')) return;
-          var msg=document.getElementById('teo-msg'); if(msg) msg.innerHTML='<span style="color:#888">Subiendo\u2026</span>'; bu.disabled=true;
-          var fd=new FormData(); fd.append('file',f); fd.append('creado_por',window.currentUser?window.currentUser.name:'');
-          fetch('/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico-952/upload',{method:'POST',body:fd})
-            .then(function(r){return r.json();})
-            .then(function(d){
-              if(d.ok){ if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+d.procesadas+' SKUs guardados</span>'; setTimeout(renderTeo,800); }
-              else{ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; bu.disabled=false; }
-            }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; bu.disabled=false; });
-        });
-        var cl=document.getElementById('teo-clear');
-        if(cl) cl.addEventListener('click',function(){
-          if(!confirm('¿Limpiar todo el te\xf3rico 952 de esta sesi\xf3n?')) return;
-          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(_bodAudSesion.id)+'/teorico-952/all',{})
-            .then(function(d){ if(d.ok) renderTeo(); else alert(d.error||'Error'); })
-            .catch(function(){ alert('Sin conexi\xf3n'); });
-        });
-      }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
-  }
-  renderTeo();
-}
+// ── Tab 1: Tarimas ───────────────────────────────────────────────────────
+function bodAudTab1(tb){
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando tarimas…</div>';
+  var ses=_bodAudSesion;
+  Promise.all([
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/lineas'),
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control').catch(function(){return{ok:true,manifiestos:[]};})
+  ]).then(function(results){
+    var lineas  = results[0].ok?(results[0].lineas||[]):[];
+    var manifs  = results[1].ok?(results[1].manifiestos||[]):[];
 
-// ── Tab 4: Control de Manifiestos ─────────────────────────────────────────
-function bodAudTab4(){
-  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  var ses=_bodAudSesion, usr=window.currentUser?window.currentUser.name:'', esA=isBodAuditor();
-  tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.3rem">Cargando\u2026</div>';
-  function renderCtrl(mf,cgMap){
-    var cBtn=esA?'<div style="margin-bottom:.75rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">'
-      +'<button class="btn btn-sm btn-dark" id="b4-crear">\u2795 Crear papel de trabajo</button>'
-      +'<span id="b4-msg" style="font-size:.76rem"></span></div>':'';
-    if(!mf.length){ tb.innerHTML=cBtn+'<div style="color:#aaa;font-size:.82rem">Sin papeles de trabajo. Cre\xe1 uno arriba.</div>'; wireCtrl([],{}); return; }
-    var eS={en_proceso:{bg:'#e3f2fd',fg:'#1565c0',lbl:'En proceso'},finalizado:{bg:'#e8f5e9',fg:'#1b5e20',lbl:'Finalizado'},anulado:{bg:'#fdecea',fg:'#c0392b',lbl:'Anulado'}};
-    var h='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:980px;font-size:.75rem;border-collapse:collapse">'
-      +'<thead><tr style="background:#e8ecf0">'
-      +'<th style="padding:4px 5px;white-space:nowrap">PT (editable)</th>'
-      +'<th style="padding:4px 5px;text-align:center">Estado</th>'
-      +'<th style="padding:4px 5px">Furg\xf3n</th><th style="padding:4px 5px">Placa</th>'
-      +'<th style="padding:4px 5px">Marchamo</th><th style="padding:4px 5px">Lic. Hija</th>'
-      +'<th style="padding:4px 5px">TR999</th><th style="padding:4px 5px">Obs.</th>'
-      +'<th style="padding:4px 5px;text-align:center">Carga</th>'
-      +'<th style="padding:4px 5px;white-space:nowrap;text-align:center">Acciones</th></tr></thead><tbody>';
-    mf.forEach(function(m){
-      var cg=cgMap[m.id]||{};
-      var es=eS[m.estado]||eS['en_proceso'];
-      var skuCnt=m._skuCount||0;
-      var badge='<span style="background:'+es.bg+';color:'+es.fg+';font-size:.7rem;padding:1px 6px;border-radius:8px">'+es.lbl+'</span>';
-      var cBadge=skuCnt>0?'<span style="background:#e8f5e9;color:#1b5e20;font-size:.7rem;padding:1px 7px;border-radius:6px;font-weight:600">'+skuCnt+' l\xedneas</span>':'<span style="background:#f5f5f5;color:#aaa;font-size:.7rem;padding:1px 5px;border-radius:6px">0</span>';
-      // Editable correlativo
-      var corrI='<input class="ci-corr field-inp" data-id="'+bodEscA(m.id)+'" value="'+bodEscA(m.correlativo||'')+'" style="width:145px;padding:2px 5px;font-size:.74rem;font-weight:600;color:#1565c0" title="Editar ## del correlativo">';
-      var fI='<input class="ci field-inp" data-f="furgon" value="'+bodEscA(cg.furgon||m.furgon||'')+'" placeholder="N\xfam" style="width:55px;padding:2px 4px;font-size:.75rem">';
-      var pI='<input class="ci field-inp" data-f="placa" value="'+bodEscA(cg.placa||'')+'" placeholder="Placa" style="width:76px;padding:2px 4px;font-size:.75rem">';
-      var mI='<input class="ci field-inp" data-f="marchamo" value="'+bodEscA(cg.marchamo||'')+'" placeholder="March." style="width:80px;padding:2px 4px;font-size:.75rem">';
-      var lI='<input class="ci field-inp" data-f="licencia_hija" value="'+bodEscA(cg.licencia_hija||m.licencia_hija||'')+'" placeholder="U25-" style="width:85px;padding:2px 4px;font-size:.75rem">';
-      var tI='<input class="ci field-inp" data-f="destino_tr999" value="'+bodEscA(cg.destino_tr999||'')+'" placeholder="TR999" style="width:90px;padding:2px 4px;font-size:.75rem">';
-      var oI='<input class="ci field-inp" data-f="observacion" value="'+bodEscA(cg.observacion||'')+'" placeholder="Obs." style="min-width:55px;padding:2px 4px;font-size:.75rem">';
-      var yCols=Array.isArray(m.colaboradores)?m.colaboradores:[];
-      var lbl=(m.auditor_lider===usr&&!yCols.length)?'Empezar':(m.auditor_lider===usr||yCols.includes(usr))?'Continuar':'Unirse';
-      var acc='';
-      if(m.estado!=='anulado'){
-        acc+='<button class="btn btn-xs b4-ir" data-id="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff;font-size:.69rem">\u25b6 '+lbl+'</button> ';
-        if(esA) acc+='<button class="btn btn-xs b4-sav" data-id="'+bodEscA(m.id)+'" title="Guardar campos" style="background:#1b5e20;color:#fff;font-size:.69rem;padding:2px 8px">\uD83D\uDCBE</button> ';
-        if(esA) acc+='<button class="btn btn-xs b4-sub" data-id="'+bodEscA(m.id)+'" title="Subir licencia hija WMS" style="background:#6c3483;color:#fff;font-size:.69rem">\uD83D\uDCCE Lic.Hija</button> ';
-        if(esA) acc+='<button class="btn btn-xs b4-gen" data-id="'+bodEscA(m.id)+'" title="Generar manifiesto exportable" style="background:#1a5276;color:#fff;font-size:.69rem">\uD83D\uDCC4 Manifiesto</button> ';
-        if(esA&&m.estado!=='finalizado') acc+='<button class="btn btn-xs b4-del" data-id="'+bodEscA(m.id)+'" style="background:#7b241c;color:#fff;font-size:.69rem">Borrar</button>';
-      }
-      h+='<tr data-mid="'+bodEscA(m.id)+'" style="border-top:1px solid #eee">'
-        +'<td style="padding:3px 4px">'+corrI+'</td>'
-        +'<td style="padding:3px 4px;text-align:center">'+badge+'</td>'
-        +'<td style="padding:2px 3px">'+fI+'</td><td style="padding:2px 3px">'+pI+'</td>'
-        +'<td style="padding:2px 3px">'+mI+'</td><td style="padding:2px 3px">'+lI+'</td>'
-        +'<td style="padding:2px 3px">'+tI+'</td><td style="padding:2px 3px">'+oI+'</td>'
-        +'<td style="padding:3px 4px;text-align:center">'+cBadge+'</td>'
-        +'<td style="padding:3px 4px;white-space:nowrap">'+acc+'</td></tr>';
+    // Contar licencias hija por sesión (aproximado: contar manifiestos con lic. hija)
+    var licHijaCount = manifs.filter(function(m){ return m.licencia_hija; }).length;
+
+    // Agrupar por tarima
+    var porTarima={};
+    lineas.forEach(function(l){
+      var t=l.tarima||'?';
+      if(!porTarima[t]) porTarima[t]={tarima:t,skus:{},lineas:0,cantTotal:0,auditadas:0,operador:l.operador||''};
+      porTarima[t].skus[l.sku]=true;
+      porTarima[t].lineas++;
+      porTarima[t].cantTotal+=Number(l.cantidad)||0;
+      if(l.auditado) porTarima[t].auditadas++;
+    });
+    var tarimaList=Object.values(porTarima).sort(function(a,b){return a.tarima.localeCompare(b.tarima);});
+
+    // Filtros
+    var fH='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">'
+      +'<input type="text" id="tab1-f-lic" placeholder="Licencia bolsón" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px" value="'+bodEscA(ses.licencia_id||'')+'">'
+      +'<input type="date" id="tab1-f-fecha" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px" value="'+bodEscA(ses.fecha_trabajo||'')+'">'
+      +'<input type="text" id="tab1-f-tarima" placeholder="Correlativo tarima" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px">'
+      +'</div>';
+
+    if(!tarimaList.length){
+      tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin tarimas capturadas.</div>'; return;
+    }
+
+    var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.76rem;border-collapse:collapse">'
+      +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+      +'<th style="padding:5px 7px;text-align:left">Licencia Bolsón</th>'
+      +'<th style="padding:5px 7px;text-align:left">Fecha</th>'
+      +'<th style="padding:5px 7px;text-align:center">Lic. Hija</th>'
+      +'<th style="padding:5px 7px;text-align:left">Correlativo</th>'
+      +'<th style="padding:5px 7px;text-align:center">Líneas</th>'
+      +'<th style="padding:5px 7px;text-align:center">SKUs únicos</th>'
+      +'<th style="padding:5px 7px;text-align:center">Auditados</th>'
+      +'<th style="padding:5px 7px;text-align:left">Operador</th>'
+      +'<th style="padding:5px 7px;text-align:center">Acción</th>'
+      +'</tr></thead><tbody id="tab1-tbody">';
+    tarimaList.forEach(function(t){
+      var skuU=Object.keys(t.skus).length;
+      h+='<tr class="tab1-row" style="border-bottom:1px solid #f0f0f0" data-tarima="'+bodEscA(t.tarima)+'">'
+        +'<td style="padding:5px 7px">'+bodEscA(ses.licencia_id||'')+'</td>'
+        +'<td style="padding:5px 7px;color:#555">'+bodEscA(bodFmtFecha(ses.fecha_trabajo))+'</td>'
+        +'<td style="padding:5px 7px;text-align:center;color:#888">'+licHijaCount+'</td>'
+        +'<td style="padding:5px 7px;font-weight:600">'+bodEscA(t.tarima)+'</td>'
+        +'<td style="padding:5px 7px;text-align:center">'+t.lineas+'</td>'
+        +'<td style="padding:5px 7px;text-align:center">'+skuU+'</td>'
+        +'<td style="padding:5px 7px;text-align:center">'+t.auditadas+'</td>'
+        +'<td style="padding:5px 7px;color:#888">'+bodEscA(t.operador)+'</td>'
+        +'<td style="padding:5px 7px;text-align:center">'
+        +'<button class="btn btn-xs b-auditar-tar" data-tarima="'+bodEscA(t.tarima)+'" style="background:#1565c0;color:#fff">🔍 Auditar</button>'
+        +'</td></tr>';
     });
     h+='</tbody></table></div>';
-    tb.innerHTML=cBtn+h;
-    wireCtrl(mf,cgMap);
-  }
-  function wireCtrl(mf,cgMap){
-    // Crear PT
-    var cp=document.getElementById('b4-crear');
-    if(cp) cp.addEventListener('click',function(){
-      var msg=document.getElementById('b4-msg'); if(msg) msg.innerHTML='<span style="color:#888">Creando\u2026</span>';
-      bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control',{auditor_lider:usr,creado_por:usr})
-        .then(function(d){
-          if(d.ok&&d.manifiesto){ if(msg) msg.innerHTML='<span style="color:#1e7e34">\u2705 '+bodEscA(d.manifiesto.correlativo)+'</span>'; setTimeout(bodAudTab4,800); }
-          else{ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEscA((d&&d.error)||'Error')+'</span>'; }
-        }).catch(function(){ alert('Sin conexi\xf3n'); });
-    });
-    // Guardar campos
-    tb.querySelectorAll('.b4-sav').forEach(function(btn){
+    tb.innerHTML=h;
+
+    // Filtros
+    function aplicarFiltros(){
+      var fTar=(document.getElementById('tab1-f-tarima')||{value:''}).value.trim().toUpperCase();
+      tb.querySelectorAll('.tab1-row').forEach(function(row){
+        row.style.display=(!fTar||row.dataset.tarima.toUpperCase().includes(fTar))?'':'none';
+      });
+    }
+    var fTarI=document.getElementById('tab1-f-tarima'); if(fTarI) fTarI.addEventListener('input',aplicarFiltros);
+
+    // Auditar → Tab 2 filtrado
+    tb.querySelectorAll('.b-auditar-tar').forEach(function(btn){
       btn.addEventListener('click',function(){
-        var tr=btn.closest('tr'); if(!tr) return;
-        var mId=tr.dataset.mid; var vals={};
-        tr.querySelectorAll('.ci').forEach(function(i){vals[i.dataset.f]=i.value.trim();});
-        // Correlativo editable
-        var corrInp=tr.querySelector('.ci-corr');
-        if(corrInp){
-          var newCorr=corrInp.value.trim().toUpperCase();
-          var origCorr=(mf.find(function(m){return m.id===mId;})||{}).correlativo||'';
-          if(newCorr!==origCorr){
-            bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/correlativo',{correlativo:newCorr,usuario:usr})
-              .then(function(d){ if(!d.ok) alert('Correlativo: '+d.error); }).catch(function(){});
-          }
-        }
-        btn.disabled=true; btn.textContent='\u23f3';
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/guardar',
-          {usuario:usr,furgon:vals.furgon||'',placa:(vals.placa||'').toUpperCase(),marchamo:(vals.marchamo||'').toUpperCase(),
-           licencia_hija:(vals.licencia_hija||'').toUpperCase(),destino_tr999:(vals.destino_tr999||'').toUpperCase(),observacion:vals.observacion||''})
+        var elMain=document.getElementById('bod-aud-contenido');
+        _bodAudTab='2-detalle';
+        window._bodTab2FiltroTarima=btn.dataset.tarima;
+        if(elMain) bodRenderAudTabs(elMain);
+      });
+    });
+  }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar tarimas.</div>'; });
+}
+
+// ── Tab 2: Detalle ───────────────────────────────────────────────────────
+function bodAudTab2(tb){
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando detalle…</div>';
+  var ses=_bodAudSesion, usr=bodCurrentUser();
+  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/lineas')
+    .then(function(d){
+      var lineas=d.ok?(d.lineas||[]):[];
+      lineas.sort(function(a,b){return (a.tarima||'').localeCompare(b.tarima||'')||(a.sku||'').localeCompare(b.sku||'');});
+
+      var filtroTar=window._bodTab2FiltroTarima||'';
+      window._bodTab2FiltroTarima=null; // limpiar después de usar
+
+      // Filtros
+      var tarimасSet=[...new Set(lineas.map(function(l){return l.tarima||'?';}))].sort();
+      var skuSet=[...new Set(lineas.map(function(l){return l.sku||'';}))].sort();
+      var fH='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">'
+        +'<input type="text" id="tab2-f-lic" placeholder="Licencia bolsón" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px" value="'+bodEscA(ses.licencia_id||'')+'">'
+        +'<input type="date" id="tab2-f-fecha" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px" value="'+bodEscA(ses.fecha_trabajo||'')+'">'
+        +'<input type="text" id="tab2-f-tarima" placeholder="Tarima" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:90px" value="'+bodEscA(filtroTar)+'">'
+        +'<input type="text" id="tab2-f-sku" placeholder="SKU" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:110px">'
+        +'</div>';
+
+      if(!lineas.length){ tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin líneas.</div>'; return; }
+
+      var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.75rem;border-collapse:collapse">'
+        +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+        +'<th style="padding:5px 6px">Tarima</th>'
+        +'<th style="padding:5px 6px">SKU</th>'
+        +'<th style="padding:5px 6px">Descripción</th>'
+        +'<th style="padding:5px 6px;text-align:center">Cant.</th>'
+        +'<th style="padding:5px 6px;text-align:center">Físico</th>'
+        +'<th style="padding:5px 6px;text-align:center">Dif.</th>'
+        +'<th style="padding:5px 6px;text-align:center">Estado</th>'
+        +'<th style="padding:5px 6px">Operador</th>'
+        +'<th style="padding:5px 6px">Auditado por</th>'
+        +'<th style="padding:5px 6px;text-align:center">Acción</th>'
+        +'</tr></thead><tbody id="tab2-tbody">';
+
+      lineas.forEach(function(l){
+        var fisico = l.cantidad_audit !== null && l.cantidad_audit !== undefined ? Number(l.cantidad_audit) : null;
+        var cant   = Number(l.cantidad)||0;
+        var dif    = fisico !== null ? (cant - fisico) : null;
+        var estado = dif===null?'—':(dif===0?'Cuadrado':dif<0?'Sobrante':'Faltante');
+        var estadoColor = dif===null?'#888':(dif===0?'#1e7e34':dif<0?'#1565c0':'#c0392b');
+        var auditado = !!l.auditado;
+        h+='<tr class="tab2-row" style="border-bottom:1px solid #f0f0f0" data-id="'+bodEscA(l.id)+'" data-tarima="'+bodEscA(l.tarima||'')+'" data-sku="'+bodEscA(l.sku||'')+'">'
+          +'<td style="padding:5px 6px;font-weight:600">'+bodEscA(l.tarima||'')+'</td>'
+          +'<td style="padding:5px 6px">'+bodEscA(l.sku||'')+'</td>'
+          +'<td style="padding:5px 6px;color:#555;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.descripcion||'')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'+cant+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'
+          +'<input type="number" class="tab2-fisico-inp" data-id="'+bodEscA(l.id)+'" value="'+(fisico!==null?fisico:'')+'" placeholder="—" min="0" style="width:60px;font-size:.76rem;padding:2px 4px;border:1px solid #ddd;border-radius:4px;text-align:center" '+(auditado?'disabled':'')+'>'
+          +'</td>'
+          +'<td style="padding:5px 6px;text-align:center;font-weight:600;color:'+estadoColor+'">'+(dif!==null?dif:'—')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center;color:'+estadoColor+';font-size:.72rem">'+estado+'</td>'
+          +'<td style="padding:5px 6px;color:#888;font-size:.72rem">'+bodEscA(l.operador||'')+'</td>'
+          +'<td style="padding:5px 6px;color:#555;font-size:.72rem">'+bodEscA(l.auditado_por||'')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'
+          +(auditado
+            ? '<button class="btn btn-xs b-anular-aud" data-id="'+bodEscA(l.id)+'" style="background:#c0392b;color:#fff;font-size:.7rem">Anular</button>'
+            : '<button class="btn btn-xs b-auditar-lin" data-id="'+bodEscA(l.id)+'" style="background:#1e7e34;color:#fff;font-size:.7rem">Auditar</button>'
+          )+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+      tb.innerHTML=h;
+
+      // Filtros
+      function aplicarFiltros2(){
+        var fTar=(document.getElementById('tab2-f-tarima')||{value:''}).value.trim().toUpperCase();
+        var fSku=(document.getElementById('tab2-f-sku')||{value:''}).value.trim().toUpperCase();
+        tb.querySelectorAll('.tab2-row').forEach(function(row){
+          var ok=(!fTar||row.dataset.tarima.toUpperCase().includes(fTar))&&(!fSku||row.dataset.sku.toUpperCase().includes(fSku));
+          row.style.display=ok?'':'none';
+        });
+      }
+      var fT=document.getElementById('tab2-f-tarima'); if(fT) fT.addEventListener('input',aplicarFiltros2);
+      var fS=document.getElementById('tab2-f-sku');   if(fS) fS.addEventListener('input',aplicarFiltros2);
+      if(filtroTar) aplicarFiltros2();
+
+      // Auditar línea
+      tb.querySelectorAll('.b-auditar-lin').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var row=btn.closest('tr');
+          var inp=row.querySelector('.tab2-fisico-inp');
+          var fisico=Number(inp.value);
+          if(isNaN(fisico)||inp.value===''){ alert('Ingresá el físico antes de auditar.'); inp.focus(); return; }
+          btn.disabled=true; btn.textContent='…';
+          bodFetch('PATCH','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/fisico-audit',
+            {fisico_auditoria:fisico, teorico_952:0, usuario:usr})
+            .then(function(d1){
+              if(!d1.ok){ alert(d1.error||'Error'); btn.disabled=false; btn.textContent='Auditar'; return; }
+              bodFetch('POST','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/auditar',{usuario:usr})
+                .then(function(d2){
+                  if(d2.ok) bodAudTab2(tb); else { alert(d2.error||'Error'); btn.disabled=false; btn.textContent='Auditar'; }
+                }).catch(function(){ btn.disabled=false; btn.textContent='Auditar'; });
+            }).catch(function(){ btn.disabled=false; btn.textContent='Auditar'; alert('Error de red.'); });
+        });
+      });
+
+      // Anular auditoría
+      tb.querySelectorAll('.b-anular-aud').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Anular la auditoría de esta línea?')) return;
+          bodFetch('POST','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/unauditar',{usuario:usr,auditor:true})
+            .then(function(d){ if(d.ok) bodAudTab2(tb); else alert(d.error||'Error'); })
+            .catch(function(){ alert('Error de red.'); });
+        });
+      });
+
+    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar detalle.</div>'; });
+}
+
+// ── Tab 3: Carga Teórico ─────────────────────────────────────────────────
+function bodAudTab3(tb){
+  var ses=_bodAudSesion, usr=bodCurrentUser();
+  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952')
+    .then(function(d){
+      var rows=d.ok?(d.rows||[]):[];
+      var h='<div style="font-size:.82rem;font-weight:700;color:#333;margin-bottom:.6rem">Carga Teórico 952</div>'
+        +'<p style="font-size:.78rem;color:#555;margin-bottom:.6rem">Subí el archivo <strong>952_006_001_Teórico.xlsx</strong>. Columnas: SKU, Nombre, Cant. 952, Unidad, Exist., Disp.</p>'
+        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.8rem">'
+        +'<input type="file" id="tab3-file" accept=".xlsx,.xls" style="font-size:.78rem">'
+        +'<button class="btn btn-sm btn-dark" id="tab3-upload-btn">⬆ Subir Teórico</button>'
+        +(rows.length?'<button class="btn btn-xs" id="tab3-clear-btn" style="background:#c0392b;color:#fff">🗑 Limpiar</button>':'')
+        +'<span id="tab3-msg" style="font-size:.76rem"></span></div>';
+      if(rows.length){
+        h+='<div style="font-size:.75rem;color:#555;margin-bottom:.3rem">'+rows.length+' SKUs cargados:</div>'
+          +'<div style="overflow-x:auto;max-height:300px"><table style="width:100%;font-size:.74rem;border-collapse:collapse">'
+          +'<thead><tr style="background:#f0f0f0;font-weight:700"><th style="padding:4px 6px">SKU</th><th style="padding:4px 6px">Nombre</th><th style="padding:4px 6px;text-align:center">Cant. 952</th><th style="padding:4px 6px">Unidad</th></tr></thead><tbody>';
+        rows.slice(0,200).forEach(function(r){
+          h+='<tr style="border-bottom:1px solid #f5f5f5"><td style="padding:4px 6px">'+bodEscA(r.sku)+'</td><td style="padding:4px 6px;color:#555">'+bodEscA(r.nombre||'')+'</td><td style="padding:4px 6px;text-align:center">'+bodEscA(r.cantidad_952||0)+'</td><td style="padding:4px 6px;color:#888">'+bodEscA(r.unidades||'')+'</td></tr>';
+        });
+        if(rows.length>200) h+='<tr><td colspan="4" style="padding:4px;color:#aaa;text-align:center">…y '+(rows.length-200)+' más</td></tr>';
+        h+='</tbody></table></div>';
+      } else {
+        h+='<div style="color:#aaa;font-size:.82rem">Sin teórico cargado aún.</div>';
+      }
+      tb.innerHTML=h;
+
+      document.getElementById('tab3-upload-btn').addEventListener('click',function(){
+        var fi=document.getElementById('tab3-file');
+        var msg=document.getElementById('tab3-msg');
+        if(!fi||!fi.files[0]){ msg.innerHTML='<span style="color:#c0392b">Seleccioná el archivo.</span>'; return; }
+        msg.innerHTML='<span style="color:#888">Subiendo…</span>';
+        var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('creado_por',usr);
+        fetch('/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952/upload',{method:'POST',body:fd})
+          .then(function(r){return r.json();})
           .then(function(d){
-            if(d.ok){btn.textContent='\u2705';setTimeout(function(){btn.textContent='\uD83D\uDCBE';btn.disabled=false;},1200);}
-            else{alert(d.error||'Error');btn.textContent='\uD83D\uDCBE';btn.disabled=false;}
-          }).catch(function(){alert('Sin conexi\xf3n');btn.textContent='\uD83D\uDCBE';btn.disabled=false;});
+            if(d.ok){
+              msg.innerHTML='<span style="color:#1e7e34">✅ '+d.procesadas+' SKUs cargados</span>';
+              bodCargarTeorico(ses.id, function(){ setTimeout(function(){ bodAudTab3(tb); },800); });
+            } else {
+              msg.innerHTML='<span style="color:#c0392b">Error: '+bodEscA(d.error)+'</span>';
+            }
+          }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
       });
-    });
-    // Empezar / Continuar / Unirse
-    tb.querySelectorAll('.b4-ir').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        var mObj=mf.find(function(x){return x.id===btn.dataset.id;})||{};
-        var cg=cgMap[btn.dataset.id]||{};
-        _bodAudManifAct={
-          id:mObj.id,correlativo:mObj.correlativo,estado:mObj.estado,
-          auditor_lider:mObj.auditor_lider,colaboradores:Array.isArray(mObj.colaboradores)?mObj.colaboradores:[],
-          furgon:cg.furgon||mObj.furgon||'',placa:cg.placa||'',marchamo:cg.marchamo||'',
-          licencia_hija:cg.licencia_hija||mObj.licencia_hija||'',
-          destino_tr999:cg.destino_tr999||'',observacion:cg.observacion||''
-        };
-        _bodAudTab='5-papel'; bodRenderAuditoria();
+
+      var clearBtn=document.getElementById('tab3-clear-btn');
+      if(clearBtn) clearBtn.addEventListener('click',function(){
+        if(!confirm('¿Limpiar el teórico cargado?')) return;
+        bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952/all',{usuario:usr})
+          .then(function(d){ if(d.ok){ _bodTeorico={}; bodAudTab3(tb); } else alert(d.error||'Error'); })
+          .catch(function(){ alert('Error de red.'); });
       });
-    });
-    // Subir Licencia Hija WMS
-    tb.querySelectorAll('.b4-sub').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        var mId=btn.dataset.id;
-        var inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx,.xls,.csv';
-        inp.addEventListener('change',function(){
-          var f=inp.files&&inp.files[0]; if(!f) return;
-          if(!confirm('¿Subir "'+f.name+'" como licencia hija WMS para este PT? Reemplazará la anterior si existe.')) return;
-          var fd=new FormData(); fd.append('file',f); fd.append('manifiesto_id',mId); fd.append('usuario',usr);
-          btn.disabled=true; btn.textContent='\u23f3';
+    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar teórico.</div>'; });
+}
+
+// ── Tab 4: Control de Manifiestos ────────────────────────────────────────
+function bodAudTab4(tb){
+  var ses=_bodAudSesion, usr=bodCurrentUser();
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando…</div>';
+  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control')
+    .then(function(d){
+      var mfs=d.ok?(d.manifiestos||[]):[];
+      var h='<div style="margin-bottom:.8rem">'
+        +'<button class="btn btn-sm btn-dark" id="tab4-gen-pt-btn">＋ Generar PT</button>'
+        +'<span id="tab4-pt-msg" style="font-size:.76rem;margin-left:.5rem"></span></div>';
+
+      if(!mfs.length){
+        h+='<div style="color:#aaa;font-size:.82rem">Sin papeles de trabajo creados. Presioná "Generar PT".</div>';
+      } else {
+        mfs.forEach(function(m){
+          var isEditing = !!m._editing; // estado local no persiste, siempre inicia en modo guardado
+          var estadoColor = m.estado==='finalizado'?'#1e7e34':(m.estado==='anulado'?'#c0392b':'#1565c0');
+          var estadoLabel = m.estado==='finalizado'?'Finalizado':(m.estado==='anulado'?'Anulado':'En Proceso');
+          var bloqueado = (m.estado==='finalizado'||m.estado==='anulado');
+
+          h+='<div class="tab4-pt-card" data-mid="'+bodEscA(m.id)+'" style="border:1px solid #e0e0e0;border-radius:8px;padding:.75rem;margin-bottom:.75rem;background:#fff">'
+            +'<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;flex-wrap:wrap">'
+            +'<span style="font-weight:700;font-size:.84rem">'+bodEscA(m.correlativo||m.id)+'</span>'
+            +'<span style="font-size:.72rem;color:'+estadoColor+';border:1px solid '+estadoColor+';border-radius:10px;padding:1px 7px">'+estadoLabel+'</span>'
+            +'<span style="font-size:.72rem;color:#888;margin-left:auto">Creado por: '+bodEscA(m.creado_por||'')+'</span>'
+            +'</div>'
+            // Campos editables
+            +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.4rem;margin-bottom:.5rem">'
+            +bodTab4Campo('Furgón','furgon',m.furgon||'','number',bloqueado)
+            +bodTab4Campo('Placa','placa',m.placa||'','text',bloqueado)
+            +bodTab4Campo('Marchamo','marchamo',m.marchamo||'','text',bloqueado)
+            +bodTab4Campo('Lic. Hija','licencia_hija',m.licencia_hija||'','text',bloqueado)
+            +bodTab4Campo('TR999','destino_tr999',m.destino_tr999||'','text',bloqueado)
+            +bodTab4Campo('Carga No.','carga_no',m.carga_no||'','number',bloqueado)
+            +bodTab4Campo('Auditor','auditor_lider',m.auditor_lider||'','text',bloqueado)
+            +bodTab4Campo('Observaciones','observacion',m.observacion||'','text',bloqueado)
+            +'</div>'
+            // Colaboradores
+            +(m.colaboradores&&m.colaboradores.length?'<div style="font-size:.73rem;color:#888;margin-bottom:.4rem">Colaboradores: '+bodEscA(m.colaboradores.join(', '))+'</div>':'')
+            // Botones de acción
+            +'<div style="display:flex;gap:.4rem;flex-wrap:wrap">'
+            +(!bloqueado?'<button class="btn btn-xs b-guardar-pt" data-mid="'+bodEscA(m.id)+'">💾 Guardar cambios</button>':'')
+            +(!bloqueado?'<button class="btn btn-xs b-empezar-pt" data-mid="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff">▶ '+(m.estado==='en_proceso'?'Continuar':'Empezar')+'</button>':'')
+            +(!bloqueado?'<button class="btn btn-xs b-subir-lich" data-mid="'+bodEscA(m.id)+'">📤 Subir Lic. Hija WMS</button>':'')
+            +(m.estado==='finalizado'?'<button class="btn btn-xs b-generar-manif" data-mid="'+bodEscA(m.id)+'" data-corr="'+bodEscA(m.correlativo||m.id)+'" style="background:#1e7e34;color:#fff">📄 Generar Manifiesto</button>':'')
+            +(!bloqueado?'<button class="btn btn-xs b-borrar-pt" data-mid="'+bodEscA(m.id)+'" style="background:#c0392b;color:#fff">✕ Borrar</button>':'')
+            +'</div>'
+            +'<div class="tab4-pt-msg" style="font-size:.76rem;margin-top:.35rem"></div>'
+            // Upload licencia hija (oculto, se muestra al hacer clic)
+            +'<div class="tab4-lich-upload" data-mid="'+bodEscA(m.id)+'" style="display:none;margin-top:.5rem;padding:.5rem;background:#f8f9fa;border-radius:6px">'
+            +'<input type="file" class="tab4-lich-file" accept=".xlsx,.xls" style="font-size:.76rem">'
+            +'<button class="btn btn-xs tab4-lich-btn" data-mid="'+bodEscA(m.id)+'" style="margin-left:6px">⬆ Subir</button>'
+            +'<span class="tab4-lich-msg" style="font-size:.75rem;margin-left:6px"></span>'
+            +'</div>'
+            +'</div>';
+        });
+      }
+      tb.innerHTML=h;
+
+      // Generar PT
+      document.getElementById('tab4-gen-pt-btn').addEventListener('click',function(){
+        var msg=document.getElementById('tab4-pt-msg');
+        msg.innerHTML='<span style="color:#888">Generando…</span>';
+        bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control',{
+          auditor_lider:usr, creado_por:usr
+        }).then(function(d){
+          if(d.ok){ msg.innerHTML='<span style="color:#1e7e34">✅ '+bodEscA(d.manifiesto&&d.manifiesto.correlativo||'PT creado')+'</span>'; setTimeout(function(){ bodAudTab4(tb); },600); }
+          else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+        }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+      });
+
+      // Guardar campos PT
+      tb.querySelectorAll('.b-guardar-pt').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var card=btn.closest('.tab4-pt-card');
+          var msg=card.querySelector('.tab4-pt-msg');
+          var mId=btn.dataset.mid;
+          var datos={ usuario:usr };
+          card.querySelectorAll('.tab4-campo-inp').forEach(function(inp){ datos[inp.dataset.campo]=inp.value.trim(); });
+          msg.innerHTML='<span style="color:#888">Guardando…</span>';
+          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/guardar', datos)
+            .then(function(d){
+              if(d.ok) msg.innerHTML='<span style="color:#1e7e34">✅ Guardado</span>';
+              else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+            }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+        });
+      });
+
+      // Empezar/Continuar → Tab 5
+      tb.querySelectorAll('.b-empezar-pt').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          _bodAudPtActivo = btn.dataset.mid;
+          _bodAudTab='5-papel';
+          var elMain=document.getElementById('bod-aud-contenido');
+          if(elMain) bodRenderAudTabs(elMain);
+        });
+      });
+
+      // Subir licencia hija WMS
+      tb.querySelectorAll('.b-subir-lich').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var mId=btn.dataset.mid;
+          var uploadDiv=tb.querySelector('.tab4-lich-upload[data-mid="'+mId+'"]');
+          if(uploadDiv) uploadDiv.style.display=uploadDiv.style.display==='none'?'':'none';
+        });
+      });
+      tb.querySelectorAll('.tab4-lich-btn').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var mId=btn.dataset.mid;
+          var uploadDiv=tb.querySelector('.tab4-lich-upload[data-mid="'+mId+'"]');
+          var fi=uploadDiv?uploadDiv.querySelector('.tab4-lich-file'):null;
+          var msg=uploadDiv?uploadDiv.querySelector('.tab4-lich-msg'):null;
+          if(!fi||!fi.files[0]){ if(msg) msg.textContent='Seleccioná el archivo.'; return; }
+          if(msg) msg.textContent='Subiendo…';
+          var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('manifiesto_id',mId); fd.append('usuario',usr);
           fetch('/api/bod/sesion/'+encodeURIComponent(ses.id)+'/licencia-hija/upload',{method:'POST',body:fd})
             .then(function(r){return r.json();})
-            .then(function(d){
-              if(d.ok){ alert('\u2705 '+d.procesadas+' filas de licencia hija cargadas.'); bodCargarLicHija(ses.id,mId,function(){}); }
-              else alert(d.error||'Error al subir.');
-              btn.disabled=false; btn.textContent='\uD83D\uDCCE Lic.Hija';
-            }).catch(function(){ alert('Sin conexi\xf3n'); btn.disabled=false; btn.textContent='\uD83D\uDCCE Lic.Hija'; });
+            .then(function(d){ if(msg) msg.textContent=d.ok?('✅ '+d.procesadas+' filas'):('Error: '+(d.error||'?')); })
+            .catch(function(){ if(msg) msg.textContent='Error de red.'; });
         });
-        inp.click();
       });
-    });
-    // Generar Manifiesto
-    tb.querySelectorAll('.b4-gen').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        var mId=btn.dataset.id;
-        bodAbrirDialogoExport(ses.id, mId, 'manifiesto');
+
+      // Generar Manifiesto
+      tb.querySelectorAll('.b-generar-manif').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var card=btn.closest('.tab4-pt-card');
+          var msg=card.querySelector('.tab4-pt-msg');
+          msg.innerHTML='<span style="color:#888">Preparando manifiesto…</span>';
+          var mId=btn.dataset.mid;
+          bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/manifiesto-data')
+            .then(function(d){
+              if(!d.ok){ msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; return; }
+              bodMostrarSelectorExport(d, ses, mId, msg);
+            }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+        });
       });
-    });
-    // Borrar PT
-    tb.querySelectorAll('.b4-del').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        var mId=btn.dataset.id;
-        if(!confirm('¿Borrar este PT? Esta acci\xf3n no se puede deshacer.')) return;
-        bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId),{usuario:usr,auditor:true})
-          .then(function(d){
-            if(d.ok) bodAudTab4();
-            else if(d.tieneLineas){
-              if(!confirm('El PT tiene '+d.count+' l\xedneas. ¿Borrar de todas formas?')) return;
-              bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId),{usuario:usr,auditor:true,forzar:true})
-                .then(function(d2){ if(d2.ok) bodAudTab4(); else alert(d2.error||'Error'); });
-            } else alert(d.error||'Error');
-          }).catch(function(){alert('Sin conexi\xf3n');});
+
+      // Borrar PT
+      tb.querySelectorAll('.b-borrar-pt').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Borrar este Papel de Trabajo?')) return;
+          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.mid),{usuario:usr})
+            .then(function(d){ if(d.ok) bodAudTab4(tb); else alert(d.error||'Error'); })
+            .catch(function(){ alert('Error de red.'); });
+        });
       });
-    });
+
+    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar manifiestos.</div>'; });
+}
+
+function bodTab4Campo(label,campo,valor,tipo,disabled){
+  return '<div><label style="font-size:.71rem;font-weight:600;color:#555;display:block;margin-bottom:2px">'+bodEscA(label)+'</label>'
+    +'<input type="'+tipo+'" class="tab4-campo-inp" data-campo="'+campo+'" value="'+bodEscA(valor)+'"'
+    +' style="width:100%;font-size:.78rem;padding:3px 6px;border:1px solid #ddd;border-radius:5px;box-sizing:border-box"'
+    +(disabled?' disabled':'')+' autocomplete="off"></div>';
+}
+
+// Selector de formato de exportación
+function bodMostrarSelectorExport(data, ses, mId, msg){
+  // Verificar que hay líneas
+  if(!data.skus||!data.skus.length){
+    msg.innerHTML='<span style="color:#c0392b">El papel de trabajo no tiene líneas. Agregá SKUs antes de generar.</span>'; return;
   }
+  // Overlay de selección
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.5rem;width:340px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
+    +'<h3 style="font-size:.95rem;font-weight:700;margin:0 0 .4rem">Generar Manifiesto</h3>'
+    +'<p style="font-size:.78rem;color:#666;margin:0 0 1rem">'+bodEscA(data.pt&&data.pt.correlativo||'')+'  · '+data.total_lineas+' SKUs · '+data.pct_auditado+'% auditado</p>'
+    +'<p style="font-size:.8rem;font-weight:600;margin-bottom:.4rem">Formato:</p>'
+    +'<div style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.8rem">'
+    +'<button id="exp-word" class="btn btn-sm" style="background:#1565c0;color:#fff">📄 Word (.docx)</button>'
+    +'<button id="exp-excel" class="btn btn-sm" style="background:#1e7e34;color:#fff">📊 Excel (.xlsx)</button>'
+    +'</div>'
+    +'<button id="exp-cancel" class="btn btn-xs" style="width:100%;background:#f5f5f5;color:#555">Cancelar</button>'
+    +'<div id="exp-msg" style="font-size:.76rem;margin-top:.5rem"></div>'
+    +'</div>';
+  document.body.appendChild(ov);
+  document.getElementById('exp-cancel').addEventListener('click',function(){ ov.remove(); });
+  ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
+
+  function descargar(fmt){
+    var expMsg=document.getElementById('exp-msg');
+    if(expMsg) expMsg.innerHTML='<span style="color:#888">Generando '+fmt+'…</span>';
+    ['exp-word','exp-excel','exp-cancel'].forEach(function(id){ var b=document.getElementById(id); if(b) b.disabled=true; });
+    // Para Word: usar endpoint del servidor
+    if(fmt==='word'){
+      // Buscar bod_furgon_cierres id para este manifiesto
+      bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control')
+        .then(function(d){
+          var mfs=d.ok?(d.manifiestos||[]):[];
+          var mFound=mfs.find(function(m){return m.id===mId;});
+          // Intentar con carga-logistica si tiene un cargaId
+          var cargaId = mFound && mFound.carga_logistica_id;
+          if(cargaId){
+            window.location.href='/api/bod/sesion/'+encodeURIComponent(ses.id)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/manifiesto-word?usuario='+encodeURIComponent(bodCurrentUser());
+            ov.remove();
+          } else {
+            // Generar Excel como fallback ya que no hay carga logística con ese ID
+            bodGenerarManifiestoExcel(data, ses);
+            ov.remove();
+          }
+        }).catch(function(){ if(expMsg) expMsg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+    } else if(fmt==='excel'){
+      bodGenerarManifiestoExcel(data, ses);
+      ov.remove();
+    }
+  }
+  document.getElementById('exp-word').addEventListener('click',function(){ descargar('word'); });
+  document.getElementById('exp-excel').addEventListener('click',function(){ descargar('excel'); });
+}
+
+// Generación de Excel del manifiesto en cliente
+function bodGenerarManifiestoExcel(data, ses){
+  var pt=data.pt||{};
+  var skus=data.skus||[];
+  var cf=data.campos_fijos||{};
+  var fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+
+  // XLSX en cliente usando SheetJS si está disponible
+  if(typeof XLSX==='undefined'){
+    alert('Librería XLSX no disponible. Usá el formato Word.'); return;
+  }
+  var wb=XLSX.utils.book_new();
+  var rows=[
+    ['CARGA ENVÍO A BODEGA','','','','','','',''],
+    ['','','','','','Marchamo:',pt.marchamo||'',''],
+    ['','Herramientas Poderosas','','','','Licencia:',pt.licencia_hija||'',''],
+    ['','DIRECCIÓN:',cf.direccion_origen||'','','UBICACIÓN:',pt.destino_tr999||'',''],
+    ['','DIRECCIÓN DESTINO:',cf.direccion_destino||'','','Fecha:',fecha,''],
+    ['','','','','','Carga No.',pt.carga_no||'',''],
+    [],
+    ['','CODIGO','ESTATUS','% AUDITADO','DESCRIPCIÓN','CANTIDAD','WMS','DIFERENCIA',''],
+  ];
+  skus.forEach(function(s){
+    rows.push(['',s.sku,s.estado_papel||'No auditado',(s.porcentaje_auditado||0)+'%',s.nombre||'',s.fisico_auditoria||0,s.cantidad_wms||0,s.diferencia||0,'']);
+  });
+  rows.push([]);
+  rows.push([]);
+  rows.push(['','AUTORIZACIÓN DE ENVÍO','','NOMBRE Y FIRMA QUIEN RECIBE','']);
+  (cf.autorizacion_envio||[]).forEach(function(n,i){
+    rows.push(['',n,i===1?(cf.numero_transporte||''):(i===2?(cf.tipo_transporte||''):''),'','']);
+  });
+  rows.push([]);
+  rows.push(['','ENCARGADO DE PEDIDO','','AUDITOR / VALIDADOR','']);
+  rows.push(['',cf.encargado_pedido||'','','pt.auditor_lider','']);
+
+  var ws=XLSX.utils.aoa_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb,ws,'Manifiesto');
+  var corr=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_');
+  XLSX.writeFile(wb,corr+'_manifiesto.xlsx');
+}
+
+// ── Tab 5: Papel de Trabajo ──────────────────────────────────────────────
+function bodAudTab5(tb){
+  var ses=_bodAudSesion, usr=bodCurrentUser();
+  // Si no hay PT activo, pedir al usuario que elija uno desde Tab 4
+  if(!_bodAudPtActivo){
+    tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.5rem">▶ Usá <strong>Empezar</strong> en Control de Manifiestos para trabajar el Papel de Trabajo.</div>'; return;
+  }
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando papel de trabajo…</div>';
+  var mId=_bodAudPtActivo;
+
   Promise.all([
     bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control'),
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/furgones').catch(function(){return{ok:true,rows:[]};})
-  ]).then(function(r){
-    var mf=r[0].ok?(r[0].manifiestos||[]):[];
-    var cg=r[1].ok?(r[1].rows||[]):[];
-    var cgM={}; cg.forEach(function(c){if(c.manifiesto_id)cgM[c.manifiesto_id]=c;});
-    renderCtrl(mf,cgM);
-  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
-}
+    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo?manifiesto_id='+encodeURIComponent(mId))
+  ]).then(function(results){
+    var mfs=results[0].ok?(results[0].manifiestos||[]):[];
+    var pt=mfs.find(function(m){return m.id===mId;})||{};
+    var lineas=results[1].ok?(results[1].lineas||[]):[];
+    var bloqueado=(pt.estado==='finalizado'||pt.estado==='anulado');
 
-// ── Tab 5: Papel de Trabajo ───────────────────────────────────────────────
-function bodAudTab5(){
-  var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  if(!_bodAudManifAct){
-    tb.innerHTML='<div style="background:#fff8e1;border-radius:8px;padding:.8rem 1rem;font-size:.82rem;color:#795548">'
-      +'\uD83D\uDCCB Us\xe1 <strong>\u25b6 Empezar</strong> en Control de Manifiesto para trabajar el Papel de Trabajo.'
-      +'<br><button class="btn btn-sm" id="b5-ctrl" style="margin-top:.4rem;font-size:.76rem">Ir a Control de Manifiesto</button></div>';
-    var b=document.getElementById('b5-ctrl'); if(b) b.addEventListener('click',function(){_bodAudTab='4-control';bodRenderAuditoria();});
-    return;
-  }
-  var m=_bodAudManifAct, ses=_bodAudSesion, usr=window.currentUser?window.currentUser.name:'';
-  // Header
-  var hdr='<div style="background:#e3f2fd;border-radius:6px;padding:.4rem .85rem;margin-bottom:.4rem;font-size:.77rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-    +'<span style="font-weight:700;color:#1565c0;font-size:.82rem">'+bodEscA(m.correlativo||'PT-?')+'</span>'
-    +'<span style="background:#e3f2fd;color:#1565c0;font-size:.7rem;padding:1px 7px;border-radius:8px">'+bodEscA(m.estado||'en_proceso')+'</span>'
-    +(m.furgon?'<span style="color:#555">Furg\xf3n: '+bodEscA(m.furgon)+'</span>':'')
-    +(m.licencia_hija?'<span style="color:#555">Lic: '+bodEscA(m.licencia_hija)+'</span>':'')
-    +(m.destino_tr999?'<span style="color:#555">'+bodEscA(m.destino_tr999)+'</span>':'')
-    +'<button id="b5-reload" class="btn btn-xs" style="margin-left:auto;font-size:.69rem;background:#e8f4ff;color:#1565c0">\u21bb</button></div>';
-  // Add form
-  var addF='<div style="background:#f8f9fa;border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem">'
-    +'<div style="font-size:.7rem;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:.4rem">+ Agregar SKU al papel de trabajo</div>'
-    +'<div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">'
-    +'<div><label style="font-size:.66rem;color:#888;display:block;margin-bottom:2px">C\xf3d. barra / SKU</label>'
-    +'<input type="text" id="p5-barra" class="field-inp" placeholder="Escanear o escribir" autocomplete="off" style="width:145px;padding:4px 7px;font-size:.8rem" inputmode="numeric"></div>'
-    +'<div style="flex:2;min-width:120px"><label style="font-size:.66rem;color:#888;display:block;margin-bottom:2px">Descripci\xf3n</label>'
-    +'<input type="text" id="p5-desc" class="field-inp" placeholder="Auto" style="width:100%;padding:4px 7px;font-size:.76rem;background:#f0f0f0;color:#555" readonly></div>'
-    +'<div><label style="font-size:.66rem;color:#888;display:block;margin-bottom:2px">F\xedsico s/Aud.</label>'
-    +'<input type="number" id="p5-fis" class="field-inp" value="0" min="0" step="1" style="width:65px;padding:4px 6px;font-size:.8rem;text-align:center"></div>'
-    +'<div><label style="font-size:.66rem;color:#888;display:block;margin-bottom:2px">Tarima</label>'
-    +'<input type="text" id="p5-tar" class="field-inp" placeholder="A01" style="width:58px;padding:4px 6px;font-size:.8rem;text-transform:uppercase"></div>'
-    +'<div><label style="font-size:.66rem;color:#888;display:block;margin-bottom:2px">Estatus</label>'
-    +'<select id="p5-est" class="field-inp" style="padding:4px 6px;font-size:.78rem">'
-    +'<option value="No auditado">No auditado</option><option value="Auditado">Auditado</option></select></div>'
-    +'<button class="btn btn-sm" id="p5-btn-add" style="background:#1565c0;color:#fff;font-size:.74rem;padding:5px 13px;align-self:flex-end">+ Agregar</button>'
-    +'<span id="p5-msg" style="font-size:.74rem;align-self:center"></span></div></div>';
-  // Finalize buttons + Generar Manifiesto
-  var finH='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.6rem">'
-    +'<button class="btn btn-sm" id="p5-fin-manif" style="background:#1a5276;color:#fff;font-size:.76rem">\uD83D\uDCC4 Finalizar como Manifiesto</button>'
-    +'<button class="btn btn-sm" id="p5-fin-mues" style="background:#1b6317;color:#fff;font-size:.76rem">\uD83D\uDCC4 Finalizar como Muestra</button>'
-    +'</div>';
-  tb.innerHTML=hdr+addF+finH+'<div id="p5-tbl"><div style="color:#888;font-size:.82rem">Cargando\u2026</div></div>';
-  // Wire finalize
-  var btnFM=document.getElementById('p5-fin-manif');
-  if(btnFM) btnFM.addEventListener('click',function(){ bodAbrirDialogoExport(ses.id,m.id,'manifiesto'); });
-  var btnFMu=document.getElementById('p5-fin-mues');
-  if(btnFMu) btnFMu.addEventListener('click',function(){ bodAbrirDialogoExport(ses.id,m.id,'muestra'); });
-  // Load lines
-  function loadFilas(){
-    var tEl=document.getElementById('p5-tbl'); if(!tEl) return;
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo?manifiesto_id='+encodeURIComponent(m.id))
-      .then(function(d){
-        var filas=d.ok?(d.rows||[]):[];
-        if(!filas.length){tEl.innerHTML='<div style="color:#aaa;font-size:.82rem">Sin l\xedneas. Agrega SKUs arriba.</div>';return;}
-        var html='<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:950px;font-size:.75rem"><thead><tr>'
-          +'<th>SKU</th><th>Descripci\xf3n</th><th class="tc">952</th><th class="tc">F\xedsico</th>'
-          +'<th class="tc">Dif.</th><th>Seguimiento</th><th class="tc">Valid.\u2714</th>'
-          +'<th class="tc">Dif.post-v.</th><th>Tarima</th><th>Est.</th>'
-          +'<th class="tc">Cant.Man.</th><th class="tc">Acci\xf3n</th></tr></thead><tbody>';
-        filas.forEach(function(f){
-          var est=f.estado_papel||'No auditado';
-          var aud=est==='Auditado'||!!f.validado;
-          var teo=Number(f.cantidad_952)||(_bodAudTeorico[f.sku]||{}).cantidad_952||0;
-          var fis=Number(f.fisico_auditoria)||0;
-          var dif=bodCalcDif(teo,fis);
-          var col=bodColorDif(dif);
-          var seg=bodSeguimiento(dif);
-          var difPost=aud?0:dif;
-          var cantM=aud?fis:teo;
-          html+='<tr data-sku="'+bodEscA(f.sku)+'" data-teo="'+teo+'">'
-            +'<td style="font-weight:600">'+bodEscA(f.sku||'')+'</td>'
-            +'<td style="font-size:.73rem">'+bodEscA(f.nombre||'—')+'</td>'
-            +'<td class="tc" style="color:#555">'+teo+'</td>'
-            +'<td class="tc"><input type="number" class="p5fi field-inp" data-sku="'+bodEscA(f.sku)+'" data-teo="'+teo+'" value="'+fis+'" min="0" step="1" style="width:58px;padding:2px 4px;font-size:.77rem;text-align:center"></td>'
-            +'<td class="tc p5d" style="font-weight:600;color:'+col+'">'+dif+'</td>'
-            +'<td class="p5s" style="font-size:.73rem;color:'+col+'">'+bodEscA(seg)+'</td>'
-            +'<td class="tc"><input type="checkbox" class="p5v" data-sku="'+bodEscA(f.sku)+'" '+(aud?'checked':'')+' title="Validar diferencia negativa"></td>'
-            +'<td class="tc p5dp" style="font-weight:600;color:'+col+'">'+difPost+'</td>'
-            +'<td style="font-size:.73rem">'+bodEscA(f.tarimas||'—')+'</td>'
-            +'<td style="font-size:.72rem"><span class="p5e-badge" style="background:'+(aud?'#e8f5e9':'#fafafa')+';color:'+(aud?'#1b5e20':'#888')+';font-size:.68rem;padding:1px 5px;border-radius:6px">'+bodEscA(est)+'</span></td>'
-            +'<td class="tc p5cm" style="font-weight:600">'+cantM+'</td>'
-            +'<td class="tc"><button class="btn btn-xs p5q" data-sku="'+bodEscA(f.sku)+'" style="background:#fdecea;color:#c0392b;font-size:.69rem">Quitar</button></td></tr>';
+    // Header datos PT
+    var h='<div style="background:#f0f4ff;border-radius:8px;padding:.55rem .9rem;margin-bottom:.7rem;font-size:.76rem">'
+      +'<strong>'+bodEscA(pt.correlativo||mId)+'</strong>'
+      +(pt.furgon?' · Furgón: '+bodEscA(pt.furgon):'')
+      +(pt.placa?' · Placa: '+bodEscA(pt.placa):'')
+      +(pt.marchamo?' · Marchamo: '+bodEscA(pt.marchamo):'')
+      +(pt.licencia_hija?' · Lic. Hija: '+bodEscA(pt.licencia_hija):'')
+      +(pt.destino_tr999?' · TR999: '+bodEscA(pt.destino_tr999):'')
+      +'</div>';
+
+    // Bloque agregar SKU
+    if(!bloqueado){
+      h+='<div style="background:#f8f9fa;border-radius:8px;padding:.65rem .9rem;margin-bottom:.7rem">'
+        +'<div style="font-size:.76rem;font-weight:700;color:#333;margin-bottom:.5rem">Agregar SKU</div>'
+        +'<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+        +'<div><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">Cód. Barra</label>'
+        +'<input type="text" id="pt-barra" placeholder="Escanear" style="width:120px;font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px" autocomplete="off" autocorrect="off"></div>'
+        +'<div><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">SKU</label>'
+        +'<input type="text" id="pt-sku" placeholder="SKU" style="width:110px;font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<div style="flex:1;min-width:130px"><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">Descripción</label>'
+        +'<input type="text" id="pt-desc" placeholder="Descripción" style="width:100%;font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<div><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">Físico s/Auditoría</label>'
+        +'<input type="number" id="pt-fisico" placeholder="0" min="0" style="width:80px;font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px"></div>'
+        +'<div><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">Tarima</label>'
+        +'<input type="text" id="pt-tarima" placeholder="A01" style="width:70px;font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<div><label style="font-size:.71rem;font-weight:600;display:block;margin-bottom:2px">Estatus</label>'
+        +'<select id="pt-estatus" style="font-size:.82rem;padding:4px 7px;border:1px solid #ddd;border-radius:5px">'
+        +'<option value="Auditado">Auditado</option><option value="No auditado">No auditado</option></select></div>'
+        +'<button class="btn btn-sm btn-dark" id="pt-agregar-btn" style="align-self:flex-end">+ Agregar</button>'
+        +'</div><div id="pt-linea-msg" style="font-size:.76rem;margin-top:.35rem"></div>'
+        +'</div>';
+    }
+
+    // Tabla
+    h+='<div style="overflow-x:auto"><table style="width:100%;font-size:.73rem;border-collapse:collapse">'
+      +'<thead><tr style="background:#f0f0f0;font-weight:700">'
+      +'<th style="padding:5px 6px">SKU</th>'
+      +'<th style="padding:5px 6px">Descripción</th>'
+      +'<th style="padding:5px 6px;text-align:center">Físico</th>'
+      +'<th style="padding:5px 6px">Tarima</th>'
+      +'<th style="padding:5px 6px">Estatus</th>'
+      +'<th style="padding:5px 6px">Origen</th>'
+      +'<th style="padding:5px 6px;text-align:center">952</th>'
+      +'<th style="padding:5px 6px;text-align:center">Diferencia</th>'
+      +'<th style="padding:5px 6px">Seguimiento</th>'
+      +'<th style="padding:5px 6px;text-align:center" title="Validación (traslado a 952 confirmado)">✓ Val.</th>'
+      +'<th style="padding:5px 6px;text-align:center">Dif. Post-Val.</th>'
+      +'<th style="padding:5px 6px;text-align:center">Acción</th>'
+      +'</tr></thead><tbody id="pt-tbody">';
+
+    if(!lineas.length){
+      h+='<tr><td colspan="12" style="padding:10px;color:#aaa;text-align:center">Sin líneas. Agregá el primer SKU.</td></tr>';
+    } else {
+      lineas.forEach(function(l){
+        var teo952 = _bodTeorico[l.sku]?_bodTeorico[l.sku].cantidad_952:(l.cantidad_952||0);
+        var fisico = Number(l.fisico_auditoria)||0;
+        var dif    = teo952 - fisico;
+        var validado = !!l.validado;
+        var difPost  = validado?0:dif;
+        var seguimiento = dif===0?'Cuadrado':(dif>0?'Solicitar traslado a 952':'Se queda en bolsón');
+        var segColor    = dif===0?'#1e7e34':(dif>0?'#c0392b':'#1565c0');
+        var esMia=(l.creado_por||l.usuario||'')=== usr;
+        h+='<tr class="pt-row" style="border-bottom:1px solid #f0f0f0" data-id="'+bodEscA(l.id||l.sku)+'" data-sku="'+bodEscA(l.sku||'')+'">'
+          +'<td style="padding:5px 6px;font-weight:600">'+bodEscA(l.sku||'')+'</td>'
+          +'<td style="padding:5px 6px;color:#555;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.nombre||'')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'+fisico+'</td>'
+          +'<td style="padding:5px 6px">'+bodEscA(l.tarimas||'')+'</td>'
+          +'<td style="padding:5px 6px">'+bodEscA(l.estado_papel||'')+'</td>'
+          +'<td style="padding:5px 6px;font-size:.7rem;color:#888">'+bodEscA(l.origen||'creado')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center;color:#555">'+teo952+'</td>'
+          +'<td style="padding:5px 6px;text-align:center;font-weight:600;color:'+(dif===0?'#1e7e34':(dif>0?'#c0392b':'#1565c0'))+'">'+dif+'</td>'
+          +'<td style="padding:5px 6px;font-size:.7rem;color:'+segColor+'">'+seguimiento+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'
+          +(bloqueado
+            ?(validado?'<span style="color:#1e7e34">✅</span>':'<span style="color:#ccc">—</span>')
+            :'<input type="checkbox" class="pt-validar-chk" data-sku="'+bodEscA(l.sku)+'" '+(validado?'checked':'')+'>'
+          )+'</td>'
+          +'<td style="padding:5px 6px;text-align:center;font-weight:600;color:'+(difPost===0?'#1e7e34':'#c0392b')+'">'+difPost+'</td>'
+          +'<td style="padding:5px 6px;text-align:center">'
+          +((!bloqueado&&esMia)
+            ? '<button class="btn btn-xs b-borrar-pt-sku" data-sku="'+bodEscA(l.sku)+'" style="background:#c0392b;color:#fff">✕</button>'
+            : '<span style="color:#ccc;font-size:.7rem">—</span>')
+          +'</td></tr>';
+      });
+    }
+    h+='</tbody></table></div>';
+
+    // Botones finalizar
+    if(!bloqueado){
+      h+='<div style="margin-top:.8rem;display:flex;gap:.5rem;flex-wrap:wrap">'
+        +'<button class="btn btn-sm" id="pt-fin-manif" style="background:#1565c0;color:#fff">✅ Finalizar como Manifiesto</button>'
+        +'<button class="btn btn-sm" id="pt-fin-muestra" style="background:#7b241c;color:#fff">📋 Finalizar como Muestra</button>'
+        +'</div><div id="pt-fin-msg" style="font-size:.76rem;margin-top:.35rem"></div>';
+    }
+
+    tb.innerHTML=h;
+
+    // Autocomplete barra→SKU en pt
+    if(!bloqueado){
+      var ptBarra=document.getElementById('pt-barra');
+      var ptSku  =document.getElementById('pt-sku');
+      var ptDesc =document.getElementById('pt-desc');
+      var _ptBt  =null;
+      if(ptBarra){
+        ptBarra.addEventListener('input',function(){
+          clearTimeout(_ptBt);
+          var v=ptBarra.value.trim();
+          if(v.length>=3){
+            _ptBt=setTimeout(function(){
+              bodLookupSku(v,ses.id,function(r){
+                if(r){ ptSku.value=r.sku||''; if(r.descripcion) ptDesc.value=r.descripcion; }
+                // Completar con teórico
+                if(r&&r.sku&&_bodTeorico[r.sku]) ptDesc.value=ptDesc.value||_bodTeorico[r.sku].nombre||'';
+              });
+            },400);
+          }
         });
-        html+='</tbody></table></div>';
-        tEl.innerHTML=html;
-        function recalc(tr,sku,fis,aud){
-          var teo=Number(tr.dataset.teo||0),dif=bodCalcDif(teo,fis),col=bodColorDif(dif),seg=bodSeguimiento(dif),difPost=aud?0:dif,cantM=aud?fis:teo;
-          var d=tr.querySelector('.p5d');if(d){d.textContent=dif;d.style.color=col;}
-          var s=tr.querySelector('.p5s');if(s){s.textContent=seg;s.style.color=col;}
-          var dp=tr.querySelector('.p5dp');if(dp){dp.textContent=difPost;dp.style.color=col;}
-          var cm=tr.querySelector('.p5cm');if(cm)cm.textContent=cantM;
-          var badge=tr.querySelector('.p5e-badge');
-          if(badge){badge.textContent=aud?'Auditado':'No auditado';badge.style.background=aud?'#e8f5e9':'#fafafa';badge.style.color=aud?'#1b5e20':'#888';}
-        }
-        // Wire físico input (recalc display only — save on blur)
-        tEl.querySelectorAll('.p5fi').forEach(function(inp){
-          inp.addEventListener('input',function(){
-            var tr=inp.closest('tr');var aud=tr.querySelector('.p5v').checked;
-            recalc(tr,inp.dataset.sku,Number(inp.value)||0,aud);
-          });
-          inp.addEventListener('change',function(){
-            var tr=inp.closest('tr');var aud=tr.querySelector('.p5v').checked;
-            var fis=Number(inp.value)||0,teo=Number(inp.dataset.teo||0);
-            var dif=bodCalcDif(teo,fis),seg=bodSeguimiento(dif);
-            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',
-              {manifiesto_id:m.id,skus:[{sku:inp.dataset.sku,fisico_auditoria:fis,diferencia:dif,seguimiento:seg,cantidad_manifiesto:(aud?fis:teo)}]})
-              .then(function(d){if(!d.ok)alert(d.error||'Error');}).catch(function(){});
-          });
+      }
+      if(ptSku){
+        ptSku.addEventListener('blur',function(){
+          var s=ptSku.value.trim().toUpperCase();
+          if(s&&_bodTeorico[s]&&!ptDesc.value) ptDesc.value=_bodTeorico[s].nombre||'';
         });
-        // Wire checkbox validación
-        tEl.querySelectorAll('.p5v').forEach(function(chk){
-          chk.addEventListener('change',function(){
-            var tr=chk.closest('tr');var fisInp=tr.querySelector('.p5fi');
-            var fis=Number(fisInp?fisInp.value:0)||0;var teo=Number(tr.dataset.teo||0);
-            var aud=chk.checked;var dif=bodCalcDif(teo,fis);var seg=bodSeguimiento(dif);
-            recalc(tr,chk.dataset.sku,fis,aud);
-            bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',
-              {manifiesto_id:m.id,skus:[{sku:chk.dataset.sku,estado_papel:aud?'Auditado':'No auditado',validado:aud,validado_por:aud?usr:'',fisico_auditoria:fis,diferencia:dif,seguimiento:seg,cantidad_manifiesto:(aud?fis:teo)}]})
-              .then(function(d){if(!d.ok)alert(d.error||'Error');}).catch(function(){});
-          });
+      }
+
+      // Agregar línea PT
+      document.getElementById('pt-agregar-btn').addEventListener('click',function(){
+        var msg=document.getElementById('pt-linea-msg');
+        var barra=(ptBarra?ptBarra.value.trim():'');
+        var sku  =(ptSku?ptSku.value.trim().toUpperCase():'') || barra.toUpperCase();
+        var desc =(ptDesc?ptDesc.value.trim():'');
+        var fisico=Number((document.getElementById('pt-fisico')||{value:0}).value);
+        var tarima=(document.getElementById('pt-tarima')||{value:''}).value.trim().toUpperCase();
+        var estatus=(document.getElementById('pt-estatus')||{value:'No auditado'}).value;
+        if(!sku){ msg.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+        if(!(fisico>=0)){ msg.innerHTML='<span style="color:#c0392b">Ingresá el físico.</span>'; return; }
+        var teo952=_bodTeorico[sku]?_bodTeorico[sku].cantidad_952:0;
+        if(!desc&&_bodTeorico[sku]) desc=_bodTeorico[sku].nombre||'';
+        var dif=teo952-fisico;
+        msg.innerHTML='<span style="color:#888">Guardando…</span>';
+        bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{
+          manifiesto_id:mId,
+          skus:[{
+            sku:sku, nombre:desc, fisico_auditoria:fisico,
+            cantidad_952:teo952, diferencia:dif,
+            seguimiento: dif===0?'Cuadrado':(dif>0?'Solicitar traslado a 952':'Se queda en bolsón'),
+            tarimas:tarima, estado_papel:estatus,
+            validado:false, validado_por:'', cantidad_manifiesto:fisico
+          }]
+        }).then(function(d){
+          if(d.ok){
+            msg.innerHTML='<span style="color:#1e7e34">✅ Agregado</span>';
+            if(ptBarra) ptBarra.value=''; if(ptSku) ptSku.value=''; if(ptDesc) ptDesc.value='';
+            document.getElementById('pt-fisico').value='';
+            document.getElementById('pt-tarima').value='';
+            bodAudTab5(tb);
+          } else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+        }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+      });
+
+      // Validación checkbox
+      tb.querySelectorAll('.pt-validar-chk').forEach(function(chk){
+        chk.addEventListener('change',function(){
+          var sku=chk.dataset.sku;
+          var linea=lineas.find(function(l){return l.sku===sku;});
+          if(!linea) return;
+          var teo952=_bodTeorico[sku]?_bodTeorico[sku].cantidad_952:(linea.cantidad_952||0);
+          var fisico=Number(linea.fisico_auditoria)||0;
+          var dif=teo952-fisico;
+          bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{
+            manifiesto_id:mId,
+            skus:[{
+              sku:sku, nombre:linea.nombre||'', fisico_auditoria:fisico,
+              cantidad_952:teo952, diferencia:dif,
+              seguimiento:linea.seguimiento||'', tarimas:linea.tarimas||'',
+              estado_papel:linea.estado_papel||'', validado:chk.checked,
+              validado_por:chk.checked?usr:'', cantidad_manifiesto:fisico
+            }]
+          }).then(function(d){ if(d.ok) bodAudTab5(tb); }).catch(function(){});
         });
-        // Wire quitar
-        tEl.querySelectorAll('.p5q').forEach(function(btn){
-          btn.addEventListener('click',function(){
-            if(!confirm('¿Quitar SKU '+btn.dataset.sku+' del papel de trabajo?')) return;
-            bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo-sku',{manifiesto_id:m.id,sku:btn.dataset.sku})
-              .then(function(d){if(d.ok)loadFilas();else alert(d.error||'Error');}).catch(function(){alert('Sin conexi\xf3n');});
-          });
+      });
+
+      // Borrar línea PT
+      tb.querySelectorAll('.b-borrar-pt-sku').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(!confirm('¿Borrar esta línea?')) return;
+          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo-sku',{
+            manifiesto_id:mId, sku:btn.dataset.sku
+          }).then(function(d){ if(d.ok) bodAudTab5(tb); else alert(d.error||'Error'); })
+            .catch(function(){ alert('Error de red.'); });
         });
-      }).catch(function(){if(tEl)tEl.innerHTML='<div style="color:#c0392b">Sin conexi\xf3n</div>';});
-  }
-  loadFilas();
-  var rBtn=document.getElementById('b5-reload'); if(rBtn) rBtn.addEventListener('click',loadFilas);
-  // Wire + Agregar SKU
-  var bI=document.getElementById('p5-barra'),dI=document.getElementById('p5-desc'),_t5=null;
-  if(bI){
-    bI.addEventListener('input',function(){ clearTimeout(_t5); var v=bI.value.trim();
-      if(v.length>=3) _t5=setTimeout(function(){
-        bodSKULookup(v,ses.id,m.id,function(r){ if(dI) dI.value=r.nombre||''; });
-      },500);
-    });
-  }
-  var btnA5=document.getElementById('p5-btn-add');
-  if(btnA5) btnA5.addEventListener('click',function(){
-    var sku=(bI&&bI.value||'').trim().toUpperCase();
-    var msg=document.getElementById('p5-msg');
-    var fis=Number((document.getElementById('p5-fis')||{value:0}).value)||0;
-    var tar=((document.getElementById('p5-tar')||{value:''}).value||'').trim().toUpperCase();
-    var est=(document.getElementById('p5-est')||{value:'No auditado'}).value;
-    var nombre=dI?dI.value:'';
-    if(!sku){if(msg)msg.innerHTML='<span style="color:#c0392b">Ingres\xe1 SKU o barra.</span>';return;}
-    var teo=(_bodAudTeorico[sku]||{}).cantidad_952||0;
-    var dif=bodCalcDif(teo,fis);var seg=bodSeguimiento(dif);
-    var aud=est==='Auditado';
-    if(msg)msg.innerHTML='<span style="color:#888">Guardando\u2026</span>';btnA5.disabled=true;
-    bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',
-      {manifiesto_id:m.id,skus:[{sku:sku,nombre:nombre||'',cantidad_952:teo,tarimas:tar,estado_papel:est,validado:aud,validado_por:aud?usr:'',fisico_auditoria:fis,diferencia:dif,seguimiento:seg,cantidad_manifiesto:aud?fis:teo}]})
-      .then(function(d){
-        if(d.ok){if(msg)msg.innerHTML='<span style="color:#1e7e34">\u2705 '+sku+'</span>';
-          if(bI)bI.value='';if(dI)dI.value='';
-          if(document.getElementById('p5-fis'))document.getElementById('p5-fis').value='0';
-          if(document.getElementById('p5-tar'))document.getElementById('p5-tar').value='';
-          if(document.getElementById('p5-est'))document.getElementById('p5-est').value='No auditado';
-          if(bI)bI.focus();loadFilas();}
-        else{if(msg)msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';}
-        btnA5.disabled=false;
-      }).catch(function(){if(msg)msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>';btnA5.disabled=false;});
-  });
-  if(bI) bI.addEventListener('keydown',function(e){if(e.key==='Enter'&&btnA5)btnA5.click();});
+      });
+
+      // Finalizar como Manifiesto
+      document.getElementById('pt-fin-manif').addEventListener('click',function(){
+        var fMsg=document.getElementById('pt-fin-msg');
+        if(!lineas.length){ fMsg.innerHTML='<span style="color:#c0392b">Agregá líneas antes de finalizar.</span>'; return; }
+        if(!confirm('¿Finalizar como Manifiesto? El papel de trabajo quedará bloqueado.')) return;
+        fMsg.innerHTML='<span style="color:#888">Finalizando…</span>';
+        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/finalizar',
+          {usuario:usr, tipo:'manifiesto'})
+          .then(function(d){
+            if(d.ok){
+              fMsg.innerHTML='<span style="color:#1e7e34">✅ Finalizado. Generá el manifiesto desde Control de Manifiestos.</span>';
+              setTimeout(function(){
+                _bodAudTab='4-control';
+                var elMain=document.getElementById('bod-aud-contenido');
+                if(elMain) bodRenderAudTabs(elMain);
+              },1200);
+            } else fMsg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+          }).catch(function(){ fMsg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+      });
+
+      // Finalizar como Muestra (igual pero invierte CANTIDAD y VALIDADO en el manifiesto)
+      document.getElementById('pt-fin-muestra').addEventListener('click',function(){
+        var fMsg=document.getElementById('pt-fin-msg');
+        if(!lineas.length){ fMsg.innerHTML='<span style="color:#c0392b">Agregá líneas antes de finalizar.</span>'; return; }
+        if(!confirm('¿Finalizar como Muestra? En el manifiesto CANTIDAD mostrará el dato WMS y VALIDADO el físico.')) return;
+        fMsg.innerHTML='<span style="color:#888">Finalizando…</span>';
+        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/finalizar',
+          {usuario:usr, tipo:'muestra'})
+          .then(function(d){
+            if(d.ok){
+              fMsg.innerHTML='<span style="color:#1e7e34">✅ Finalizado como Muestra.</span>';
+              setTimeout(function(){
+                _bodAudTab='4-control';
+                var elMain=document.getElementById('bod-aud-contenido');
+                if(elMain) bodRenderAudTabs(elMain);
+              },1200);
+            } else fMsg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+          }).catch(function(){ fMsg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+      });
+    }
+
+  }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar papel de trabajo.</div>'; });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  EXPORTAR MANIFIESTO (NO es una pestaña — es diálogo modal desde Tab 4 / Tab 5)
-//  Tipos: 'manifiesto' → CANTIDAD=Físico, WMS=952
-//         'muestra'    → CANTIDAD=952(WMS), VALIDADO=Físico
-// ═══════════════════════════════════════════════════════════════════════════
-function bodAbrirDialogoExport(sesId, mId, tipo){
-  // Crear overlay modal
-  var ov=document.createElement('div');
-  ov.id='bod-export-overlay';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
-  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.5rem;min-width:280px;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.18);text-align:center">'
-    +'<div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem">\uD83D\uDCC4 Generar Manifiesto</div>'
-    +'<div style="font-size:.82rem;color:#666;margin-bottom:1rem">Tipo: <strong>'+bodEscA(tipo==='muestra'?'Finalizar como Muestra':'Finalizar como Manifiesto')+'</strong></div>'
-    +'<div style="font-size:.8rem;color:#888;margin-bottom:.8rem">Selecci\xf3n el formato de exportaci\xf3n:</div>'
-    +'<div style="display:flex;flex-direction:column;gap:.5rem">'
-    +'<button id="bod-exp-excel" class="btn btn-sm" style="background:#1e7e34;color:#fff">\uD83D\uDCCA Excel (.xlsx)</button>'
-    +'<button id="bod-exp-word"  class="btn btn-sm" style="background:#1565c0;color:#fff">\uD83D\uDCDD Word (.doc)</button>'
-    +'<button id="bod-exp-pdf"   class="btn btn-sm" style="background:#7b241c;color:#fff">\uD83D\uDCF7 PDF (imprimir)</button>'
-    +'<button id="bod-exp-cancel" class="btn btn-xs" style="background:#f5f5f5;color:#555;margin-top:.3rem">Cancelar</button>'
-    +'</div><div id="bod-exp-msg" style="font-size:.77rem;margin-top:.6rem"></div></div>';
-  document.body.appendChild(ov);
-  document.getElementById('bod-exp-cancel').addEventListener('click',function(){ ov.remove(); });
-  ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
-  function cargarYExportar(fmt){
-    var msg=document.getElementById('bod-exp-msg');
-    if(msg) msg.innerHTML='<span style="color:#888">Preparando datos\u2026</span>';
-    ['bod-exp-excel','bod-exp-word','bod-exp-pdf','bod-exp-cancel'].forEach(function(id){
-      var b=document.getElementById(id); if(b) b.disabled=true;
-    });
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/manifiestos-control/'+encodeURIComponent(mId)+'/manifiesto-data')
-      .then(function(data){
-        if(!data.ok){ if(msg) msg.innerHTML='<span style="color:#c0392b">'+bodEscA(data.error||'Error')+'</span>'; return; }
-        switch(fmt){
-          case 'excel': bodExportExcel(data, tipo); break;
-          case 'word':  bodExportWord(data, tipo);  break;
-          case 'pdf':   bodExportPDF(data, tipo);   break;
-        }
-        setTimeout(function(){ ov.remove(); }, 800);
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; });
-  }
-  document.getElementById('bod-exp-excel').addEventListener('click',function(){ cargarYExportar('excel'); });
-  document.getElementById('bod-exp-word' ).addEventListener('click',function(){ cargarYExportar('word');  });
-  document.getElementById('bod-exp-pdf'  ).addEventListener('click',function(){ cargarYExportar('pdf');   });
-}
-
-function bodExportExcel(data, tipo){
-  var pt=data.pt||{}, fijos=data.campos_fijos||{}, skus=data.skus||[];
-  var fname='Manifiesto_'+bodEscA(pt.correlativo||'PT')+'_'+tipo+'.xlsx';
-  // Try XLSX (SheetJS) — available if Hamilton module loaded it
-  if(typeof XLSX !== 'undefined'){
-    var rows=[
-      ['CARGA ENVÍO A BODEGA','','','','','',''],
-      ['Herramientas Poderosas'],
-      ['DIRECCIÓN:', fijos.direccion_origen||''],
-      ['DIRECCIÓN DESTINO:', fijos.direccion_destino||''],
-      ['Marchamo:', pt.marchamo||'', '', 'Licencia:', pt.licencia_hija||''],
-      ['UBICACIÓN:', pt.destino_tr999||'', '', 'Fecha:', new Date().toLocaleDateString('es-GT')],
-      [],
-      ['CODIGO','ESTATUS','DESCRIPCION','CANTIDAD','WMS / VALIDADO','DIFERENCIA']
-    ];
-    skus.forEach(function(s){
-      var cant  = tipo==='muestra' ? s.cantidad_952 : s.fisico_auditoria;
-      var valid = tipo==='muestra' ? s.fisico_auditoria : s.cantidad_952;
-      rows.push([s.sku||'', s.estado_papel||'No auditado', s.nombre||'', cant, valid, s.diferencia]);
-    });
-    rows.push([],[],['AUTORIZACIÓN DE ENVÍO']);
-    (fijos.autorizacion_envio||[]).forEach(function(p){ rows.push([p]); });
-    rows.push([],[fijos.numero_transporte||'',fijos.tipo_transporte||''],[]);
-    rows.push(['ENCARGADO DE PEDIDO'],[fijos.encargado_pedido||'']);
-    var wb=XLSX.utils.book_new();
-    var ws=XLSX.utils.aoa_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb,ws,'Manifiesto');
-    XLSX.writeFile(wb,fname);
-  } else {
-    // Fallback: CSV
-    var lines=['"CODIGO","ESTATUS","DESCRIPCION","CANTIDAD","WMS","DIFERENCIA"'];
-    skus.forEach(function(s){
-      var cant=tipo==='muestra'?s.cantidad_952:s.fisico_auditoria;
-      lines.push([s.sku,s.estado_papel,'"'+s.nombre+'"',cant,s.cantidad_952,s.diferencia].join(','));
-    });
-    var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'});
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a'); a.href=url; a.download=fname.replace('.xlsx','.csv'); a.click();
-    setTimeout(function(){URL.revokeObjectURL(url);},1000);
-  }
-}
-
-function bodExportWord(data, tipo){
-  var pt=data.pt||{}, fijos=data.campos_fijos||{}, skus=data.skus||[];
-  var fname='Manifiesto_'+bodEscA(pt.correlativo||'PT')+'_'+tipo+'.doc';
-  var filas=skus.map(function(s){
-    var cant=tipo==='muestra'?s.cantidad_952:s.fisico_auditoria;
-    var valid=tipo==='muestra'?s.fisico_auditoria:s.cantidad_952;
-    return '<tr><td>'+bodEscA(s.sku||'')+'</td><td>'+bodEscA(s.estado_papel||'No auditado')+'</td>'
-      +'<td>'+bodEscA(s.nombre||'')+'</td><td style="text-align:center">'+cant+'</td>'
-      +'<td style="text-align:center">'+valid+'</td><td style="text-align:center">'+s.diferencia+'</td></tr>';
-  }).join('');
-  var auth=(fijos.autorizacion_envio||[]).map(function(p){return '<div>'+bodEscA(p)+'</div>';}).join('');
-  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8">'
-    +'<style>body{font-family:Arial,sans-serif;font-size:10pt;}table{border-collapse:collapse;width:100%;}td,th{border:1px solid #000;padding:3pt 5pt;font-size:9pt;}th{background:#e8ecf0;font-weight:bold;}.header{font-size:13pt;font-weight:bold;text-align:center;} .sec{margin:8pt 0;}.label{font-weight:bold;}</style>'
-    +'</head><body>'
-    +'<p class="header">CARGA ENVÍO A BODEGA</p>'
-    +'<p style="text-align:center;font-style:italic">Herramientas Poderosas</p>'
-    +'<table style="border:none;width:100%" cellspacing="0"><tr>'
-    +'<td style="border:none"><span class="label">DIRECCIÓN:</span> '+bodEscA(fijos.direccion_origen||'')+'</td>'
-    +'<td style="border:none"><span class="label">Marchamo:</span> '+bodEscA(pt.marchamo||'—')+'</td>'
-    +'<td style="border:none"><span class="label">Licencia:</span> <b>'+bodEscA(pt.licencia_hija||'—')+'</b></td>'
-    +'</tr><tr>'
-    +'<td style="border:none"><span class="label">DIRECCIÓN DESTINO:</span> <b>'+bodEscA(fijos.direccion_destino||'')+'</b></td>'
-    +'<td style="border:none"><span class="label">UBICACIÓN:</span> '+bodEscA(pt.destino_tr999||'—')+'</td>'
-    +'<td style="border:none"><span class="label">Fecha:</span> '+new Date().toLocaleDateString('es-GT')+'</td>'
-    +'</tr></table>'
-    +'<table style="margin-top:10pt"><thead><tr><th>CODIGO</th><th>ESTATUS</th><th>DESCRIPCION</th><th>CANTIDAD</th><th>'+(tipo==='muestra'?'VALIDADO':'WMS')+'</th><th>DIFERENCIA</th></tr></thead><tbody>'+filas+'</tbody></table>'
-    +'<table style="margin-top:15pt;border:none;width:100%" cellspacing="0"><tr>'
-    +'<td style="border:none;vertical-align:top;width:50%"><span class="label">AUTORIZACIÓN DE ENVÍO</span><br>'+auth+'<br>'+bodEscA(fijos.numero_transporte||'')+'<br>'+bodEscA(fijos.tipo_transporte||'')+'</td>'
-    +'<td style="border:none;vertical-align:top"><b>NOMBRE Y FIRMA QUIEN RECIBE</b></td></tr>'
-    +'<tr><td style="border:none"><b>ENCARGADO DE PEDIDO</b><br>'+bodEscA(fijos.encargado_pedido||'')+'</td>'
-    +'<td style="border:none"><b>AUDITOR / VALIDADOR</b></td></tr></table>'
-    +'</body></html>';
-  var blob=new Blob([html],{type:'application/msword'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a'); a.href=url; a.download=fname; a.click();
-  setTimeout(function(){URL.revokeObjectURL(url);},1000);
-}
-
-function bodExportPDF(data, tipo){
-  var pt=data.pt||{}, fijos=data.campos_fijos||{}, skus=data.skus||[];
-  var filas=skus.map(function(s){
-    var cant=tipo==='muestra'?s.cantidad_952:s.fisico_auditoria;
-    var valid=tipo==='muestra'?s.fisico_auditoria:s.cantidad_952;
-    return '<tr><td>'+bodEscA(s.sku||'')+'</td><td>'+bodEscA(s.estado_papel||'No auditado')+'</td>'
-      +'<td>'+bodEscA(s.nombre||'')+'</td><td>'+cant+'</td><td>'+valid+'</td><td>'+s.diferencia+'</td></tr>';
-  }).join('');
-  var auth=(fijos.autorizacion_envio||[]).map(function(p){return '<div>'+bodEscA(p)+'</div>';}).join('');
-  var printWin=window.open('','_blank','width=800,height=600');
-  printWin.document.write('<html><head><meta charset="utf-8"><title>Manifiesto '+bodEscA(pt.correlativo||'')+'</title>'
-    +'<style>@media print{body{font-size:9pt;}}body{font-family:Arial,sans-serif;font-size:10pt;margin:1.5cm;}'
-    +'table{border-collapse:collapse;width:100%;margin:8pt 0;}td,th{border:1px solid #000;padding:3pt 5pt;font-size:8pt;}'
-    +'th{background:#e0e0e0;font-weight:bold;}.h1{font-size:13pt;font-weight:bold;text-align:center;}.label{font-weight:bold;}'
-    +'</style></head><body>'
-    +'<div class="h1">CARGA ENVÍO A BODEGA</div>'
-    +'<div style="text-align:center;font-style:italic;margin-bottom:6pt">Herramientas Poderosas</div>'
-    +'<table style="border:none" cellspacing="0"><tr>'
-    +'<td style="border:none"><span class="label">DIRECCIÓN:</span> '+bodEscA(fijos.direccion_origen||'')+'</td>'
-    +'<td style="border:none"><span class="label">Marchamo:</span> '+bodEscA(pt.marchamo||'—')+'</td>'
-    +'<td style="border:none"><span class="label">Licencia:</span> <b>'+bodEscA(pt.licencia_hija||'—')+'</b></td>'
-    +'</tr><tr>'
-    +'<td style="border:none"><span class="label">DIRECCIÓN DESTINO:</span> <b>'+bodEscA(fijos.direccion_destino||'')+'</b></td>'
-    +'<td style="border:none"><span class="label">UBICACIÓN:</span> '+bodEscA(pt.destino_tr999||'—')+'</td>'
-    +'<td style="border:none"><span class="label">Fecha:</span> '+new Date().toLocaleDateString('es-GT')+'</td>'
-    +'</tr></table>'
-    +'<table><thead><tr><th>CODIGO</th><th>ESTATUS</th><th>DESCRIPCIÓN</th><th>CANTIDAD</th><th>'+(tipo==='muestra'?'VALIDADO':'WMS')+'</th><th>DIFERENCIA</th></tr></thead><tbody>'+filas+'</tbody></table>'
-    +'<table style="border:none;margin-top:15pt" cellspacing="0"><tr>'
-    +'<td style="border:none;vertical-align:top"><span class="label">AUTORIZACIÓN DE ENVÍO</span><br>'+auth+'<br>'+bodEscA(fijos.numero_transporte||'')+'<br>'+bodEscA(fijos.tipo_transporte||'')+'</td>'
-    +'<td style="border:none;vertical-align:top"><b>NOMBRE Y FIRMA QUIEN RECIBE</b><br><br><hr style="width:80%"></td></tr>'
-    +'<tr><td style="border:none"><b>ENCARGADO DE PEDIDO</b><br>'+bodEscA(fijos.encargado_pedido||'')+'</td>'
-    +'<td style="border:none"><b>AUDITOR / VALIDADOR</b></td></tr></table>'
-    +'</body></html>');
-  printWin.document.close();
-  printWin.focus();
-  setTimeout(function(){ printWin.print(); },400);
-}
-
-// ── Catálogo Barra-SKU (wire — sin cambios) ───────────────────────────────
-function bodWireBarraSku(){
-  var inp=document.getElementById('inp-bod-barra-sku');
-  var btn=document.getElementById('btn-bod-barra-sku-upload');
-  var nom=document.getElementById('bod-barra-sku-nombre');
-  var msg=document.getElementById('bod-barra-sku-msg');
-  if(!inp||inp._wired) return; inp._wired=true;
-  inp.addEventListener('change',function(){ if(this.files&&this.files[0]){ if(nom)nom.textContent=this.files[0].name; if(btn)btn.disabled=false; } });
-  if(btn) btn.addEventListener('click',function(){
-    var f=inp.files&&inp.files[0]; if(!f) return;
-    if(msg) msg.innerHTML='<span style="color:#888">Subiendo\u2026</span>'; btn.disabled=true;
-    var fd=new FormData(); fd.append('file',f); fd.append('usuario',window.currentUser?window.currentUser.name:'');
-    fetch('/api/bod/barra-sku/upload',{method:'POST',body:fd}).then(function(r){return r.json();})
-      .then(function(d){
-        if(msg) msg.innerHTML='<span style="color:'+(d.ok?'#1e7e34':'#c0392b')+'">'+bodEscA(d.ok?'\u2705 '+d.procesadas+' barras cargadas':d.error||'Error')+'</span>';
-        btn.disabled=false; inp.value='';
-      }).catch(function(){ if(msg) msg.innerHTML='<span style="color:#c0392b">Sin conexi\xf3n</span>'; btn.disabled=false; });
-  });
-}
-
-// Exponer bodRenderAuditoria al scope global (llamada desde bodAbrirMenu wires)
-window.bodRenderAuditoria = bodRenderAuditoria;
-
-
-})(); // FIN BOD MODULE
+})(); // FIN BOD MODULE v3
 </script>
 
 </body>
