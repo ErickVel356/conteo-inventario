@@ -10046,11 +10046,12 @@ window.RGIS_LIST = window.RGIS_LIST || [
 ];
 
 // ── Estado interno ───────────────────────────────────────────────────────
-var _bodCapturaSesion = null;   // sesión activa en captura
-var _bodAudSesion     = null;   // sesión activa en auditoría
-var _bodAudTab        = '4-control'; // tab activo en auditoría
-var _bodAudPtActivo   = null;   // PT activo en papel de trabajo
-var _bodTeorico       = {};     // mapa sku→cantidad_952 del teórico cargado
+var _bodCapturaSesion         = null;   // sesión activa en captura
+var _bodAudSesion             = null;   // sesión activa en auditoría (tabs 1/2)
+var _bodAudTab                = '4-control'; // tab activo en auditoría
+var _bodAudPtActivo           = null;   // PT activo en papel de trabajo
+var _bodTeorico               = {};     // mapa sku→cantidad_952 del teórico global
+var _bodTeoricoGlobalCargado  = false;  // flag para no recargar teórico en cada visita
 
 // ── Helpers de rol ──────────────────────────────────────────────────────
 function isBodBodega()  { return !!(window.currentUser && window.currentUser.role === 'bodega'); }
@@ -10149,10 +10150,11 @@ window.bodAbrirMenu = bodAbrirMenu;
 //  CLEANUP
 // ══════════════════════════════════════════════════════════════════════════
 window.bodCleanup = function(){
-  _bodCapturaSesion = null;
-  _bodAudSesion     = null;
-  _bodAudPtActivo   = null;
-  _bodTeorico       = {};
+  _bodCapturaSesion        = null;
+  _bodAudSesion            = null;
+  _bodAudPtActivo          = null;
+  _bodTeorico              = {};
+  _bodTeoricoGlobalCargado = false;
   window._bodMenuWired = false;
   var el; 
   el=document.getElementById('bod-captura-contenido'); if(el) el.innerHTML='';
@@ -10403,266 +10405,232 @@ function bodCargarLineasCaptura(sesId){
 //  AUDITAR SESIÓN
 // ══════════════════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════════════════
+//  AUDITAR SESIÓN — Bodega CDG v3 (global por fecha, sin sesion_id)
+//  Fuente: Bloqque_Bodega_CDG.docx + index de referencia (jun-2026)
+//  Endpoints usados:
+//    GET/POST/DELETE /api/bod/teorico-952-global
+//    GET/POST/PATCH/DELETE /api/bod/pts
+//    GET/POST/DELETE /api/bod/pts/:ptId/papel/:sku
+//    POST/GET /api/bod/pts/:ptId/licencia-hija
+//    GET /api/bod/sesiones (para Tab 1 y Tab 2 — captura sigue con sesion_id)
+//    GET /api/bod/sesion/:id/lineas
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Estado global del módulo auditoría ───────────────────────────────────
+var _audDB = {
+  teorico:  [],   // array { sku, nombre, cantidad_952 }
+  pts:      [],   // array de PTs del día
+  ptActivo: null, // id del PT activo en Tab 5
+  filtroTarima: null  // { sesId, tarima } — set al clicar Auditar en Tab 1
+};
+
+function _audFecha(){
+  return new Date().toLocaleDateString('en-CA',{timeZone:'America/Guatemala'});
+}
+
+function _audBuscarTeo(sku){
+  var v=(sku||'').trim().toUpperCase();
+  for(var i=0;i<_audDB.teorico.length;i++) if((_audDB.teorico[i].sku||'').toUpperCase()===v) return _audDB.teorico[i];
+  return null;
+}
+
+function _audGetPT(){
+  if(!_audDB.ptActivo) return null;
+  for(var i=0;i<_audDB.pts.length;i++) if(_audDB.pts[i].id===_audDB.ptActivo) return _audDB.pts[i];
+  return null;
+}
+
+// ── Entrada principal ─────────────────────────────────────────────────────
 function bodRenderAuditoria(){
-  var el = document.getElementById('bod-aud-contenido'); if(!el) return;
-  // Va directo a las tabs — sin pantalla de selección previa
-  // Tab 1 y Tab 2 muestran datos de TODAS las sesiones con filtros
-  // Tabs 3/4/5 piden sesión inline si no está seteada
+  var el=document.getElementById('bod-aud-contenido'); if(!el) return;
+  // Cargar teórico del día en memoria si no está cargado
+  if(!_audDB.teorico.length){
+    bodFetch('GET','/api/bod/teorico-952-global?fecha='+_audFecha()).then(function(d){
+      _audDB.teorico=d.ok?(d.rows||[]):[];
+    }).catch(function(){});
+  }
   bodRenderAudTabs(el);
 }
 window.bodRenderAuditoria = bodRenderAuditoria;
 
-function bodCargarTeorico(sesId, cb){
-  if(!sesId){ if(cb) cb(); return; }
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(sesId)+'/teorico-952')
-    .then(function(d){
-      _bodTeorico={};
-      if(d.ok&&d.rows) d.rows.forEach(function(r){ _bodTeorico[r.sku]={nombre:r.nombre,cantidad_952:Number(r.cantidad_952)||0}; });
-      if(cb) cb();
-    }).catch(function(){ if(cb) cb(); });
-}
-
+// ── Tabs ──────────────────────────────────────────────────────────────────
 function bodRenderAudTabs(el){
   var tab=_bodAudTab;
   var tabs=[
-    {id:'1-tarimas', lbl:'1. Tarimas'},
-    {id:'2-detalle', lbl:'2. Detalle'},
-    {id:'3-teorico', lbl:'3. Carga Teórico'},
-    {id:'4-control', lbl:'4. Control de Manifiestos'},
-    {id:'5-papel',   lbl:'5. Papel de Trabajo'}
+    {id:'1-tarimas',lbl:'1. Tarimas'},
+    {id:'2-detalle',lbl:'2. Detalle'},
+    {id:'3-teorico',lbl:'3. Carga Teórico'},
+    {id:'4-control',lbl:'4. Control de Manifiestos'},
+    {id:'5-papel',  lbl:'5. Papel de Trabajo'}
   ];
-  // Header mínimo: sesión activa para tabs 3/4/5 (opcional)
-  var sesHdr = '';
-  if(_bodAudSesion){
-    sesHdr = '<div style="font-size:.76rem;color:#1565c0;margin-bottom:.35rem">'
-      +'📋 Sesión activa: <strong>'+bodEscA(_bodAudSesion.licencia_id||_bodAudSesion.id)+'</strong>'
-      +' <span style="color:#888;font-weight:400">'+bodEscA(bodFmtFecha(_bodAudSesion.fecha_trabajo||''))+'</span>'
-      +' <button id="bod-aud-cambiar-ses" style="margin-left:6px;font-size:.7rem;background:none;border:1px solid #ccc;border-radius:3px;padding:1px 5px;cursor:pointer;color:#777">cambiar</button>'
-      +'</div>';
-  }
   var tabsH='<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:.6rem">';
   tabs.forEach(function(t){
     var on=t.id===tab;
-    tabsH+='<button class="bod-tab-pill" data-tab="'+t.id+'" style="font-size:.73rem;padding:4px 9px;border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+'">'+t.lbl+'</button>';
+    tabsH+='<button class="bod-tab-pill" data-tab="'+t.id+'" style="font-size:.73rem;padding:4px 10px;border-radius:4px 4px 0 0;border:1px solid #ddd;border-bottom:none;cursor:pointer;background:'+(on?'#1565c0':'#f5f5f5')+';color:'+(on?'#fff':'#555')+'">'+t.lbl+'</button>';
   });
   tabsH+='</div>';
-  el.innerHTML=sesHdr+tabsH+'<div id="bod-tab-body"></div>';
-
-  if(_bodAudSesion){
-    var cambBtn=document.getElementById('bod-aud-cambiar-ses');
-    if(cambBtn) cambBtn.addEventListener('click',function(){ _bodAudSesion=null; _bodAudPtActivo=null; _bodTeorico={}; bodRenderAudTabs(el); });
-  }
+  el.innerHTML=tabsH+'<div id="bod-tab-body"></div>';
   el.querySelectorAll('.bod-tab-pill').forEach(function(btn){
     btn.addEventListener('click',function(){
-      _bodAudTab=btn.dataset.tab; bodRenderAudTabs(el);
+      _bodAudTab=btn.dataset.tab;
+      bodRenderAudTabs(el);
     });
   });
   var tb=document.getElementById('bod-tab-body'); if(!tb) return;
-  if(tab==='1-tarimas')  bodAudTab1(tb);
-  else if(tab==='2-detalle')  bodAudTab2(tb);
-  else if(tab==='3-teorico')  bodAudTab3(tb);
-  else if(tab==='4-control')  bodAudTab4(tb);
-  else if(tab==='5-papel')    bodAudTab5(tb);
+  if(tab==='1-tarimas')      bodAudTab1(tb);
+  else if(tab==='2-detalle') bodAudTab2(tb);
+  else if(tab==='3-teorico') bodAudTab3(tb);
+  else if(tab==='4-control') bodAudTab4(tb);
+  else if(tab==='5-papel')   bodAudTab5(tb);
 }
 
-// ── Selector de sesión inline (para Tabs 3/4/5) ─────────────────────────
-function bodAudInlineSesionPicker(tb, onSelect){
-  // Auto-selecciona silenciosamente la sesión más reciente.
-  // No muestra picker al usuario — el Word no lo describe.
-  tb.innerHTML='<div style="color:#888;font-size:.81rem">Cargando…</div>';
-  bodFetch('GET','/api/bod/sesiones?limit=50').then(function(d){
-    var ses=d.ok?(d.sesiones||[]):[];
-    if(!ses.length){
-      tb.innerHTML='<div style="color:#aaa;font-size:.81rem;padding:.4rem">Sin sesiones. Creá una primero en Captura de Tarima.</div>';
-      return;
-    }
-    // Usar la más reciente (el endpoint ya devuelve orden desc)
-    var s=ses[0];
-    _bodAudSesion={id:s.id,licencia_id:s.licencia_id||s.id,fecha_trabajo:s.fecha_trabajo||''};
-    bodCargarTeorico(_bodAudSesion.id, function(){
-      var elMain=document.getElementById('bod-aud-contenido');
-      if(elMain) bodRenderAudTabs(elMain);
-      onSelect(_bodAudSesion);
-    });
-  }).catch(function(){
-    tb.innerHTML='<div style="color:#c0392b;font-size:.81rem">Error al cargar sesiones.</div>';
-  });
-}
-
-// ── Tab 1: Tarimas — TODAS las sesiones ─────────────────────────────────
+// ── Tab 1: Tarimas — todas las sesiones, filtros, botón Auditar ───────────
 function bodAudTab1(tb){
   tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando tarimas…</div>';
-  // Cargar todas las sesiones, luego todas sus lineas en bulk
   bodFetch('GET','/api/bod/sesiones?limit=100').then(function(dSes){
     var sesiones=dSes.ok?(dSes.sesiones||[]):[];
     if(!sesiones.length){
       tb.innerHTML='<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin sesiones. Creá una en Captura de Tarima.</div>';
       return;
     }
-    // Cargar lineas de cada sesión en paralelo (hasta 5 sesiones simultáneas)
-    var promises = sesiones.map(function(s){
+    Promise.all(sesiones.map(function(s){
       return bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(s.id)+'/lineas')
-        .then(function(d){ return { ses:s, lineas:d.ok?(d.lineas||[]):[] }; })
-        .catch(function(){ return { ses:s, lineas:[] }; });
-    });
-    Promise.all(promises).then(function(results){
-      // Construir mapa: sesion_id → sesion
-      var sesMap={};
-      sesiones.forEach(function(s){ sesMap[s.id]=s; });
-
-      // Agrupar por sesion + tarima
-      var porTarima={};
+        .then(function(d){return{ses:s,lineas:d.ok?(d.lineas||[]):[]}; })
+        .catch(function(){return{ses:s,lineas:[]};});
+    })).then(function(results){
+      // Construir filas: una por (sesión, tarima)
+      var rows=[];
       results.forEach(function(r){
         var s=r.ses;
+        var byTar={};
         r.lineas.forEach(function(l){
-          var key=s.id+':::'+(l.tarima||'?');
-          if(!porTarima[key]) porTarima[key]={
-            sesId:s.id, licencia_id:s.licencia_id||s.id, fecha:s.fecha_trabajo||'',
-            tarima:l.tarima||'?', skus:{}, lineas:0, auditadas:0, operador:l.operador||''
-          };
-          var t=porTarima[key];
-          t.skus[l.sku]=true; t.lineas++;
-          if(l.auditado) t.auditadas++;
-          if(!t.operador&&l.operador) t.operador=l.operador;
+          var t=l.tarima||'?';
+          if(!byTar[t]) byTar[t]={tarima:t,lineas:[],ops:[]};
+          byTar[t].lineas.push(l);
+          if(byTar[t].ops.indexOf(l.operador||'')<0) byTar[t].ops.push(l.operador||'');
+        });
+        Object.values(byTar).forEach(function(t){
+          var skus=[...new Set(t.lineas.map(function(l){return l.sku;}))];
+          var auditados=t.lineas.filter(function(l){return l.auditado;}).length;
+          rows.push({
+            sesId:s.id, licencia:s.licencia_id||s.id, fecha:s.fecha_trabajo||'',
+            tarima:t.tarima, skusUnicos:skus.length, lineas:t.lineas.length,
+            auditados:auditados, operador:t.ops.filter(Boolean).join(', '),
+            creado_por:s.creado_por||''
+          });
         });
       });
-      var list=Object.values(porTarima).sort(function(a,b){
-        return a.licencia_id.localeCompare(b.licencia_id)||a.tarima.localeCompare(b.tarima);
-      });
+      rows.sort(function(a,b){return a.licencia.localeCompare(b.licencia)||a.tarima.localeCompare(b.tarima);});
 
       // Filtros
       var fH='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">'
         +'<input type="text" id="t1-f-lic" placeholder="Licencia bolsón" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px">'
         +'<input type="date" id="t1-f-fecha" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px">'
-        +'<input type="text" id="t1-f-tar" placeholder="Correlativo" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:110px">'
+        +'<input type="text" id="t1-f-tar" placeholder="Correlativo" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:100px">'
         +'<button class="btn btn-xs" id="t1-f-clear" style="font-size:.72rem;background:#f5f5f5">✕ Limpiar</button>'
+        +'<button class="btn btn-xs" id="t1-f-ref" style="font-size:.72rem;background:#e8f5e9;color:#1e7e34">↺</button>'
         +'</div>';
 
-      if(!list.length){
-        tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin tarimas capturadas.</div>'; return;
-      }
+      if(!rows.length){tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem">Sin tarimas capturadas.</div>';return;}
 
-      var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.75rem;border-collapse:collapse">'
+      var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.74rem;border-collapse:collapse">'
         +'<thead><tr style="background:#f0f0f0;font-weight:700">'
-        +'<th style="padding:5px 7px;text-align:left">Licencia Bolsón</th>'
-        +'<th style="padding:5px 7px;text-align:left">Fecha</th>'
+        +'<th style="padding:5px 7px">Licencia Bolsón</th>'
+        +'<th style="padding:5px 7px">Fecha</th>'
         +'<th style="padding:5px 7px;text-align:center">SKUs únicos</th>'
         +'<th style="padding:5px 7px;text-align:center">Auditados</th>'
-        +'<th style="padding:5px 7px;text-align:left">Correlativo</th>'
+        +'<th style="padding:5px 7px">Correlativo Tarima</th>'
         +'<th style="padding:5px 7px;text-align:center">Líneas</th>'
-        +'<th style="padding:5px 7px;text-align:left">Operador</th>'
+        +'<th style="padding:5px 7px">Operador</th>'
         +'<th style="padding:5px 7px;text-align:center">Acción</th>'
         +'</tr></thead><tbody id="t1-tbody">';
-
-      list.forEach(function(t){
-        var skuU=Object.keys(t.skus).length;
-        h+='<tr class="t1-row" style="border-bottom:1px solid #f0f0f0" '
-          +'data-lic="'+bodEscA(t.licencia_id)+'" data-fecha="'+bodEscA(t.fecha)+'" data-tar="'+bodEscA(t.tarima)+'" data-sesid="'+bodEscA(t.sesId)+'" data-seslic="'+bodEscA(t.licencia_id)+'" data-sesfecha="'+bodEscA(t.fecha)+'">'
-          +'<td style="padding:5px 7px;font-weight:600;color:#1565c0">'+bodEscA(t.licencia_id)+'</td>'
-          +'<td style="padding:5px 7px;color:#666">'+bodEscA(bodFmtFecha(t.fecha))+'</td>'
-          +'<td style="padding:5px 7px;text-align:center">'+skuU+'</td>'
-          +'<td style="padding:5px 7px;text-align:center">'+t.auditadas+'</td>'
-          +'<td style="padding:5px 7px;font-weight:600">'+bodEscA(t.tarima)+'</td>'
-          +'<td style="padding:5px 7px;text-align:center">'+t.lineas+'</td>'
-          +'<td style="padding:5px 7px;color:#888;font-size:.72rem">'+bodEscA(t.operador)+'</td>'
+      rows.forEach(function(r){
+        h+='<tr class="t1-row" data-lic="'+bodEscA(r.licencia)+'" data-fecha="'+bodEscA(r.fecha)+'" data-tar="'+bodEscA(r.tarima)+'">'
+          +'<td style="padding:5px 7px;font-weight:600;color:#1565c0">'+bodEscA(r.licencia)+'</td>'
+          +'<td style="padding:5px 7px;color:#666">'+bodEscA(bodFmtFecha(r.fecha))+'</td>'
+          +'<td style="padding:5px 7px;text-align:center">'+r.skusUnicos+'</td>'
+          +'<td style="padding:5px 7px;text-align:center">'+r.auditados+'</td>'
+          +'<td style="padding:5px 7px;font-weight:600">'+bodEscA(r.tarima)+'</td>'
+          +'<td style="padding:5px 7px;text-align:center">'+r.lineas+'</td>'
+          +'<td style="padding:5px 7px;color:#888;font-size:.71rem">'+bodEscA(r.operador)+'</td>'
           +'<td style="padding:5px 7px;text-align:center">'
-          +'<button class="btn btn-xs b-aud-tar" data-tarima="'+bodEscA(t.tarima)+'" data-sesid="'+bodEscA(t.sesId)+'" data-seslic="'+bodEscA(t.licencia_id)+'" data-sesfecha="'+bodEscA(t.fecha)+'" style="background:#1565c0;color:#fff;font-size:.7rem">🔍 Auditar</button>'
+          +'<button class="btn btn-xs b-aud-tar" data-sesid="'+bodEscA(r.sesId)+'" data-tarima="'+bodEscA(r.tarima)+'" style="background:#1565c0;color:#fff">🔍 Auditar</button>'
           +'</td></tr>';
       });
       h+='</tbody></table></div>';
       tb.innerHTML=h;
 
-      // Filtros
-      function aplicarFiltros1(){
+      function f1(){
         var fL=(document.getElementById('t1-f-lic')||{value:''}).value.trim().toUpperCase();
         var fF=(document.getElementById('t1-f-fecha')||{value:''}).value.trim();
         var fT=(document.getElementById('t1-f-tar')||{value:''}).value.trim().toUpperCase();
         tb.querySelectorAll('.t1-row').forEach(function(row){
-          var ok=(!fL||row.dataset.lic.toUpperCase().includes(fL))
-            &&(!fF||row.dataset.fecha===fF)
-            &&(!fT||row.dataset.tar.toUpperCase().includes(fT));
-          row.style.display=ok?'':'none';
+          row.style.display=(!fL||row.dataset.lic.toUpperCase().includes(fL))
+            &&(!fF||row.dataset.fecha===fF)&&(!fT||row.dataset.tar.toUpperCase().includes(fT))?'':'none';
         });
       }
       ['t1-f-lic','t1-f-fecha','t1-f-tar'].forEach(function(id){
-        var el=document.getElementById(id); if(el) el.addEventListener('input',aplicarFiltros1);
+        var e=document.getElementById(id); if(e) e.addEventListener('input',f1);
       });
-      var clrBtn=document.getElementById('t1-f-clear');
-      if(clrBtn) clrBtn.addEventListener('click',function(){
-        ['t1-f-lic','t1-f-fecha','t1-f-tar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
-        aplicarFiltros1();
+      var clr=document.getElementById('t1-f-clear');
+      if(clr) clr.addEventListener('click',function(){
+        ['t1-f-lic','t1-f-fecha','t1-f-tar'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
+        f1();
       });
+      var ref=document.getElementById('t1-f-ref');
+      if(ref) ref.addEventListener('click',function(){ bodAudTab1(tb); });
 
-      // Botón Auditar → establece sesión de esa tarima y navega a Tab 2
       tb.querySelectorAll('.b-aud-tar').forEach(function(btn){
         btn.addEventListener('click',function(){
-          _bodAudSesion={id:btn.dataset.sesid, licencia_id:btn.dataset.seslic, fecha_trabajo:btn.dataset.sesfecha};
+          _audDB.filtroTarima={sesId:btn.dataset.sesid, tarima:btn.dataset.tarima};
           _bodAudTab='2-detalle';
-          window._bodTab2FiltroTarima=btn.dataset.tarima;
-          bodCargarTeorico(_bodAudSesion.id, function(){
-            var elMain=document.getElementById('bod-aud-contenido');
-            if(elMain) bodRenderAudTabs(elMain);
-          });
+          var elMain=document.getElementById('bod-aud-contenido');
+          if(elMain) bodRenderAudTabs(elMain);
         });
       });
 
-    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar tarimas.</div>'; });
-  }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar sesiones.</div>'; });
+    }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar tarimas.</div>';});
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar sesiones.</div>';});
 }
 
-// ── Tab 2: Detalle — todas las sesiones con filtros ──────────────────────
+// ── Tab 2: Detalle — todas las sesiones, filtros ─────────────────────────
 function bodAudTab2(tb){
   tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando detalle…</div>';
-  var filtroTarIni=window._bodTab2FiltroTarima||'';
-  var filtroLicIni=_bodAudSesion?_bodAudSesion.licencia_id:'';
-  window._bodTab2FiltroTarima=null;
-  var usr=bodCurrentUser();
+  var filtroTarIni = _audDB.filtroTarima ? _audDB.filtroTarima.tarima : '';
+  var usr = bodCurrentUser();
+  _audDB.filtroTarima = null; // consumir filtro
 
-  // Cargar todas las sesiones, luego todas sus lineas
   bodFetch('GET','/api/bod/sesiones?limit=100').then(function(dSes){
     var sesiones=dSes.ok?(dSes.sesiones||[]):[];
-    var promises=sesiones.map(function(s){
+    Promise.all(sesiones.map(function(s){
       return bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(s.id)+'/lineas')
-        .then(function(d){ return { ses:s, lineas:d.ok?(d.lineas||[]):[] }; })
-        .catch(function(){ return { ses:s, lineas:[] }; });
-    });
-    Promise.all(promises).then(function(results){
-      // Flatten all lineas with session info
+        .then(function(d){return{ses:s,lineas:d.ok?(d.lineas||[]):[]}; })
+        .catch(function(){return{ses:s,lineas:[]};});
+    })).then(function(results){
       var allLineas=[];
       results.forEach(function(r){
         r.lineas.forEach(function(l){
-          allLineas.push(Object.assign({},l,{
-            _licencia_id: r.ses.licencia_id||r.ses.id,
-            _fecha: r.ses.fecha_trabajo||'',
-            _sesId: r.ses.id
-          }));
+          allLineas.push(Object.assign({},l,{_lic:r.ses.licencia_id||r.ses.id,_fecha:r.ses.fecha_trabajo||'',_sesId:r.ses.id}));
         });
       });
-      allLineas.sort(function(a,b){
-        return (a._licencia_id||'').localeCompare(b._licencia_id||'')
-          ||(a.tarima||'').localeCompare(b.tarima||'')
-          ||(a.sku||'').localeCompare(b.sku||'');
-      });
+      allLineas.sort(function(a,b){return (a._lic||'').localeCompare(b._lic||'')||(a.tarima||'').localeCompare(b.tarima||'');});
 
-      // Filtros
       var fH='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.6rem;align-items:center">'
-        +'<input type="text" id="t2-f-lic" placeholder="Licencia bolsón" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px" value="'+bodEscA(filtroLicIni)+'">'
+        +'<input type="text" id="t2-f-lic" placeholder="Licencia bolsón" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:130px">'
         +'<input type="date" id="t2-f-fecha" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px">'
         +'<input type="text" id="t2-f-tar" placeholder="Tarima" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:80px" value="'+bodEscA(filtroTarIni)+'">'
         +'<input type="text" id="t2-f-sku" placeholder="SKU" style="font-size:.76rem;padding:3px 7px;border:1px solid #ddd;border-radius:5px;width:100px">'
         +'<button class="btn btn-xs" id="t2-f-clear" style="font-size:.72rem;background:#f5f5f5">✕ Limpiar</button>'
+        +'<button class="btn btn-xs" id="t2-f-ref" style="font-size:.72rem;background:#e8f5e9;color:#1e7e34">↺</button>'
         +'</div>';
 
-      if(!allLineas.length){
-        tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem;padding:.5rem">Sin líneas capturadas.</div>'; return;
-      }
+      if(!allLineas.length){tb.innerHTML=fH+'<div style="color:#aaa;font-size:.82rem">Sin líneas.</div>';return;}
 
-      var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.74rem;border-collapse:collapse">'
+      var h=fH+'<div style="overflow-x:auto"><table style="width:100%;font-size:.73rem;border-collapse:collapse">'
         +'<thead><tr style="background:#f0f0f0;font-weight:700">'
-        +'<th style="padding:5px 6px">Licencia</th>'
-        +'<th style="padding:5px 6px">Fecha</th>'
-        +'<th style="padding:5px 6px">Tarima</th>'
-        +'<th style="padding:5px 6px">SKU</th>'
+        +'<th style="padding:5px 6px">Licencia</th><th style="padding:5px 6px">Fecha</th>'
+        +'<th style="padding:5px 6px">Tarima</th><th style="padding:5px 6px">SKU</th>'
         +'<th style="padding:5px 6px">Descripción</th>'
         +'<th style="padding:5px 6px;text-align:center">Cant.</th>'
         +'<th style="padding:5px 6px;text-align:center">Físico</th>'
@@ -10674,26 +10642,26 @@ function bodAudTab2(tb){
         +'</tr></thead><tbody id="t2-tbody">';
 
       allLineas.forEach(function(l){
-        var fisico=l.cantidad_audit!==null&&l.cantidad_audit!==undefined?Number(l.cantidad_audit):null;
+        var fis=l.cantidad_audit!==null&&l.cantidad_audit!==undefined?Number(l.cantidad_audit):null;
         var cant=Number(l.cantidad)||0;
-        var dif=fisico!==null?(cant-fisico):null;
-        var estado=dif===null?'—':(dif===0?'Cuadrado':dif<0?'Sobrante':'Faltante');
-        var estadoC=dif===null?'#888':(dif===0?'#1e7e34':dif<0?'#1565c0':'#c0392b');
-        var auditado=!!l.auditado;
-        h+='<tr class="t2-row" style="border-bottom:1px solid #f0f0f0" data-id="'+bodEscA(l.id)+'" data-lic="'+bodEscA(l._licencia_id)+'" data-fecha="'+bodEscA(l._fecha)+'" data-tar="'+bodEscA(l.tarima||'')+'" data-sku="'+bodEscA(l.sku||'')+'" data-sesid="'+bodEscA(l._sesId)+'">'
-          +'<td style="padding:5px 6px;color:#1565c0;font-weight:600">'+bodEscA(l._licencia_id)+'</td>'
-          +'<td style="padding:5px 6px;color:#666;font-size:.71rem">'+bodEscA(bodFmtFecha(l._fecha))+'</td>'
+        var dif=fis!==null?(cant-fis):null;
+        var est=dif===null?'—':(dif===0?'Cuadrado':dif<0?'Sobrante':'Faltante');
+        var estC=dif===null?'#888':(dif===0?'#1e7e34':dif<0?'#1565c0':'#c0392b');
+        var aud=!!l.auditado;
+        h+='<tr class="t2-row" data-id="'+bodEscA(l.id)+'" data-sesid="'+bodEscA(l._sesId)+'" data-lic="'+bodEscA(l._lic)+'" data-fecha="'+bodEscA(l._fecha)+'" data-tar="'+bodEscA(l.tarima||'')+'" data-sku="'+bodEscA(l.sku||'')+'">'
+          +'<td style="padding:5px 6px;color:#1565c0;font-weight:600">'+bodEscA(l._lic)+'</td>'
+          +'<td style="padding:5px 6px;color:#666;font-size:.7rem">'+bodEscA(bodFmtFecha(l._fecha))+'</td>'
           +'<td style="padding:5px 6px;font-weight:600">'+bodEscA(l.tarima||'')+'</td>'
           +'<td style="padding:5px 6px">'+bodEscA(l.sku||'')+'</td>'
-          +'<td style="padding:5px 6px;color:#555;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.descripcion||'')+'</td>'
+          +'<td style="padding:5px 6px;color:#555;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.descripcion||'')+'</td>'
           +'<td style="padding:5px 6px;text-align:center">'+cant+'</td>'
-          +'<td style="padding:5px 6px;text-align:center"><input type="number" class="t2-fisico-inp" data-id="'+bodEscA(l.id)+'" data-sesid="'+bodEscA(l._sesId)+'" value="'+(fisico!==null?fisico:'')+'" placeholder="—" min="0" style="width:55px;font-size:.74rem;padding:2px 4px;border:1px solid #ddd;border-radius:4px;text-align:center"'+(auditado?' disabled':'')+'></td>'
-          +'<td style="padding:5px 6px;text-align:center;font-weight:600;color:'+estadoC+'">'+(dif!==null?dif:'—')+'</td>'
-          +'<td style="padding:5px 6px;text-align:center;color:'+estadoC+';font-size:.7rem">'+estado+'</td>'
+          +'<td style="padding:5px 6px;text-align:center"><input type="number" class="t2-fis" value="'+(fis!==null?fis:'')+'" placeholder="—" min="0" style="width:52px;font-size:.73rem;padding:2px 4px;border:1px solid #ddd;border-radius:4px;text-align:center"'+(aud?' disabled':'')+'></td>'
+          +'<td style="padding:5px 6px;text-align:center;font-weight:600;color:'+estC+'">'+(dif!==null?dif:'—')+'</td>'
+          +'<td style="padding:5px 6px;text-align:center;font-size:.7rem;color:'+estC+'">'+est+'</td>'
           +'<td style="padding:5px 6px;color:#888;font-size:.7rem">'+bodEscA(l.operador||'')+'</td>'
           +'<td style="padding:5px 6px;color:#555;font-size:.7rem">'+bodEscA(l.auditado_por||'')+'</td>'
           +'<td style="padding:5px 6px;text-align:center">'
-          +(auditado
+          +(aud
             ?'<button class="btn btn-xs b-anular-aud" data-id="'+bodEscA(l.id)+'" data-sesid="'+bodEscA(l._sesId)+'" style="background:#c0392b;color:#fff;font-size:.68rem">Anular</button>'
             :'<button class="btn btn-xs b-auditar-lin" data-id="'+bodEscA(l.id)+'" data-sesid="'+bodEscA(l._sesId)+'" style="background:#1e7e34;color:#fff;font-size:.68rem">Auditar</button>'
           )+'</td></tr>';
@@ -10701,343 +10669,382 @@ function bodAudTab2(tb){
       h+='</tbody></table></div>';
       tb.innerHTML=h;
 
-      // Filtros
-      function aplicarFiltros2(){
+      function f2(){
         var fL=(document.getElementById('t2-f-lic')||{value:''}).value.trim().toUpperCase();
         var fF=(document.getElementById('t2-f-fecha')||{value:''}).value.trim();
         var fT=(document.getElementById('t2-f-tar')||{value:''}).value.trim().toUpperCase();
         var fS=(document.getElementById('t2-f-sku')||{value:''}).value.trim().toUpperCase();
         tb.querySelectorAll('.t2-row').forEach(function(row){
-          var ok=(!fL||row.dataset.lic.toUpperCase().includes(fL))
-            &&(!fF||row.dataset.fecha===fF)
-            &&(!fT||row.dataset.tar.toUpperCase().includes(fT))
-            &&(!fS||row.dataset.sku.toUpperCase().includes(fS));
-          row.style.display=ok?'':'none';
+          row.style.display=(!fL||row.dataset.lic.toUpperCase().includes(fL))
+            &&(!fF||row.dataset.fecha===fF)&&(!fT||row.dataset.tar.toUpperCase().includes(fT))
+            &&(!fS||row.dataset.sku.toUpperCase().includes(fS))?'':'none';
         });
       }
       ['t2-f-lic','t2-f-fecha','t2-f-tar','t2-f-sku'].forEach(function(id){
-        var e=document.getElementById(id); if(e) e.addEventListener('input',aplicarFiltros2);
+        var e=document.getElementById(id); if(e) e.addEventListener('input',f2);
       });
-      var clrBtn=document.getElementById('t2-f-clear');
-      if(clrBtn) clrBtn.addEventListener('click',function(){
-        ['t2-f-lic','t2-f-fecha','t2-f-tar','t2-f-sku'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
-        aplicarFiltros2();
+      var clr=document.getElementById('t2-f-clear');
+      if(clr) clr.addEventListener('click',function(){
+        ['t2-f-lic','t2-f-fecha','t2-f-tar','t2-f-sku'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
+        f2();
       });
-      if(filtroTarIni||filtroLicIni) aplicarFiltros2();
+      var ref=document.getElementById('t2-f-ref');
+      if(ref) ref.addEventListener('click',function(){bodAudTab2(tb);});
+      if(filtroTarIni) f2();
 
       // Auditar
       tb.querySelectorAll('.b-auditar-lin').forEach(function(btn){
         btn.addEventListener('click',function(){
           var row=btn.closest('tr');
-          var inp=row.querySelector('.t2-fisico-inp');
+          var inp=row.querySelector('.t2-fis');
+          if(!inp||inp.value===''){alert('Ingresá el físico antes de auditar.');inp&&inp.focus();return;}
           var fisico=Number(inp.value);
-          if(inp.value===''||isNaN(fisico)){ alert('Ingresá el físico antes de auditar.'); inp.focus(); return; }
-          btn.disabled=true; btn.textContent='…';
+          btn.disabled=true;btn.textContent='…';
           var sesId=btn.dataset.sesid;
           bodFetch('PATCH','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/fisico-audit',
             {fisico_auditoria:fisico,teorico_952:0,usuario:usr})
             .then(function(d1){
-              if(!d1.ok){ alert(d1.error||'Error'); btn.disabled=false; btn.textContent='Auditar'; return; }
+              if(!d1.ok){alert(d1.error||'Error');btn.disabled=false;btn.textContent='Auditar';return;}
               bodFetch('POST','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/auditar',{usuario:usr})
-                .then(function(d2){ if(d2.ok) bodAudTab2(tb); else { alert(d2.error||'Error'); btn.disabled=false; btn.textContent='Auditar'; }})
-                .catch(function(){ btn.disabled=false; btn.textContent='Auditar'; });
-            }).catch(function(){ btn.disabled=false; btn.textContent='Auditar'; alert('Error de red.'); });
+                .then(function(d2){if(d2.ok)bodAudTab2(tb);else{alert(d2.error||'Error');btn.disabled=false;btn.textContent='Auditar';}})
+                .catch(function(){btn.disabled=false;btn.textContent='Auditar';});
+            }).catch(function(){btn.disabled=false;btn.textContent='Auditar';alert('Error de red.');});
         });
       });
-      // Anular
       tb.querySelectorAll('.b-anular-aud').forEach(function(btn){
         btn.addEventListener('click',function(){
-          if(!confirm('¿Anular la auditoría de esta línea?')) return;
+          if(!confirm('¿Anular la auditoría?')) return;
           bodFetch('POST','/api/bod/linea/'+encodeURIComponent(btn.dataset.id)+'/unauditar',{usuario:usr,auditor:true})
-            .then(function(d){ if(d.ok) bodAudTab2(tb); else alert(d.error||'Error'); })
-            .catch(function(){ alert('Error de red.'); });
+            .then(function(d){if(d.ok)bodAudTab2(tb);else alert(d.error||'Error');})
+            .catch(function(){alert('Error de red.');});
         });
       });
-
-    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar detalle.</div>'; });
-  }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar sesiones.</div>'; });
+    }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar detalle.</div>';});
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar sesiones.</div>';});
 }
 
-// ── Tab 3: Carga Teórico ─────────────────────────────────────────────────
+// ── Tab 3: Carga Teórico — global por fecha ───────────────────────────────
 function bodAudTab3(tb){
-  if(!_bodAudSesion){ bodAudInlineSesionPicker(tb,function(){ bodAudTab3(tb); }); return; }
-  var ses=_bodAudSesion, usr=bodCurrentUser();
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952')
-    .then(function(d){
-      var rows=d.ok?(d.rows||[]):[];
-      var h='<div style="font-size:.82rem;font-weight:700;color:#333;margin-bottom:.5rem">Carga Teórico 952</div>'
-        +'<p style="font-size:.78rem;color:#555;margin-bottom:.5rem">Subí el archivo <strong>952_006_001_Teórico.xlsx</strong>. Columnas: SKU, Nombre, Cant. 952, Unidad, Exist., Disp.</p>'
-        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.7rem">'
-        +'<input type="file" id="tab3-file" accept=".xlsx,.xls" style="font-size:.78rem">'
-        +'<button class="btn btn-sm btn-dark" id="tab3-upload-btn">⬆ Subir Teórico</button>'
-        +(rows.length?'<button class="btn btn-xs" id="tab3-clear-btn" style="background:#c0392b;color:#fff">🗑 Limpiar</button>':'')
-        +'<span id="tab3-msg" style="font-size:.76rem"></span></div>';
-      if(rows.length){
-        h+='<div style="font-size:.75rem;color:#555;margin-bottom:.3rem">'+rows.length+' SKUs cargados ('+bodEscA(ses.licencia_id)+'):</div>'
-          +'<div style="overflow-x:auto;max-height:300px"><table style="width:100%;font-size:.73rem;border-collapse:collapse">'
-          +'<thead><tr style="background:#f0f0f0;font-weight:700"><th style="padding:4px 6px">SKU</th><th style="padding:4px 6px">Nombre</th><th style="padding:4px 6px;text-align:center">Cant. 952</th><th style="padding:4px 6px">Unidad</th></tr></thead><tbody>';
-        rows.slice(0,200).forEach(function(r){
-          h+='<tr style="border-bottom:1px solid #f5f5f5"><td style="padding:4px 6px">'+bodEscA(r.sku)+'</td><td style="padding:4px 6px;color:#555">'+bodEscA(r.nombre||'')+'</td><td style="padding:4px 6px;text-align:center">'+bodEscA(r.cantidad_952||0)+'</td><td style="padding:4px 6px;color:#888">'+bodEscA(r.unidades||'')+'</td></tr>';
-        });
-        if(rows.length>200) h+='<tr><td colspan="4" style="padding:4px;color:#aaa;text-align:center">…y '+(rows.length-200)+' más</td></tr>';
-        h+='</tbody></table></div>';
-      } else {
-        h+='<div style="color:#aaa;font-size:.82rem">Sin teórico cargado para '+bodEscA(ses.licencia_id)+'.</div>';
-      }
-      tb.innerHTML=h;
-      document.getElementById('tab3-upload-btn').addEventListener('click',function(){
-        var fi=document.getElementById('tab3-file');
-        var msg=document.getElementById('tab3-msg');
-        if(!fi||!fi.files[0]){ msg.innerHTML='<span style="color:#c0392b">Seleccioná el archivo.</span>'; return; }
-        msg.innerHTML='<span style="color:#888">Subiendo…</span>';
-        var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('creado_por',usr);
-        fetch('/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952/upload',{method:'POST',body:fd})
-          .then(function(r){return r.json();})
-          .then(function(d){
-            if(d.ok){ msg.innerHTML='<span style="color:#1e7e34">✅ '+d.procesadas+' SKUs cargados</span>';
-              bodCargarTeorico(ses.id,function(){ setTimeout(function(){ bodAudTab3(tb); },600); });
-            } else msg.innerHTML='<span style="color:#c0392b">Error: '+bodEscA(d.error)+'</span>';
-          }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+  var usr=bodCurrentUser();
+  var fecha=_audFecha();
+  bodFetch('GET','/api/bod/teorico-952-global?fecha='+fecha).then(function(d){
+    var rows=d.ok?(d.rows||[]):[];
+    _audDB.teorico=rows; // actualizar en memoria
+    var h='<div style="font-size:.82rem;font-weight:700;color:#333;margin-bottom:.4rem">Carga Teórico 952</div>'
+      +'<p style="font-size:.78rem;color:#555;margin-bottom:.5rem">Subí el archivo <strong>952_006_001_Teórico.xlsx</strong>. Columnas: SKU, Nombre, Cant. 952, Unidad, Exist., Disp.</p>'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.6rem">'
+      +'<input type="file" id="tab3-file" accept=".xlsx,.xls" style="font-size:.78rem">'
+      +'<button class="btn btn-sm btn-dark" id="tab3-up-btn">⬆ Subir Teórico</button>'
+      +(rows.length?'<button class="btn btn-xs" id="tab3-clr-btn" style="background:#c0392b;color:#fff">🗑 Limpiar</button>':'')
+      +'<span id="tab3-msg" style="font-size:.76rem"></span></div>'
+      +'<div style="font-size:.74rem;color:#888;margin-bottom:.3rem">Fecha: '+bodEscA(fecha)+' — '+rows.length+' SKUs cargados</div>';
+    if(rows.length){
+      h+='<div style="overflow-x:auto;max-height:280px"><table style="width:100%;font-size:.72rem;border-collapse:collapse">'
+        +'<thead><tr style="background:#f0f0f0;font-weight:700"><th style="padding:4px 6px">SKU</th><th style="padding:4px 6px">Nombre</th><th style="padding:4px 6px;text-align:center">Cant. 952</th><th style="padding:4px 6px">Unidad</th></tr></thead><tbody>';
+      rows.slice(0,300).forEach(function(r){
+        h+='<tr style="border-bottom:1px solid #f5f5f5"><td style="padding:3px 6px">'+bodEscA(r.sku)+'</td><td style="padding:3px 6px;color:#555">'+bodEscA(r.nombre||'')+'</td><td style="padding:3px 6px;text-align:center">'+bodEscA(r.cantidad_952||0)+'</td><td style="padding:3px 6px;color:#888">'+bodEscA(r.unidades||'')+'</td></tr>';
       });
-      var clrBtn=document.getElementById('tab3-clear-btn');
-      if(clrBtn) clrBtn.addEventListener('click',function(){
-        if(!confirm('¿Limpiar el teórico cargado?')) return;
-        bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/teorico-952/all',{usuario:usr})
-          .then(function(d){ if(d.ok){ _bodTeorico={}; bodAudTab3(tb); } else alert(d.error||'Error'); })
-          .catch(function(){ alert('Error de red.'); });
-      });
-    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar teórico.</div>'; });
+      if(rows.length>300) h+='<tr><td colspan="4" style="padding:4px;color:#aaa;text-align:center">…y '+(rows.length-300)+' más</td></tr>';
+      h+='</tbody></table></div>';
+    } else {
+      h+='<div style="color:#aaa;font-size:.82rem">Sin teórico cargado para hoy.</div>';
+    }
+    tb.innerHTML=h;
+
+    document.getElementById('tab3-up-btn').addEventListener('click',function(){
+      var fi=document.getElementById('tab3-file');
+      var msg=document.getElementById('tab3-msg');
+      if(!fi||!fi.files[0]){msg.innerHTML='<span style="color:#c0392b">Seleccioná el archivo.</span>';return;}
+      msg.innerHTML='<span style="color:#888">Subiendo…</span>';
+      var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('fecha',fecha); fd.append('creado_por',usr);
+      fetch('/api/bod/teorico-952-global/upload',{method:'POST',body:fd})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d.ok){
+            msg.innerHTML='<span style="color:#1e7e34">✅ '+d.procesadas+' SKUs cargados</span>';
+            setTimeout(function(){bodAudTab3(tb);},600);
+          } else msg.innerHTML='<span style="color:#c0392b">Error: '+bodEscA(d.error)+'</span>';
+        }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
+    });
+    var clrBtn=document.getElementById('tab3-clr-btn');
+    if(clrBtn) clrBtn.addEventListener('click',function(){
+      if(!confirm('¿Limpiar el teórico del día?')) return;
+      bodFetch('DELETE','/api/bod/teorico-952-global?fecha='+fecha).then(function(d){
+        if(d.ok){_audDB.teorico=[];bodAudTab3(tb);}else alert(d.error||'Error');
+      }).catch(function(){alert('Error de red.');});
+    });
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar teórico.</div>';});
 }
 
-// ── Tab 4: Control de Manifiestos ────────────────────────────────────────
+// ── Tab 4: Control de Manifiestos — PTs globales por fecha ────────────────
 function bodAudTab4(tb){
-  if(!_bodAudSesion){ bodAudInlineSesionPicker(tb,function(){ bodAudTab4(tb); }); return; }
-  var ses=_bodAudSesion, usr=bodCurrentUser();
+  var usr=bodCurrentUser();
+  var fecha=_audFecha();
   tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando…</div>';
-  bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control')
-    .then(function(d){
-      var mfs=d.ok?(d.manifiestos||[]):[];
-      var h='<div style="margin-bottom:.7rem">'
-        +'<button class="btn btn-sm btn-dark" id="tab4-gen-pt-btn">＋ Generar PT</button>'
-        +'<span id="tab4-pt-msg" style="font-size:.76rem;margin-left:.5rem"></span></div>';
-      if(!mfs.length){
-        h+='<div style="color:#aaa;font-size:.82rem">Sin papeles de trabajo. Presioná "Generar PT".</div>';
-      } else {
-        mfs.forEach(function(m){
-          var bloqueado=(m.estado==='finalizado'||m.estado==='anulado');
-          var estadoColor=m.estado==='finalizado'?'#1e7e34':(m.estado==='anulado'?'#c0392b':'#1565c0');
-          var estadoLabel=m.estado==='finalizado'?'Finalizado':(m.estado==='anulado'?'Anulado':'En Proceso');
-          h+='<div class="tab4-pt-card" data-mid="'+bodEscA(m.id)+'" style="border:1px solid #e0e0e0;border-radius:8px;padding:.7rem;margin-bottom:.65rem;background:#fff">'
-            +'<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.45rem;flex-wrap:wrap">'
-            +'<span style="font-weight:700;font-size:.84rem">'+bodEscA(m.correlativo||m.id)+'</span>'
-            +'<span style="font-size:.71rem;color:'+estadoColor+';border:1px solid '+estadoColor+';border-radius:10px;padding:1px 7px">'+estadoLabel+'</span>'
-            +'<span style="font-size:.71rem;color:#888;margin-left:auto">Creado por: '+bodEscA(m.creado_por||'')+'</span>'
-            +'</div>'
-            +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:.35rem;margin-bottom:.45rem">'
-            +bodTab4Campo('Furgón','furgon',m.furgon||'','number',bloqueado)
-            +bodTab4Campo('Placa','placa',m.placa||'','text',bloqueado)
-            +bodTab4Campo('Marchamo','marchamo',m.marchamo||'','text',bloqueado)
-            +bodTab4Campo('Lic. Hija','licencia_hija',m.licencia_hija||'','text',bloqueado)
-            +bodTab4Campo('TR999','destino_tr999',m.destino_tr999||'','text',bloqueado)
-            +bodTab4Campo('Carga No.','carga_no',m.carga_no||'','number',bloqueado)
-            +bodTab4Campo('Auditor','auditor_lider',m.auditor_lider||'','text',bloqueado)
-            +bodTab4Campo('Observaciones','observacion',m.observacion||'','text',bloqueado)
-            +'</div>'
-            +(m.colaboradores&&m.colaboradores.length?'<div style="font-size:.72rem;color:#888;margin-bottom:.35rem">Colaboradores: '+bodEscA(m.colaboradores.join(', '))+'</div>':'')
-            +'<div style="display:flex;gap:.35rem;flex-wrap:wrap">'
-            +(!bloqueado?'<button class="btn btn-xs b-guardar-pt" data-mid="'+bodEscA(m.id)+'">💾 Guardar</button>':'')
-            +(!bloqueado?'<button class="btn btn-xs b-empezar-pt" data-mid="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff">▶ '+(m.estado==='en_proceso'?'Continuar':'Empezar')+'</button>':'')
-            +(!bloqueado?'<button class="btn btn-xs b-subir-lich" data-mid="'+bodEscA(m.id)+'">📤 Subir Lic. Hija WMS</button>':'')
-            +(m.estado==='finalizado'?'<button class="btn btn-xs b-generar-manif" data-mid="'+bodEscA(m.id)+'" style="background:#1e7e34;color:#fff">📄 Generar Manifiesto</button>':'')
-            +(!bloqueado?'<button class="btn btn-xs b-borrar-pt" data-mid="'+bodEscA(m.id)+'" style="background:#c0392b;color:#fff">✕ Borrar</button>':'')
-            +'</div>'
-            +'<div class="tab4-pt-msg" style="font-size:.76rem;margin-top:.3rem"></div>'
-            +'<div class="tab4-lich-upload" data-mid="'+bodEscA(m.id)+'" style="display:none;margin-top:.45rem;padding:.45rem;background:#f8f9fa;border-radius:6px">'
-            +'<input type="file" class="tab4-lich-file" accept=".xlsx,.xls" style="font-size:.75rem">'
-            +'<button class="btn btn-xs tab4-lich-btn" data-mid="'+bodEscA(m.id)+'" style="margin-left:5px">⬆ Subir</button>'
-            +'<span class="tab4-lich-msg" style="font-size:.74rem;margin-left:5px"></span>'
-            +'</div></div>';
-        });
-      }
-      tb.innerHTML=h;
+  bodFetch('GET','/api/bod/pts?fecha='+fecha).then(function(d){
+    _audDB.pts=d.ok?(d.pts||[]):[];
+    var h='<div style="margin-bottom:.7rem;display:flex;gap:.5rem;align-items:center">'
+      +'<button class="btn btn-sm btn-dark" id="t4-gen-pt">＋ Generar PT</button>'
+      +'<span id="t4-gen-msg" style="font-size:.76rem"></span></div>';
 
-      // Generar PT
-      document.getElementById('tab4-gen-pt-btn').addEventListener('click',function(){
-        var msg=document.getElementById('tab4-pt-msg');
-        msg.innerHTML='<span style="color:#888">Generando…</span>';
-        bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control',{auditor_lider:usr,creado_por:usr})
+    if(!_audDB.pts.length){
+      h+='<div style="color:#aaa;font-size:.82rem">Sin PTs. Presioná "Generar PT".</div>';
+    } else {
+      _audDB.pts.forEach(function(m){
+        var bloq=m.estado==='finalizado'||m.estado==='anulado';
+        var estC=m.estado==='finalizado'?'#1e7e34':m.estado==='anulado'?'#c0392b':'#1565c0';
+        var estL=m.estado==='finalizado'?'Finalizado':m.estado==='anulado'?'Anulado':'En Proceso';
+        h+='<div class="t4-pt-card" data-mid="'+bodEscA(m.id)+'" style="border:1px solid #e0e0e0;border-radius:8px;padding:.7rem;margin-bottom:.6rem;background:#fff">'
+          +'<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.45rem">'
+          +'<strong style="font-size:.84rem">'+bodEscA(m.correlativo||m.id)+'</strong>'
+          +'<span style="font-size:.71rem;color:'+estC+';border:1px solid '+estC+';border-radius:10px;padding:1px 8px">'+estL+'</span>'
+          +'<span style="font-size:.71rem;color:#888;margin-left:auto">'+bodEscA(m.creado_por||'')+'</span>'
+          +'</div>'
+          +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.35rem;margin-bottom:.45rem">'
+          +t4C('Furgón','furgon',m.furgon||'','text',bloq)
+          +t4C('Placa','placa',m.placa||'','text',bloq)
+          +t4C('Marchamo','marchamo',m.marchamo||'','text',bloq)
+          +t4C('Lic. Hija','licencia_hija',m.licencia_hija||'','text',bloq)
+          +t4C('TR999','destino_tr999',m.destino_tr999||'','text',bloq)
+          +t4C('Carga No.','carga_no',m.carga_no||'','text',bloq)
+          +t4C('Auditor','auditor_lider',m.auditor_lider||'','text',bloq)
+          +t4C('Observaciones','observacion',m.observacion||'','text',bloq)
+          +'</div>'
+          +'<div style="display:flex;gap:.35rem;flex-wrap:wrap">'
+          +(!bloq?'<button class="btn btn-xs b-t4-guardar" data-mid="'+bodEscA(m.id)+'">💾 Guardar</button>':'')
+          +(!bloq?'<button class="btn btn-xs b-t4-continuar" data-mid="'+bodEscA(m.id)+'" style="background:#1565c0;color:#fff">▶ '+(m.auditor_lider?'Continuar':'Empezar')+'</button>':'')
+          +(!bloq?'<button class="btn btn-xs b-t4-lich" data-mid="'+bodEscA(m.id)+'">📤 Subir Lic. Hija WMS</button>':'')
+          +(m.estado==='finalizado'?'<button class="btn btn-xs b-t4-manif" data-mid="'+bodEscA(m.id)+'" style="background:#1e7e34;color:#fff">📄 Generar Manifiesto</button>':'')
+          +(!bloq?'<button class="btn btn-xs b-t4-borrar" data-mid="'+bodEscA(m.id)+'" style="background:#c0392b;color:#fff">✕ Borrar</button>':'')
+          +'</div>'
+          +'<div class="t4-pt-msg" style="font-size:.75rem;margin-top:.3rem"></div>'
+          +'<div class="t4-lich-wrap" data-mid="'+bodEscA(m.id)+'" style="display:none;margin-top:.45rem;background:#f8f9fa;border-radius:6px;padding:.45rem">'
+          +'<input type="file" class="t4-lich-file" accept=".xlsx,.xls" style="font-size:.75rem">'
+          +'<button class="btn btn-xs t4-lich-up-btn" data-mid="'+bodEscA(m.id)+'" style="margin-left:5px">⬆ Subir</button>'
+          +'<span class="t4-lich-msg" style="font-size:.74rem;margin-left:5px"></span>'
+          +'</div></div>';
+      });
+    }
+    tb.innerHTML=h;
+
+    // Generar PT
+    document.getElementById('t4-gen-pt').addEventListener('click',function(){
+      var msg=document.getElementById('t4-gen-msg');
+      msg.innerHTML='<span style="color:#888">Generando…</span>';
+      bodFetch('POST','/api/bod/pts',{fecha:fecha,creado_por:usr})
+        .then(function(d){
+          if(d.ok){msg.innerHTML='<span style="color:#1e7e34">✅ '+bodEscA(d.pt&&d.pt.correlativo||'PT creado')+'</span>';setTimeout(function(){bodAudTab4(tb);},500);}
+          else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+        }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
+    });
+
+    // Guardar
+    tb.querySelectorAll('.b-t4-guardar').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var card=btn.closest('.t4-pt-card');
+        var msg=card.querySelector('.t4-pt-msg');
+        var mId=btn.dataset.mid;
+        var datos={usuario:usr};
+        card.querySelectorAll('.t4-campo-inp').forEach(function(inp){datos[inp.dataset.campo]=inp.value.trim();});
+        msg.innerHTML='<span style="color:#888">Guardando…</span>';
+        bodFetch('PATCH','/api/bod/pts/'+encodeURIComponent(mId),datos)
           .then(function(d){
-            if(d.ok){ msg.innerHTML='<span style="color:#1e7e34">✅ '+bodEscA(d.manifiesto&&d.manifiesto.correlativo||'PT creado')+'</span>'; setTimeout(function(){ bodAudTab4(tb); },600); }
-            else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
-          }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+            msg.innerHTML=d.ok?'<span style="color:#1e7e34">✅ Guardado</span>':'<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
+            if(d.ok) setTimeout(function(){bodAudTab4(tb);},800);
+          }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
       });
+    });
 
-      // Guardar PT
-      tb.querySelectorAll('.b-guardar-pt').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          var card=btn.closest('.tab4-pt-card');
-          var msg=card.querySelector('.tab4-pt-msg');
-          var mId=btn.dataset.mid;
-          var datos={usuario:usr};
-          card.querySelectorAll('.tab4-campo-inp').forEach(function(inp){ datos[inp.dataset.campo]=inp.value.trim(); });
-          msg.innerHTML='<span style="color:#888">Guardando…</span>';
-          bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/guardar',datos)
-            .then(function(d){ msg.innerHTML=d.ok?'<span style="color:#1e7e34">✅ Guardado</span>':'<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; })
-            .catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
-        });
+    // Empezar/Continuar → Tab 5
+    tb.querySelectorAll('.b-t4-continuar').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        _audDB.ptActivo=btn.dataset.mid;
+        _bodAudTab='5-papel';
+        var elMain=document.getElementById('bod-aud-contenido');
+        if(elMain) bodRenderAudTabs(elMain);
       });
+    });
 
-      // Empezar/Continuar → Tab 5
-      tb.querySelectorAll('.b-empezar-pt').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          _bodAudPtActivo=btn.dataset.mid; _bodAudTab='5-papel';
-          var elMain=document.getElementById('bod-aud-contenido');
-          if(elMain) bodRenderAudTabs(elMain);
-        });
+    // Subir Lic. Hija WMS
+    tb.querySelectorAll('.b-t4-lich').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var mId=btn.dataset.mid;
+        var div=tb.querySelector('.t4-lich-wrap[data-mid="'+mId+'"]');
+        if(div) div.style.display=div.style.display==='none'?'':'none';
       });
+    });
+    tb.querySelectorAll('.t4-lich-up-btn').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var mId=btn.dataset.mid;
+        var wrap=tb.querySelector('.t4-lich-wrap[data-mid="'+mId+'"]');
+        var fi=wrap?wrap.querySelector('.t4-lich-file'):null;
+        var msg=wrap?wrap.querySelector('.t4-lich-msg'):null;
+        if(!fi||!fi.files[0]){if(msg)msg.textContent='Seleccioná el archivo.';return;}
+        if(msg)msg.textContent='Subiendo…';
+        var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('creado_por',usr);
+        fetch('/api/bod/pts/'+encodeURIComponent(mId)+'/licencia-hija/upload',{method:'POST',body:fd})
+          .then(function(r){return r.json();})
+          .then(function(d){if(msg)msg.textContent=d.ok?('✅ '+d.procesadas+' filas'):('Error: '+(d.error||'?'));})
+          .catch(function(){if(msg)msg.textContent='Error de red.';});
+      });
+    });
 
-      // Subir Lic. Hija
-      tb.querySelectorAll('.b-subir-lich').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          var mId=btn.dataset.mid;
-          var div=tb.querySelector('.tab4-lich-upload[data-mid="'+mId+'"]');
-          if(div) div.style.display=div.style.display==='none'?'':'none';
-        });
+    // Generar Manifiesto
+    tb.querySelectorAll('.b-t4-manif').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var card=btn.closest('.t4-pt-card');
+        var msg=card.querySelector('.t4-pt-msg');
+        var mId=btn.dataset.mid;
+        var pt=_audDB.pts.find(function(p){return p.id===mId;})||{};
+        msg.innerHTML='<span style="color:#888">Preparando…</span>';
+        Promise.all([
+          bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/papel'),
+          bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/licencia-hija').catch(function(){return{ok:true,rows:[]};})
+        ]).then(function(rs){
+          var lineas=rs[0].ok?(rs[0].rows||[]):[];
+          var lich=rs[1].ok?(rs[1].rows||[]):[];
+          if(!lineas.length){msg.innerHTML='<span style="color:#c0392b">El PT no tiene líneas.</span>';return;}
+          var lichMap={};
+          lich.forEach(function(r){lichMap[r.sku]=(Number(r.cantidad)||0);});
+          var data={
+            pt:{correlativo:pt.correlativo,furgon:pt.furgon,placa:pt.placa,marchamo:pt.marchamo,
+                licencia_hija:pt.licencia_hija,destino_tr999:pt.destino_tr999,carga_no:pt.carga_no,auditor_lider:pt.auditor_lider},
+            skus:lineas, lichMap:lichMap
+          };
+          msg.innerHTML='';
+          audMostrarSelectorExport(data,pt,false);
+        }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
       });
-      tb.querySelectorAll('.tab4-lich-btn').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          var mId=btn.dataset.mid;
-          var div=tb.querySelector('.tab4-lich-upload[data-mid="'+mId+'"]');
-          var fi=div?div.querySelector('.tab4-lich-file'):null;
-          var msg=div?div.querySelector('.tab4-lich-msg'):null;
-          if(!fi||!fi.files[0]){ if(msg)msg.textContent='Seleccioná el archivo.'; return; }
-          if(msg)msg.textContent='Subiendo…';
-          var fd=new FormData(); fd.append('file',fi.files[0]); fd.append('manifiesto_id',mId); fd.append('usuario',usr);
-          fetch('/api/bod/sesion/'+encodeURIComponent(ses.id)+'/licencia-hija/upload',{method:'POST',body:fd})
-            .then(function(r){return r.json();})
-            .then(function(d){ if(msg)msg.textContent=d.ok?('✅ '+d.procesadas+' filas'):('Error: '+(d.error||'?')); })
-            .catch(function(){ if(msg)msg.textContent='Error de red.'; });
-        });
-      });
+    });
 
-      // Generar Manifiesto
-      tb.querySelectorAll('.b-generar-manif').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          var card=btn.closest('.tab4-pt-card');
-          var msg=card.querySelector('.tab4-pt-msg');
-          msg.innerHTML='<span style="color:#888">Preparando…</span>';
-          var mId=btn.dataset.mid;
-          bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/manifiesto-data')
-            .then(function(d){
-              if(!d.ok){ msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>'; return; }
-              if(!d.skus||!d.skus.length){ msg.innerHTML='<span style="color:#c0392b">El PT no tiene líneas.</span>'; return; }
-              bodMostrarSelectorExport(d,ses,mId,msg);
-            }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
-        });
+    // Borrar PT
+    tb.querySelectorAll('.b-t4-borrar').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        if(!confirm('¿Borrar este PT?')) return;
+        bodFetch('DELETE','/api/bod/pts/'+encodeURIComponent(btn.dataset.mid))
+          .then(function(d){if(d.ok)bodAudTab4(tb);else alert(d.error||'Error');})
+          .catch(function(){alert('Error de red.');});
       });
+    });
 
-      // Borrar PT
-      tb.querySelectorAll('.b-borrar-pt').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          if(!confirm('¿Borrar este Papel de Trabajo?')) return;
-          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(btn.dataset.mid),{usuario:usr})
-            .then(function(d){ if(d.ok) bodAudTab4(tb); else alert(d.error||'Error'); })
-            .catch(function(){ alert('Error de red.'); });
-        });
-      });
-
-    }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar manifiestos.</div>'; });
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar PTs.</div>';});
 }
 
-function bodTab4Campo(label,campo,valor,tipo,disabled){
+function t4C(label,campo,valor,tipo,disabled){
   return '<div><label style="font-size:.7rem;font-weight:600;color:#555;display:block;margin-bottom:1px">'+bodEscA(label)+'</label>'
-    +'<input type="'+tipo+'" class="tab4-campo-inp" data-campo="'+campo+'" value="'+bodEscA(valor)+'"'
+    +'<input type="'+tipo+'" class="t4-campo-inp" data-campo="'+campo+'" value="'+bodEscA(valor)+'"'
     +' style="width:100%;font-size:.77rem;padding:3px 5px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box"'
     +(disabled?' disabled':'')+' autocomplete="off"></div>';
 }
 
-function bodMostrarSelectorExport(data,ses,mId,msg){
+// ── Selector de exportación ───────────────────────────────────────────────
+function audMostrarSelectorExport(data,pt,esMuestra){
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
-  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.4rem;width:320px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
-    +'<h3 style="font-size:.92rem;font-weight:700;margin:0 0 .35rem">Generar Manifiesto</h3>'
-    +'<p style="font-size:.77rem;color:#666;margin:0 0 .9rem">'+bodEscA(data.pt&&data.pt.correlativo||'')+'  · '+data.total_lineas+' SKUs · '+data.pct_auditado+'% auditado</p>'
+  ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:1.4rem;width:300px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
+    +'<h3 style="font-size:.9rem;font-weight:700;margin:0 0 .35rem">Generar Manifiesto</h3>'
+    +'<p style="font-size:.77rem;color:#666;margin:0 0 .9rem">'+bodEscA(pt.correlativo||'')+'</p>'
     +'<div style="display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem">'
-    +'<button id="exp-word" class="btn btn-sm" style="background:#1565c0;color:#fff">📄 Word (.docx)</button>'
     +'<button id="exp-excel" class="btn btn-sm" style="background:#1e7e34;color:#fff">📊 Excel (.xlsx)</button>'
+    +'<button id="exp-csv" class="btn btn-sm" style="background:#1565c0;color:#fff">📋 CSV</button>'
     +'</div>'
     +'<button id="exp-cancel" class="btn btn-xs" style="width:100%;background:#f5f5f5;color:#555">Cancelar</button>'
-    +'<div id="exp-msg" style="font-size:.75rem;margin-top:.4rem"></div>'
     +'</div>';
   document.body.appendChild(ov);
-  document.getElementById('exp-cancel').addEventListener('click',function(){ ov.remove(); });
-  ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
-  document.getElementById('exp-word').addEventListener('click',function(){
-    ov.remove();
-    // Buscar carga logística vinculada al manifiesto
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control')
-      .then(function(d){
-        var mfs=d.ok?(d.manifiestos||[]):[];
-        var mFound=mfs.find(function(m){return m.id===mId;});
-        var cargaId=mFound&&mFound.carga_logistica_id;
-        if(cargaId){
-          window.location.href='/api/bod/sesion/'+encodeURIComponent(ses.id)+'/carga-logistica/'+encodeURIComponent(cargaId)+'/manifiesto-word?usuario='+encodeURIComponent(bodCurrentUser());
-        } else {
-          bodGenerarManifiestoExcel(data,ses);
-        }
-      }).catch(function(){ bodGenerarManifiestoExcel(data,ses); });
-  });
-  document.getElementById('exp-excel').addEventListener('click',function(){ ov.remove(); bodGenerarManifiestoExcel(data,ses); });
+  document.getElementById('exp-cancel').addEventListener('click',function(){ov.remove();});
+  ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+  document.getElementById('exp-excel').addEventListener('click',function(){ov.remove();audGenerarExcel(data,pt,esMuestra);});
+  document.getElementById('exp-csv').addEventListener('click',function(){ov.remove();audGenerarCSV(data,pt,esMuestra);});
 }
 
-function bodGenerarManifiestoExcel(data,ses){
-  if(typeof XLSX==='undefined'){ alert('Librería XLSX no disponible.'); return; }
-  var pt=data.pt||{}, skus=data.skus||[], cf=data.campos_fijos||{};
+function audGenerarExcel(data,pt,esMuestra){
+  if(typeof XLSX==='undefined'){alert('Librería XLSX no disponible.');return;}
+  var skus=data.skus||[];
+  var lichMap=data.lichMap||{};
+  var cf={d1:'27 Calle Bodega C 41-55 Zona 5 Calzada la Paz',d2:'BODEGA NODUS (Hamilton)'};
   var fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
   var wb=XLSX.utils.book_new();
   var rows=[
-    ['CARGA ENVÍO A BODEGA','','','','','','',''],
-    ['','','','','','Marchamo:',pt.marchamo||'',''],
-    ['','Herramientas Poderosas','','','','Licencia:',pt.licencia_hija||'',''],
-    ['','DIRECCIÓN:',cf.direccion_origen||'','','UBICACIÓN:',pt.destino_tr999||'',''],
-    ['','DIRECCIÓN DESTINO:',cf.direccion_destino||'','','Fecha:',fecha,''],
-    ['','','','','','Carga No.',pt.carga_no||'',''],
+    ['CARGA ENVÍO A BODEGA'],
+    ['Marchamo:', pt.marchamo||''],
+    ['Licencia:', pt.licencia_hija||''],
+    ['Dirección:', cf.d1],
+    ['Destino:', cf.d2],
+    ['Ubicación:', pt.destino_tr999||''],
+    ['Fecha:', fecha],
+    ['Carga No.:', pt.carga_no||''],
     [],
-    ['','CODIGO','ESTATUS','% AUDITADO','DESCRIPCIÓN','CANTIDAD','WMS','DIFERENCIA',''],
+    ['CODIGO','ESTATUS','% AUDITADO','DESCRIPCIÓN', esMuestra?'WMS':'CANTIDAD', esMuestra?'VALIDADO':'WMS','DIFERENCIA']
   ];
+  // Calcular % auditado por SKU
+  var pctMap={};
+  var totMap={};
   skus.forEach(function(s){
-    rows.push(['',s.sku,s.estado_papel||'No auditado',(s.porcentaje_auditado||0)+'%',s.nombre||'',s.fisico_auditoria||0,s.cantidad_wms||0,s.diferencia||0,'']);
+    totMap[s.sku]=(totMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+    if(s.estado_papel==='Auditado') pctMap[s.sku]=(pctMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+  });
+  skus.forEach(function(s){
+    var fis=Number(s.fisico_auditoria||0);
+    var wms=lichMap[s.sku]||0;
+    var tot=totMap[s.sku]||1;
+    var pct=Math.round(((pctMap[s.sku]||0)/tot)*100)+'%';
+    var cant=esMuestra?wms:fis;
+    var val=esMuestra?fis:wms;
+    var dif=wms-fis;
+    rows.push([s.sku,s.estado_papel||'No auditado',pct,s.nombre||'',cant,val,dif]);
   });
   rows.push([],[]);
-  rows.push(['','AUTORIZACIÓN DE ENVÍO','','NOMBRE Y FIRMA QUIEN RECIBE','']);
-  (cf.autorizacion_envio||[]).forEach(function(n){ rows.push(['',n,'','','']); });
+  rows.push(['AUTORIZACIÓN DE ENVÍO:','','NOMBRE Y FIRMA QUIEN RECIBE:']);
+  rows.push(['ASTRID DUARTE']);rows.push(['CINTYA RIVERA']);rows.push(['HUVALDO PEREZ']);
   rows.push([]);
-  rows.push(['','ENCARGADO DE PEDIDO','','AUDITOR / VALIDADOR','']);
-  rows.push(['',cf.encargado_pedido||'','',pt.auditor_lider||'','']);
+  rows.push(['ENCARGADO DE PEDIDO: HUVALDO PEREZ']);
   var ws=XLSX.utils.aoa_to_sheet(rows);
   XLSX.utils.book_append_sheet(wb,ws,'Manifiesto');
-  var corr=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_');
-  XLSX.writeFile(wb,corr+'_manifiesto.xlsx');
+  var fn=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuestra?'-muestra':'')+'.xlsx';
+  XLSX.writeFile(wb,fn);
 }
 
-// ── Tab 5: Papel de Trabajo ──────────────────────────────────────────────
+function audGenerarCSV(data,pt,esMuestra){
+  var skus=data.skus||[];
+  var lichMap=data.lichMap||{};
+  var pctMap={};var totMap={};
+  skus.forEach(function(s){
+    totMap[s.sku]=(totMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+    if(s.estado_papel==='Auditado') pctMap[s.sku]=(pctMap[s.sku]||0)+Number(s.fisico_auditoria||0);
+  });
+  var colWMS=esMuestra?'VALIDADO':'WMS';
+  var lines=['\uFEFF'+'CODIGO,ESTATUS,DESCRIPCION,% AUDITADO,'+(esMuestra?'WMS':'CANTIDAD')+','+colWMS+',DIFERENCIA'];
+  skus.forEach(function(s){
+    var fis=Number(s.fisico_auditoria||0);
+    var wms=lichMap[s.sku]||0;
+    var tot=totMap[s.sku]||1;
+    var pct=Math.round(((pctMap[s.sku]||0)/tot)*100)+'%';
+    var cant=esMuestra?wms:fis;
+    var val=esMuestra?fis:wms;
+    lines.push(['"'+s.sku+'"','"'+(s.estado_papel||'No auditado')+'"','"'+(s.nombre||'')+'"','"'+pct+'"',cant,val,wms-fis].join(','));
+  });
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'}));
+  a.download=(pt.correlativo||'manifiesto').replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuestra?'-muestra':'')+'.csv';
+  a.click();
+}
+
+// ── Tab 5: Papel de Trabajo — scoped al PT activo ─────────────────────────
 function bodAudTab5(tb){
-  if(!_bodAudSesion){ bodAudInlineSesionPicker(tb,function(){ bodAudTab5(tb); }); return; }
-  if(!_bodAudPtActivo){
-    tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.5rem">▶ Usá <strong>Empezar</strong> en Control de Manifiestos para trabajar el Papel de Trabajo.</div>'; return;
+  if(!_audDB.ptActivo){
+    tb.innerHTML='<div style="color:#888;font-size:.82rem;padding:.5rem">▶ Usá <strong>Empezar</strong> en Control de Manifiestos para trabajar el Papel de Trabajo.</div>';
+    return;
   }
-  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando papel de trabajo…</div>';
-  var ses=_bodAudSesion, usr=bodCurrentUser(), mId=_bodAudPtActivo;
+  tb.innerHTML='<div style="color:#888;font-size:.82rem">Cargando…</div>';
+  var usr=bodCurrentUser();
+  var mId=_audDB.ptActivo;
+  var pt=_audDB.pts.find(function(p){return p.id===mId;})||{};
+  var bloq=pt.estado==='finalizado'||pt.estado==='anulado';
 
-  Promise.all([
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control'),
-    bodFetch('GET','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo?manifiesto_id='+encodeURIComponent(mId))
-  ]).then(function(results){
-    var mfs=results[0].ok?(results[0].manifiestos||[]):[];
-    var pt=mfs.find(function(m){return m.id===mId;})||{};
-    var lineas=results[1].ok?(results[1].rows||results[1].lineas||[]):[];
-    var bloqueado=(pt.estado==='finalizado'||pt.estado==='anulado');
+  bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/papel').then(function(d){
+    var lineas=d.ok?(d.rows||[]):[];
 
+    // Banner PT
     var h='<div style="background:#f0f4ff;border-radius:8px;padding:.5rem .85rem;margin-bottom:.6rem;font-size:.75rem">'
       +'<strong>'+bodEscA(pt.correlativo||mId)+'</strong>'
       +(pt.furgon?' · Furgón: '+bodEscA(pt.furgon):'')
@@ -11045,178 +11052,209 @@ function bodAudTab5(tb){
       +(pt.marchamo?' · Marchamo: '+bodEscA(pt.marchamo):'')
       +(pt.licencia_hija?' · Lic. Hija: '+bodEscA(pt.licencia_hija):'')
       +(pt.destino_tr999?' · TR999: '+bodEscA(pt.destino_tr999):'')
+      +' <button id="pp-ir-ctrl" style="margin-left:8px;font-size:.7rem;background:none;border:1px solid #ccc;border-radius:3px;padding:1px 5px;cursor:pointer">↩ Control</button>'
       +'</div>';
 
-    if(!bloqueado){
+    // Bloque agregar
+    if(!bloq){
       h+='<div style="background:#f8f9fa;border-radius:8px;padding:.6rem .85rem;margin-bottom:.6rem">'
-        +'<div style="font-size:.76rem;font-weight:700;color:#333;margin-bottom:.45rem">Agregar SKU</div>'
+        +'<div style="font-size:.76rem;font-weight:700;color:#333;margin-bottom:.4rem">Agregar SKU</div>'
         +'<div style="display:flex;gap:7px;align-items:flex-end;flex-wrap:wrap">'
         +'<div><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">Cód. Barra</label>'
-        +'<input type="text" id="pt-barra" placeholder="Escanear" style="width:115px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<input type="text" id="pp-barra" placeholder="Escanear" style="width:110px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
         +'<div><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">SKU</label>'
-        +'<input type="text" id="pt-sku" placeholder="SKU" style="width:105px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<input type="text" id="pp-sku" placeholder="SKU" style="width:100px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
         +'<div style="flex:1;min-width:120px"><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">Descripción</label>'
-        +'<input type="text" id="pt-desc" placeholder="Descripción" style="width:100%;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px"></div>'
+        +'<input type="text" id="pp-desc" placeholder="Descripción" style="width:100%;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px"></div>'
         +'<div><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">Físico</label>'
-        +'<input type="number" id="pt-fisico" placeholder="0" min="0" style="width:72px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px"></div>'
+        +'<input type="number" id="pp-fisico" placeholder="0" min="0" style="width:68px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px"></div>'
         +'<div><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">Tarima</label>'
-        +'<input type="text" id="pt-tarima" placeholder="A01" style="width:65px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
+        +'<input type="text" id="pp-tarima" placeholder="A01" style="width:62px;font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px" autocomplete="off"></div>'
         +'<div><label style="font-size:.7rem;font-weight:600;display:block;margin-bottom:1px">Estatus</label>'
-        +'<select id="pt-estatus" style="font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px"><option value="Auditado">Auditado</option><option value="No auditado">No auditado</option></select></div>'
-        +'<button class="btn btn-sm btn-dark" id="pt-agregar-btn" style="align-self:flex-end">+ Agregar</button>'
-        +'</div><div id="pt-linea-msg" style="font-size:.75rem;margin-top:.3rem"></div></div>';
+        +'<select id="pp-est" style="font-size:.81rem;padding:4px 6px;border:1px solid #ddd;border-radius:5px">'
+        +'<option value="Auditado">Auditado</option><option value="No auditado">No auditado</option></select></div>'
+        +'<button class="btn btn-sm btn-dark" id="pp-add-btn" style="align-self:flex-end">+ Agregar</button>'
+        +'</div><div id="pp-msg" style="font-size:.75rem;margin-top:.3rem"></div></div>';
     }
 
+    // Tabla
     h+='<div style="overflow-x:auto"><table style="width:100%;font-size:.72rem;border-collapse:collapse">'
       +'<thead><tr style="background:#f0f0f0;font-weight:700">'
       +'<th style="padding:4px 5px">SKU</th><th style="padding:4px 5px">Descripción</th>'
       +'<th style="padding:4px 5px;text-align:center">Físico</th><th style="padding:4px 5px">Tarima</th>'
       +'<th style="padding:4px 5px">Estatus</th><th style="padding:4px 5px">Origen</th>'
-      +'<th style="padding:4px 5px;text-align:center">952</th><th style="padding:4px 5px;text-align:center">Diferencia</th>'
+      +'<th style="padding:4px 5px;text-align:center">952</th>'
+      +'<th style="padding:4px 5px;text-align:center">Diferencia</th>'
       +'<th style="padding:4px 5px">Seguimiento</th>'
-      +'<th style="padding:4px 5px;text-align:center" title="Validación">✓ Val.</th>'
-      +'<th style="padding:4px 5px;text-align:center">Dif.Post-Val.</th>'
+      +'<th style="padding:4px 5px;text-align:center" title="Validación">✓Val.</th>'
+      +'<th style="padding:4px 5px;text-align:center">Dif.Post</th>'
       +'<th style="padding:4px 5px;text-align:center">Acción</th>'
-      +'</tr></thead><tbody id="pt-tbody">';
+      +'</tr></thead><tbody id="pp-tbody">';
 
     if(!lineas.length){
       h+='<tr><td colspan="12" style="padding:10px;color:#aaa;text-align:center">Sin líneas. Agregá el primer SKU.</td></tr>';
     } else {
       lineas.forEach(function(l){
-        var teo952=_bodTeorico[l.sku]?_bodTeorico[l.sku].cantidad_952:(l.cantidad_952||0);
-        var fisico=Number(l.fisico_auditoria)||0;
-        var dif=teo952-fisico;
+        var teo=_audBuscarTeo(l.sku); var t952=teo?teo.cantidad_952:(l.cantidad_952||0);
+        var fis=Number(l.fisico_auditoria)||0;
+        var dif=t952-fis;
         var validado=!!l.validado;
         var difPost=validado?0:dif;
         var seg=dif===0?'Cuadrado':(dif<0?'Solicitar traslado a 952':'Se queda en bolsón');
         var segC=dif===0?'#1e7e34':(dif<0?'#c0392b':'#1565c0');
-        var esMia=(l.creado_por||l.usuario||'')=== usr;
-        h+='<tr class="pt-row" style="border-bottom:1px solid #f0f0f0" data-id="'+bodEscA(l.id||l.sku)+'" data-sku="'+bodEscA(l.sku||'')+'">'
-          +'<td style="padding:4px 5px;font-weight:600">'+bodEscA(l.sku||'')+'</td>'
-          +'<td style="padding:4px 5px;color:#555;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.nombre||'')+'</td>'
-          +'<td style="padding:4px 5px;text-align:center">'+fisico+'</td>'
+        var esMio=(l.creado_por||'')=== usr;
+        h+='<tr class="pp-row" data-sku="'+bodEscA(l.sku)+'">'
+          +'<td style="padding:4px 5px;font-weight:600">'+bodEscA(l.sku)+'</td>'
+          +'<td style="padding:4px 5px;color:#555;max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+bodEscA(l.nombre||'')+'</td>'
+          +'<td style="padding:4px 5px;text-align:center">'+fis+'</td>'
           +'<td style="padding:4px 5px">'+bodEscA(l.tarimas||'')+'</td>'
           +'<td style="padding:4px 5px;font-size:.69rem">'+bodEscA(l.estado_papel||'')+'</td>'
           +'<td style="padding:4px 5px;font-size:.69rem;color:#888">'+bodEscA(l.origen||'creado')+'</td>'
-          +'<td style="padding:4px 5px;text-align:center;color:#555">'+teo952+'</td>'
+          +'<td style="padding:4px 5px;text-align:center;color:#555">'+t952+'</td>'
           +'<td style="padding:4px 5px;text-align:center;font-weight:600;color:'+(dif===0?'#1e7e34':(dif<0?'#c0392b':'#1565c0'))+'">'+dif+'</td>'
           +'<td style="padding:4px 5px;font-size:.69rem;color:'+segC+'">'+seg+'</td>'
           +'<td style="padding:4px 5px;text-align:center">'
-          +(bloqueado?(validado?'<span style="color:#1e7e34">✅</span>':'<span style="color:#ccc">—</span>')
-            :'<input type="checkbox" class="pt-validar-chk" data-sku="'+bodEscA(l.sku)+'" '+(validado?'checked':'')+'>')
+          +(bloq?(validado?'<span style="color:#1e7e34">✅</span>':'<span style="color:#ccc">—</span>')
+            :'<input type="checkbox" class="pp-val-chk" data-sku="'+bodEscA(l.sku)+'" '+(validado?'checked':'')+'>')
           +'</td>'
           +'<td style="padding:4px 5px;text-align:center;font-weight:600;color:'+(difPost===0?'#1e7e34':'#c0392b')+'">'+difPost+'</td>'
           +'<td style="padding:4px 5px;text-align:center">'
-          +((!bloqueado&&esMia)?'<button class="btn btn-xs b-borrar-pt-sku" data-sku="'+bodEscA(l.sku)+'" style="background:#c0392b;color:#fff">✕</button>':'<span style="color:#ccc;font-size:.69rem">—</span>')
+          +((!bloq&&esMio)?'<button class="btn btn-xs pp-del-btn" data-sku="'+bodEscA(l.sku)+'" style="background:#c0392b;color:#fff">✕</button>':'<span style="color:#ccc">—</span>')
           +'</td></tr>';
       });
     }
     h+='</tbody></table></div>';
-    if(!bloqueado){
+
+    if(!bloq){
       h+='<div style="margin-top:.7rem;display:flex;gap:.45rem;flex-wrap:wrap">'
-        +'<button class="btn btn-sm" id="pt-fin-manif" style="background:#1565c0;color:#fff">✅ Finalizar como Manifiesto</button>'
-        +'<button class="btn btn-sm" id="pt-fin-muestra" style="background:#7b241c;color:#fff">📋 Finalizar como Muestra</button>'
-        +'</div><div id="pt-fin-msg" style="font-size:.75rem;margin-top:.3rem"></div>';
+        +'<button class="btn btn-sm" id="pp-fin-manif" style="background:#1565c0;color:#fff">✅ Finalizar como Manifiesto</button>'
+        +'<button class="btn btn-sm" id="pp-fin-muestra" style="background:#7b241c;color:#fff">📋 Finalizar como Muestra</button>'
+        +'</div><div id="pp-fin-msg" style="font-size:.75rem;margin-top:.3rem"></div>';
     }
     tb.innerHTML=h;
 
-    // Autocomplete barra→SKU
-    if(!bloqueado){
-      var ptBarra=document.getElementById('pt-barra');
-      var ptSku=document.getElementById('pt-sku');
-      var ptDesc=document.getElementById('pt-desc');
-      var _ptBt=null;
-      if(ptBarra) ptBarra.addEventListener('input',function(){
-        clearTimeout(_ptBt);
-        var v=ptBarra.value.trim();
-        if(v.length>=3){ _ptBt=setTimeout(function(){
-          bodLookupSku(v,ses.id,function(r){
-            if(r){ ptSku.value=r.sku||''; if(r.descripcion) ptDesc.value=r.descripcion; }
-            if(r&&r.sku&&_bodTeorico[r.sku]&&!ptDesc.value) ptDesc.value=_bodTeorico[r.sku].nombre||'';
+    // ↩ Control
+    var irCtrl=document.getElementById('pp-ir-ctrl');
+    if(irCtrl) irCtrl.addEventListener('click',function(){
+      _bodAudTab='4-control';
+      var elMain=document.getElementById('bod-aud-contenido');
+      if(elMain) bodRenderAudTabs(elMain);
+    });
+
+    if(!bloq){
+      // Autocomplete
+      var ppB=document.getElementById('pp-barra');
+      var ppS=document.getElementById('pp-sku');
+      var ppD=document.getElementById('pp-desc');
+      var _ppT=null;
+      if(ppB) ppB.addEventListener('input',function(){
+        clearTimeout(_ppT);
+        var v=ppB.value.trim();
+        if(v.length>=3){ _ppT=setTimeout(function(){
+          bodLookupSku(v,null,function(r){
+            if(r){ppS.value=r.sku||'';if(r.descripcion)ppD.value=r.descripcion;}
+            if(r&&r.sku){var t=_audBuscarTeo(r.sku);if(t&&!ppD.value)ppD.value=t.nombre||'';}
           });
-        },400); }
+        },400);}
       });
-      if(ptSku) ptSku.addEventListener('blur',function(){
-        var s=ptSku.value.trim().toUpperCase();
-        if(s&&_bodTeorico[s]&&!ptDesc.value) ptDesc.value=_bodTeorico[s].nombre||'';
+      if(ppS) ppS.addEventListener('blur',function(){
+        var s=ppS.value.trim().toUpperCase();
+        if(s){var t=_audBuscarTeo(s);if(t&&!ppD.value)ppD.value=t.nombre||'';}
       });
 
       // Agregar SKU
-      document.getElementById('pt-agregar-btn').addEventListener('click',function(){
-        var msg=document.getElementById('pt-linea-msg');
-        var barra=ptBarra?ptBarra.value.trim():'';
-        var sku=(ptSku?ptSku.value.trim().toUpperCase():'')||barra.toUpperCase();
-        var desc=ptDesc?ptDesc.value.trim():'';
-        var fisico=Number((document.getElementById('pt-fisico')||{value:0}).value);
-        var tarima=(document.getElementById('pt-tarima')||{value:''}).value.trim().toUpperCase();
-        var estatus=(document.getElementById('pt-estatus')||{value:'No auditado'}).value;
-        if(!sku){ msg.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
-        if(!(fisico>=0)){ msg.innerHTML='<span style="color:#c0392b">Ingresá el físico.</span>'; return; }
-        var teo952=_bodTeorico[sku]?_bodTeorico[sku].cantidad_952:0;
-        if(!desc&&_bodTeorico[sku]) desc=_bodTeorico[sku].nombre||'';
-        var dif=teo952-fisico;
+      document.getElementById('pp-add-btn').addEventListener('click',function(){
+        var msg=document.getElementById('pp-msg');
+        var barra=ppB?ppB.value.trim():'';
+        var sku=(ppS?ppS.value.trim().toUpperCase():'')||barra.toUpperCase();
+        var desc=ppD?ppD.value.trim():'';
+        var fis=Number((document.getElementById('pp-fisico')||{value:0}).value);
+        var tarima=(document.getElementById('pp-tarima')||{value:''}).value.trim().toUpperCase();
+        var est=(document.getElementById('pp-est')||{value:'No auditado'}).value;
+        if(!sku){msg.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>';return;}
+        if(!(fis>=0)){msg.innerHTML='<span style="color:#c0392b">Ingresá el físico.</span>';return;}
+        var teo=_audBuscarTeo(sku);
+        var t952=teo?teo.cantidad_952:0;
+        if(!desc&&teo) desc=teo.nombre||'';
+        var dif=t952-fis;
+        var seg=dif===0?'Cuadrado':(dif<0?'Solicitar traslado a 952':'Se queda en bolsón');
         msg.innerHTML='<span style="color:#888">Guardando…</span>';
-        bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{
-          manifiesto_id:mId,
-          skus:[{sku:sku,nombre:desc,fisico_auditoria:fisico,cantidad_952:teo952,diferencia:dif,
-            seguimiento:dif===0?'Cuadrado':(dif<0?'Solicitar traslado a 952':'Se queda en bolsón'),
-            tarimas:tarima,estado_papel:estatus,validado:false,validado_por:'',cantidad_manifiesto:fisico}]
+        bodFetch('POST','/api/bod/pts/'+encodeURIComponent(mId)+'/papel',{
+          usuario:usr,
+          skus:[{sku:sku,nombre:desc,fisico_auditoria:fis,cantidad_952:t952,diferencia:dif,
+                 seguimiento:seg,tarimas:tarima,estado_papel:est,origen:'creado',
+                 validado:false,validado_por:'',creado_por:usr}]
         }).then(function(d){
           if(d.ok){
             msg.innerHTML='<span style="color:#1e7e34">✅ Agregado</span>';
-            if(ptBarra)ptBarra.value=''; if(ptSku)ptSku.value=''; if(ptDesc)ptDesc.value='';
-            document.getElementById('pt-fisico').value='';
-            document.getElementById('pt-tarima').value='';
+            if(ppB)ppB.value='';if(ppS)ppS.value='';if(ppD)ppD.value='';
+            document.getElementById('pp-fisico').value='';
+            document.getElementById('pp-tarima').value='';
             bodAudTab5(tb);
           } else msg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
-        }).catch(function(){ msg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+        }).catch(function(){msg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
       });
 
       // Validación checkbox
-      tb.querySelectorAll('.pt-validar-chk').forEach(function(chk){
+      tb.querySelectorAll('.pp-val-chk').forEach(function(chk){
         chk.addEventListener('change',function(){
           var sku=chk.dataset.sku;
-          var linea=lineas.find(function(l){return l.sku===sku;}); if(!linea) return;
-          var teo952=_bodTeorico[sku]?_bodTeorico[sku].cantidad_952:(linea.cantidad_952||0);
-          var fisico=Number(linea.fisico_auditoria)||0;
-          var dif=teo952-fisico;
-          bodFetch('POST','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo',{
-            manifiesto_id:mId,
-            skus:[{sku:sku,nombre:linea.nombre||'',fisico_auditoria:fisico,cantidad_952:teo952,diferencia:dif,
-              seguimiento:linea.seguimiento||'',tarimas:linea.tarimas||'',estado_papel:linea.estado_papel||'',
-              validado:chk.checked,validado_por:chk.checked?usr:'',cantidad_manifiesto:fisico}]
-          }).then(function(d){ if(d.ok) bodAudTab5(tb); }).catch(function(){});
+          var linea=lineas.find(function(l){return l.sku===sku;});if(!linea)return;
+          var teo=_audBuscarTeo(sku);var t952=teo?teo.cantidad_952:(linea.cantidad_952||0);
+          var fis=Number(linea.fisico_auditoria)||0;
+          var dif=t952-fis;
+          bodFetch('POST','/api/bod/pts/'+encodeURIComponent(mId)+'/papel',{
+            usuario:usr,
+            skus:[{sku:sku,nombre:linea.nombre||'',fisico_auditoria:fis,cantidad_952:t952,diferencia:dif,
+                   seguimiento:linea.seguimiento||'',tarimas:linea.tarimas||'',estado_papel:linea.estado_papel||'',
+                   origen:linea.origen||'creado',validado:chk.checked,validado_por:chk.checked?usr:'',creado_por:linea.creado_por||usr}]
+          }).then(function(d){if(d.ok)bodAudTab5(tb);}).catch(function(){});
         });
       });
 
-      // Borrar línea
-      tb.querySelectorAll('.b-borrar-pt-sku').forEach(function(btn){
+      // Borrar SKU
+      tb.querySelectorAll('.pp-del-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
           if(!confirm('¿Borrar esta línea?')) return;
-          bodFetch('DELETE','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/papel-trabajo-sku',{manifiesto_id:mId,sku:btn.dataset.sku})
-            .then(function(d){ if(d.ok) bodAudTab5(tb); else alert(d.error||'Error'); })
-            .catch(function(){ alert('Error de red.'); });
+          bodFetch('DELETE','/api/bod/pts/'+encodeURIComponent(mId)+'/papel/'+encodeURIComponent(btn.dataset.sku))
+            .then(function(d){if(d.ok)bodAudTab5(tb);else alert(d.error||'Error');})
+            .catch(function(){alert('Error de red.');});
         });
       });
 
       // Finalizar
-      function finalizarPT(tipo){
-        var fMsg=document.getElementById('pt-fin-msg');
-        if(!lineas.length){ fMsg.innerHTML='<span style="color:#c0392b">Agregá líneas antes de finalizar.</span>'; return; }
-        if(!confirm('¿Finalizar como '+tipo+'?')) return;
+      function finalizarPP(esMuestra){
+        var fMsg=document.getElementById('pp-fin-msg');
+        if(!lineas.length){fMsg.innerHTML='<span style="color:#c0392b">Agregá líneas primero.</span>';return;}
+        if(!confirm('¿Finalizar como '+(esMuestra?'Muestra':'Manifiesto')+'?')) return;
         fMsg.innerHTML='<span style="color:#888">Finalizando…</span>';
-        bodFetch('PATCH','/api/bod/sesion/'+encodeURIComponent(ses.id)+'/manifiestos-control/'+encodeURIComponent(mId)+'/finalizar',{usuario:usr,tipo:tipo})
+        bodFetch('PATCH','/api/bod/pts/'+encodeURIComponent(mId),{usuario:usr,estado:'finalizado'})
           .then(function(d){
             if(d.ok){
-              fMsg.innerHTML='<span style="color:#1e7e34">✅ Finalizado.</span>';
-              setTimeout(function(){ _bodAudTab='4-control'; var elMain=document.getElementById('bod-aud-contenido'); if(elMain) bodRenderAudTabs(elMain); },1200);
+              fMsg.innerHTML='<span style="color:#1e7e34">✅ Finalizado. Generando…</span>';
+              // Actualizar estado local
+              var ptLocal=_audDB.pts.find(function(p){return p.id===mId;});
+              if(ptLocal) ptLocal.estado='finalizado';
+              // Generar manifiesto
+              setTimeout(function(){
+                var lichP=bodFetch('GET','/api/bod/pts/'+encodeURIComponent(mId)+'/licencia-hija').catch(function(){return{ok:true,rows:[]};});
+                lichP.then(function(r){
+                  var lich=r.ok?(r.rows||[]):[];
+                  var lichMap={}; lich.forEach(function(lh){lichMap[lh.sku]=Number(lh.cantidad)||0;});
+                  var ptLocal=_audDB.pts.find(function(p){return p.id===mId;})||{};
+                  audMostrarSelectorExport({skus:lineas,lichMap:lichMap},ptLocal,esMuestra);
+                });
+                _bodAudTab='4-control';
+                var elMain=document.getElementById('bod-aud-contenido');
+                if(elMain) bodRenderAudTabs(elMain);
+              },800);
             } else fMsg.innerHTML='<span style="color:#c0392b">'+bodEscA(d.error||'Error')+'</span>';
-          }).catch(function(){ fMsg.innerHTML='<span style="color:#c0392b">Error de red.</span>'; });
+          }).catch(function(){fMsg.innerHTML='<span style="color:#c0392b">Error de red.</span>';});
       }
-      document.getElementById('pt-fin-manif').addEventListener('click',function(){ finalizarPT('manifiesto'); });
-      document.getElementById('pt-fin-muestra').addEventListener('click',function(){ finalizarPT('muestra'); });
+      document.getElementById('pp-fin-manif').addEventListener('click',function(){finalizarPP(false);});
+      document.getElementById('pp-fin-muestra').addEventListener('click',function(){finalizarPP(true);});
     }
-  }).catch(function(){ tb.innerHTML='<div style="color:#c0392b">Error al cargar papel de trabajo.</div>'; });
+  }).catch(function(){tb.innerHTML='<div style="color:#c0392b">Error al cargar papel de trabajo.</div>';});
 }
 
 })(); // FIN BOD MODULE v3
