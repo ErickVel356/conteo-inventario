@@ -6116,7 +6116,7 @@ app.post('/api/bod/sesion/:id/teorico-952', bodGuard, async (req, res) => {
 
     // Batch upsert (Supabase: POST con Prefer merge-duplicates)
     var saved = await supabase('POST', 'bod_teorico_952', upserts,
-      '?on_conflict=sesion_id,licencia_hija,sku');
+      '?on_conflict=sesion_id,sku');
 
     // Invalidar caches
     cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
@@ -6664,7 +6664,7 @@ app.post('/api/bod/sesion/:id/teorico-952/upload', bodGuard, upload.single('file
     await supabase('DELETE','bod_teorico_952',null,delQuery);
     for(var i=0;i<upserts.length;i+=200){
       await supabase('POST','bod_teorico_952',upserts.slice(i,i+200),
-        '?on_conflict=sesion_id,licencia_hija,sku');
+        '?on_conflict=sesion_id,sku');
     }
     cacheInvalidatePrefix('bod:teorico952:'+sesId+':');
     console.log('BOD teórico-952 upload: '+upserts.length+' SKUs sesión='+sesId+' por '+creadoPor);
