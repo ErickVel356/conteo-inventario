@@ -9644,7 +9644,8 @@ function renderCdgv2Lineas(){
         +' title="Eliminar línea">🗑</button>'
       : '';
 
-    var tarimaFmt  = l.tarima != null ? String(l.tarima) : '—';
+    var tarimaMap2 = (cdgv2LicenciaActual && cdgv2LicenciaActual.tarimaMap) || {};
+    var tarimaFmt  = tarimaMap2[l.id] != null ? String(tarimaMap2[l.id]) : '—';
     var audMap     = (cdgv2LicenciaActual && cdgv2LicenciaActual.auditadoManual) || {};
     var auditado   = audMap[l.id] || '';
     var audBg      = auditado === 'Auditado' ? '#e8f5e9' : auditado === 'No Auditado' ? '#fdecea' : '#f5f5f3';
@@ -10128,11 +10129,23 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
     usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
     costoUnit: costoUnit,
-    tarima: tarima,
     fotos: cdgv2AddFotos.slice()
   }).then(function(d){
     if(!d.ok && !d.aviso){
       msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
+    }
+    // Si se ingresó tarima, guardarla en el meta de la licencia (no en cdg_lineas)
+    var lineaId = d.linea && d.linea.id;
+    if(tarima != null && lineaId) {
+      var tMap = {}; tMap[lineaId] = tarima;
+      if(cdgv2LicenciaActual) {
+        if(!cdgv2LicenciaActual.tarimaMap) cdgv2LicenciaActual.tarimaMap = {};
+        cdgv2LicenciaActual.tarimaMap[lineaId] = tarima;
+      }
+      cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/meta',
+        { usuario: currentUser.name, tarimaMap: tMap })
+        .then(function(dm){ if(dm.tarimaMap && cdgv2LicenciaActual) cdgv2LicenciaActual.tarimaMap = dm.tarimaMap; })
+        .catch(function(){});
     }
     // Reset completo del form tras agregar exitosamente
     msg.innerHTML = '';
