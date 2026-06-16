@@ -1,7 +1,11 @@
+# render.yaml — conteo-inventario
+# Cambio respecto al original: env node → env docker para habilitar wkhtmltopdf.
+# Las variables de entorno (SUPABASE_URL, SUPABASE_KEY, BOD_ENABLED, etc.)
+# se conservan tal como las tenés configuradas en el Dashboard de Render —
+# este archivo NO las define, por lo que no las pisa.
 services:
-     - type: web
-       name: conteo-inventario
-       env: node
-       buildCommand: npm install
-       startCommand: node --max-old-space-size=460 server.js
-       plan: free
+  - type: web
+    name: conteo-inventario
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
