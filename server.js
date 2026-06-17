@@ -245,7 +245,7 @@ async function loadState() {
 let saveTimer = null;
 function scheduleSave() {
   if(saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 1500);
+  saveTimer = setTimeout(() => { saveDailyState('Debounced save'); }, 30000); // BW-FIX: 1500→30000ms, reduce Supabase writes ~20x
 }
 
 function addHistorial(usuario, accion, detalle) {
@@ -265,7 +265,7 @@ function publicState() {
     teorico:        state.teorico,
     fisico:         state.fisico,
     asignaciones:   state.asignaciones,
-    historial:      state.historial.slice(-50),
+    historial:      state.historial.slice(-20), // BW-FIX: 50→20 entries
     cdg:            state.cdg,
     puertas:        state.puertas        || {},
     hallazgos:      state.hallazgos      || [],
