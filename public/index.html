@@ -5188,7 +5188,7 @@ function startPolling() {
   pollNow();
   // Polling every 5 s — balances "live feel" with Render bandwidth cost.
   // Previously was 3 s which consumed ~67% more bandwidth.
-  pollInterval = setInterval(pollNow, 5000);
+  pollInterval = setInterval(pollNow, 15000); // BW-FIX: 5000→15000ms, -67% bandwidth
 }
 
 function stopPolling() {
@@ -7737,7 +7737,7 @@ window.cdgv2Cleanup = function(){
   if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
 };
 var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
-var CDGV2_LISTA_POLL_MS = 5000;   // 5s entre polls de la lista (descubrir licencias nuevas)
+var CDGV2_LISTA_POLL_MS = 20000;  // BW-FIX: 5000→20000ms, -75% CDG lista poll
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
 // FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
