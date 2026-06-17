@@ -105,15 +105,35 @@ function withTimeout(promise, ms, label) {
 }
 
 async function dbGet(key) {
+  const zlib = require('zlib');
   const rows = await supabase('GET', 'app_state', null, `?key=eq.${key}&select=value`);
   if(rows && rows.length > 0) {
-    try { return JSON.parse(rows[0].value); } catch(e) { return null; }
+    try {
+      const raw = rows[0].value;
+      // Descomprimir si está comprimido (prefijo __gz__)
+      if(typeof raw === 'string' && raw.startsWith('__gz__')) {
+        const buf = Buffer.from(raw.slice(6), 'base64');
+        const json = zlib.gunzipSync(buf).toString('utf8');
+        return JSON.parse(json);
+      }
+      return JSON.parse(raw);
+    } catch(e) { return null; }
   }
   return null;
 }
 
 async function dbSet(key, value) {
-  const data = { key, value: JSON.stringify(value) };
+  const zlib = require('zlib');
+  let stored;
+  // Comprimir daily_state (4 MB → ~400 KB): reduce Service-Initiated bandwidth ~90%
+  if(key === 'daily_state') {
+    const json = JSON.stringify(value);
+    const compressed = zlib.gzipSync(Buffer.from(json, 'utf8'));
+    stored = '__gz__' + compressed.toString('base64');
+  } else {
+    stored = JSON.stringify(value);
+  }
+  const data = { key, value: stored };
   await supabase('POST', 'app_state', data, '?on_conflict=key');
 }
 
