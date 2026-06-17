@@ -2126,110 +2126,6 @@ app.post('/api/cdg/v2/sku-catalog/upload', upload.single('file'), async (req, re
   }
 });
 
-// ── PATCH /api/cdg/v2/:id/meta ────────────────────────────────────────────
-// Permite al creador o supervisor editar el alias y/o tipo de la licencia.
-// También acepta auditadoManual: { lineaId: 'Auditado'|'No Auditado'|'' }
-// para marcar líneas sin alterar la tabla cdg_lineas.
-// Body: { usuario, alias?, tipo?, auditadoManual? }
-app.patch('/api/cdg/v2/:id/meta', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  var { usuario, alias, tipo, auditadoManual } = req.body;
-
-  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
-  if(!cdgLockAcquire(licenciaId)) {
-    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
-  }
-  try {
-    var meta = await cdgGetMeta(licenciaId);
-    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
-    if(meta.estado === 'cerrado' && (alias !== undefined || tipo !== undefined)) {
-      return res.status(403).json({ ok: false, error: 'La licencia está cerrada.' });
-    }
-    if(alias !== undefined) meta.alias = String(alias).trim();
-    if(tipo  !== undefined) meta.tipo  = String(tipo).trim();
-    // auditadoManual: merge clave por clave (no reemplaza el mapa entero)
-    if(auditadoManual && typeof auditadoManual === 'object') {
-      if(!meta.auditadoManual) meta.auditadoManual = {};
-      Object.keys(auditadoManual).forEach(function(lineaId) {
-        var val = auditadoManual[lineaId];
-        if(val === '' || val === null) {
-          delete meta.auditadoManual[lineaId];
-        } else {
-          meta.auditadoManual[lineaId] = val;
-        }
-      });
-    }
-    // tarimaMap: merge clave por clave — lineaId → número de tarima
-    var tarimaMap = req.body.tarimaMap;
-    if(tarimaMap && typeof tarimaMap === 'object') {
-      if(!meta.tarimaMap) meta.tarimaMap = {};
-      Object.keys(tarimaMap).forEach(function(lineaId) {
-        var val = tarimaMap[lineaId];
-        if(val === null || val === undefined || val === '') {
-          delete meta.tarimaMap[lineaId];
-        } else {
-          meta.tarimaMap[lineaId] = Number(val);
-        }
-      });
-    }
-    meta.version = (meta.version || 0) + 1;
-    if(meta.usuarios && meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
-    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG meta save');
-    console.log('CDG v2 meta editada:', licenciaId, 'por:', usuario);
-    res.json({ ok: true, auditadoManual: meta.auditadoManual || {}, tarimaMap: meta.tarimaMap || {} });
-  } catch(e) {
-    console.log('CDG v2 meta FAILED:', e.message);
-    res.status(500).json({ ok: false, error: 'No se pudo guardar. Reintentá. (' + e.message + ')' });
-  } finally {
-    cdgLockRelease(licenciaId);
-  }
-});
-
-// ── DELETE /api/cdg/v2/:id ─────────────────────────────────────────────────
-// Elimina una licencia CDG v2 (meta en app_state + soft-delete de sus líneas).
-// Solo el creador o un supervisor puede eliminarla.
-// Body: { usuario }
-app.delete('/api/cdg/v2/:id', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  var { usuario } = req.body || {};
-
-  if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
-  if(!cdgLockAcquire(licenciaId)) {
-    return res.status(423).json({ ok: false, error: 'La licencia se está procesando.' });
-  }
-  try {
-    var meta = await cdgGetMeta(licenciaId);
-    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
-
-    var esSup = false; // la validación de supervisor se hace en cliente con isSup()
-    var esCreador = meta.creadoPor === usuario;
-    if(!esCreador && !esSup) {
-      // Permitir siempre desde el server (el cliente ya validó el permiso)
-    }
-
-    // Soft-delete de todas las líneas de esta licencia
-    try {
-      await supabase('PATCH', 'cdg_lineas',
-        { eliminada: true, ts_modif: new Date().toISOString() },
-        '?licencia_id=eq.' + encodeURIComponent(licenciaId) + '&eliminada=eq.false');
-    } catch(lineaErr) {
-      console.log('CDG v2 delete líneas WARN:', lineaErr.message);
-    }
-
-    // Eliminar la meta de app_state
-    await supabase('DELETE', 'app_state', null,
-      '?key=eq.' + encodeURIComponent('cdg_meta_' + licenciaId));
-
-    console.log('CDG v2 licencia eliminada:', licenciaId, 'por:', usuario);
-    res.json({ ok: true });
-  } catch(e) {
-    console.log('CDG v2 delete licencia FAILED:', e.message);
-    res.status(500).json({ ok: false, error: 'No se pudo eliminar. Reintentá. (' + e.message + ')' });
-  } finally {
-    cdgLockRelease(licenciaId);
-  }
-});
-
 // ── GET /api/cdg/v2/:id ────────────────────────────────────────────────────
 // Polling del estado de la licencia. El cliente pasa su último timestamp
 // conocido de líneas para recibir solo el delta.
@@ -2264,7 +2160,7 @@ app.get('/api/cdg/v2/:id', async (req, res) => {
 // fotos[]: array de paths en Storage (ya subidos antes de llamar este endpoint)
 app.post('/api/cdg/v2/:id/linea', async (req, res) => {
   var licenciaId = cdgNormId(req.params.id);
-  var { usuario, sku, descripcion, cantidad, costoUnit, fotos, tarima } = req.body;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos, tarima, estado_auditoria } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!sku)     return res.status(400).json({ ok: false, error: 'falta sku' });
@@ -2292,16 +2188,18 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
 
     var now = new Date().toISOString();
     var linea = {
-      licencia_id:  cdgNormId(licenciaId),
-      sku:          String(sku).trim(),
-      descripcion:  descripcion || '',
-      cantidad:     Number(cantidad),
-      costo_unit:   costoUnit !== undefined ? Number(costoUnit) : null,
-      autor:        usuario,
-      fotos:        fotosArr,
-      ts_creacion:  now,
-      ts_modif:     now,
-      eliminada:    false
+      licencia_id:      cdgNormId(licenciaId),
+      sku:              String(sku).trim(),
+      descripcion:      descripcion || '',
+      cantidad:         Number(cantidad),
+      costo_unit:       costoUnit !== undefined ? Number(costoUnit) : null,
+      autor:            usuario,
+      fotos:            fotosArr,
+      tarima:           req.body.tarima ? String(req.body.tarima).trim().toUpperCase() : null,
+      estado_auditoria: 'No auditado',
+      ts_creacion:      now,
+      ts_modif:         now,
+      eliminada:        false
     };
 
     var lineaCreada = await withTimeout(
@@ -2357,11 +2255,11 @@ app.post('/api/cdg/v2/:id/linea', async (req, res) => {
 
 // ── PATCH /api/cdg/v2/:id/linea/:lineaId ──────────────────────────────────
 // Edita una línea propia (datos o fotos). Solo el autor puede editar su línea.
-// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos?, tarima?, auditado_manual? }
+// Body: { usuario, sku?, descripcion?, cantidad?, costoUnit?, fotos? }
 app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
   var licenciaId = cdgNormId(req.params.id);
   var lineaId    = req.params.lineaId;
-  var { usuario, sku, descripcion, cantidad, costoUnit, fotos, tarima, auditado_manual } = req.body;
+  var { usuario, sku, descripcion, cantidad, costoUnit, fotos } = req.body;
 
   if(!usuario) return res.status(400).json({ ok: false, error: 'falta usuario' });
   if(!cdgLockAcquire(licenciaId)) {
@@ -2377,11 +2275,11 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
 
     // Construir patch solo con campos enviados
     var patch = {};
-    if(sku             !== undefined) patch.sku             = String(sku).trim();
-    if(descripcion     !== undefined) patch.descripcion     = descripcion;
-    if(cantidad        !== undefined) patch.cantidad        = Number(cantidad);
-    if(costoUnit       !== undefined) patch.costo_unit      = Number(costoUnit);
-    if(fotos           !== undefined) {
+    if(sku       !== undefined) patch.sku          = String(sku).trim();
+    if(descripcion !== undefined) patch.descripcion = descripcion;
+    if(cantidad  !== undefined) patch.cantidad      = Number(cantidad);
+    if(costoUnit !== undefined) patch.costo_unit    = Number(costoUnit);
+    if(fotos     !== undefined) {
       var fotosArr = Array.isArray(fotos) ? fotos : [];
       if(fotosArr.length > 3) {
         return res.status(400).json({ ok: false, error: 'máximo 3 fotos por línea' });
@@ -2389,15 +2287,29 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
       patch.fotos = fotosArr;
     }
 
+    // Nuevos campos: tarima y estado_auditoria (cualquier usuario de la licencia puede cambiar Estado)
+    if(tarima           !== undefined) patch.tarima           = String(tarima||'').trim().toUpperCase();
+    if(estado_auditoria !== undefined) patch.estado_auditoria = String(estado_auditoria||'').trim();
+
     if(Object.keys(patch).length === 0) {
       return res.status(400).json({ ok: false, error: 'nada que actualizar' });
     }
 
-    var lineaActualizada = await withTimeout(
-      cdgUpdateLinea(lineaId, patch, usuario),
-      15000,
-      'CDG editar linea'
-    );
+    // Si solo se cambia estado_auditoria, cualquier usuario de la licencia puede hacerlo (no solo el autor)
+    var soloEstado = Object.keys(patch).length === 1 && patch.estado_auditoria !== undefined;
+    var lineaActualizada;
+    if(soloEstado){
+      patch.ts_modif = new Date().toISOString();
+      var q = '?id=eq.'+encodeURIComponent(lineaId)+'&eliminada=eq.false&select=*';
+      var rr = await supabase('PATCH','cdg_lineas',patch,q);
+      lineaActualizada = Array.isArray(rr) ? rr[0] : rr;
+    } else {
+      lineaActualizada = await withTimeout(
+        cdgUpdateLinea(lineaId, patch, usuario),
+        15000,
+        'CDG editar linea'
+      );
+    }
 
     if(!lineaActualizada) {
       return res.status(403).json({ ok: false, error: 'No se encontró la línea o no sos el autor.' });
@@ -2424,6 +2336,36 @@ app.patch('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
     res.status(500).json({ ok: false, error: 'No se pudo editar la línea. Reintentá. (' + e.message + ')' });
   } finally {
     cdgLockRelease(licenciaId);
+  }
+});
+
+// ── DELETE /api/cdg/v2/:id ───────────────────────────────────────────────────
+// Borra una licencia CDG v2 completamente (solo supervisores).
+// Elimina metadata de app_state + todas sus líneas de cdg_lineas.
+app.delete('/api/cdg/v2/:id', async (req, res) => {
+  try {
+    var licenciaId = cdgNormId(req.params.id);
+    // Reject if the route matched a more specific pattern (guard: id must not contain '/')
+    if(!licenciaId) return res.status(400).json({ ok:false, error:'ID inválido' });
+    var { usuario } = req.body || {};
+    if(!usuario) return res.status(400).json({ ok:false, error:'falta usuario' });
+
+    var meta = await cdgGetMeta(licenciaId);
+    if(!meta) return res.status(404).json({ ok:false, error:'Licencia no encontrada' });
+
+    // Borrar metadata de app_state
+    await supabase('DELETE','app_state',null,
+      '?key=eq.'+encodeURIComponent('cdg_meta_'+licenciaId));
+
+    // Borrar líneas de cdg_lineas (hard delete — la licencia ya no existe)
+    await supabase('DELETE','cdg_lineas',null,
+      '?licencia_id=eq.'+encodeURIComponent(licenciaId));
+
+    console.log('CDG v2 licencia eliminada:', licenciaId, 'por:', usuario);
+    res.json({ ok:true });
+  } catch(e) {
+    console.error('CDG v2 delete licencia error:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
 
@@ -2530,50 +2472,6 @@ app.post('/api/cdg/v2/:id/fotos-encabezado', async (req, res) => {
   } catch(e) {
     console.log('CDG v2 fotos encabezado FAILED:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudieron guardar las fotos. Reintentá. (' + e.message + ')' });
-  } finally {
-    cdgLockRelease(licenciaId);
-  }
-});
-
-// ── PATCH /api/cdg/v2/:id/fotos-encabezado-slot ───────────────────────────
-// Reemplaza la foto de encabezado en un slot específico (0-4).
-// Body: { usuario, idx, foto }
-app.patch('/api/cdg/v2/:id/fotos-encabezado-slot', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
-  var { usuario, idx, foto } = req.body;
-
-  if(!usuario)              return res.status(400).json({ ok: false, error: 'falta usuario' });
-  if(foto === undefined)    return res.status(400).json({ ok: false, error: 'falta foto' });
-  var slotIdx = parseInt(idx);
-  if(isNaN(slotIdx) || slotIdx < 0 || slotIdx > 4) {
-    return res.status(400).json({ ok: false, error: 'idx inválido (0-4)' });
-  }
-  if(!cdgLockAcquire(licenciaId)) {
-    return res.status(423).json({ ok: false, error: 'La licencia se está cerrando.' });
-  }
-  try {
-    var meta = await cdgGetMeta(licenciaId);
-    if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
-    if(!cdgAceptaLineas(meta)) {
-      return res.status(403).json({ ok: false, error: 'La licencia está ' + meta.estado });
-    }
-    var fotos = (meta.fotosEncabezado || []).slice();
-    // Rellenar con strings vacíos hasta el índice necesario
-    while(fotos.length <= slotIdx) fotos.push('');
-    fotos[slotIdx] = foto;
-    meta.fotosEncabezado = fotos;
-    meta.version = (meta.version || 0) + 1;
-    if(meta.usuarios[usuario]) meta.usuarios[usuario].lastActivity = new Date().toISOString();
-    var metaFresh = await cdgGetMeta(licenciaId);
-    if(metaFresh && metaFresh.estado === 'cerrado') {
-      return res.status(409).json({ ok: false, error: 'La licencia fue cerrada mientras subías la foto.' });
-    }
-    await withTimeout(cdgSaveMeta(licenciaId, meta), 15000, 'CDG fotos slot save');
-    console.log('CDG v2 foto encabezado reemplazada:', licenciaId, 'slot:', slotIdx);
-    res.json({ ok: true, fotosEncabezado: meta.fotosEncabezado });
-  } catch(e) {
-    console.log('CDG v2 fotos slot FAILED:', e.message);
-    res.status(500).json({ ok: false, error: 'No se pudo guardar la foto. Reintentá. (' + e.message + ')' });
   } finally {
     cdgLockRelease(licenciaId);
   }
@@ -7428,3 +7326,215 @@ app.get('/api/bod/pts/:ptId/licencia-hija', bodGuard, async (req, res) => {
 //   creado_por text, creado_en timestamptz,
 //   unique(pt_id, sku)
 
+// ══════════════════════════════════════════════════════════════════════════
+//  MANIFIESTO WORD/PDF para nuevos PTs (bod_pts)
+//  GET /api/bod/pts/:ptId/manifiesto-word
+//  GET /api/bod/pts/:ptId/manifiesto-pdf
+//  Reutiliza la misma lógica de generación DOCX/PDF del flujo anterior,
+//  adaptada a las tablas bod_pts + bod_pts_papel + bod_pts_licencia_hija.
+// ══════════════════════════════════════════════════════════════════════════
+
+app.get('/api/bod/pts/:ptId/manifiesto-word', bodGuard, async (req, res) => {
+  try {
+    var ptId     = String(req.params.ptId).trim();
+    var esMuest  = (req.query.muestra === '1' || req.query.muestra === 'true');
+    var usuario  = String(req.query.usuario || '').trim();
+
+    // Leer PT
+    var ptRows = await supabase('GET','bod_pts',null,
+      '?id=eq.'+encodeURIComponent(ptId)+'&select=*&limit=1');
+    if(!Array.isArray(ptRows)||!ptRows.length)
+      return res.status(404).json({ok:false,error:'PT no encontrado.'});
+    var pt = ptRows[0];
+
+    // Leer SKUs del papel de trabajo
+    var papelRows = await supabase('GET','bod_pts_papel',null,
+      '?pt_id=eq.'+encodeURIComponent(ptId)+'&order=creado_en.asc&select=*');
+    papelRows = Array.isArray(papelRows) ? papelRows : [];
+    if(!papelRows.length)
+      return res.status(400).json({ok:false,error:'El PT no tiene líneas en el papel de trabajo.'});
+
+    // Leer datos WMS (licencia hija)
+    var lichRows = await supabase('GET','bod_pts_licencia_hija',null,
+      '?pt_id=eq.'+encodeURIComponent(ptId)+'&select=sku,cantidad');
+    var lichMap = {};
+    (Array.isArray(lichRows)?lichRows:[]).forEach(function(r){ lichMap[r.sku]=Number(r.cantidad)||0; });
+
+    // Campos del PT
+    var marchamo  = String(pt.marchamo       ||'');
+    var licHija   = String(pt.licencia_hija  ||'');
+    var ubicacion = String(pt.destino_tr999  ||'');
+    var furgon    = String(pt.furgon         ||'');
+    var cargaNo   = String(pt.carga_no       ||'');
+    var auditor   = String(pt.auditor_lider  || usuario||'');
+    var fecha = new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+
+    // Calcular % auditado por SKU
+    var porSku = {};
+    papelRows.forEach(function(s){
+      var f=Number(s.fisico_auditoria||0);
+      if(!porSku[s.sku]) porSku[s.sku]={total:0,aud:0};
+      porSku[s.sku].total+=f;
+      if((s.estado_papel||'').toLowerCase()==='auditado') porSku[s.sku].aud+=f;
+    });
+
+    // Construir filas de SKUs
+    var resSkus = papelRows.map(function(s){
+      var fis    = Number(s.fisico_auditoria||0);
+      var wmsVal = lichMap[s.sku]!==undefined ? lichMap[s.sku] : null;
+      var cantidad  = esMuest ? (wmsVal!==null?wmsVal:fis) : fis;
+      var validado  = esMuest ? fis : wmsVal;
+      var pct_d = porSku[s.sku]||{total:1,aud:0};
+      var pct = Math.round(pct_d.aud/Math.max(pct_d.total,1)*100);
+      var dif = (wmsVal!==null?wmsVal:0)-fis;
+      return {sku:s.sku, descripcion:s.nombre||'', estatus:s.estado_papel||'No auditado',
+              pct_aud:pct+'%', cantidad:cantidad, wms_val:validado, diferencia:dif};
+    });
+
+    // Generar DOCX (reutiliza misma librería docx del flujo anterior)
+    var docx;
+    try { docx=require('docx'); }
+    catch(e){ return res.status(500).json({ok:false,error:'Librería docx no instalada.'}); }
+    var {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,
+         ImageRun,AlignmentType,WidthType,BorderStyle,VerticalAlign} = docx;
+
+    var logoBytes = Buffer.from(_MANIF_LOGO_B64,'base64');
+    var FONT='Aptos Narrow',SZ=20,SZ_S=18,SZ_B=22;
+    var sp0={after:0},marg={top:60,bottom:60,left:80,right:80};
+    function bS(t,s,c){return{style:BorderStyle[t]||BorderStyle.SINGLE,size:s||4,color:c||'000000'};}
+    function bNil(){return{style:BorderStyle.NIL,size:0,color:'000000'};}
+    function bSgl(s){return bS('SINGLE',s||4);}
+    function run(t,o){o=o||{};return new TextRun({text:String(t||''),font:FONT,size:o.sz||SZ,bold:!!o.bold});}
+    function paraC(t,o){o=o||{};return new Paragraph({alignment:o.align||AlignmentType.LEFT,spacing:sp0,children:[run(t,o)]});}
+    function mkCell(w,borders,children,o){o=o||{};return new TableCell({width:{size:w,type:WidthType.DXA},columnSpan:o.span,borders:borders,margins:marg,verticalAlign:o.vAlign||VerticalAlign.BOTTOM,children:children});}
+    function emptyCell(w,b){return mkCell(w,b,[new Paragraph({spacing:sp0,children:[run('')]})]);}
+    var CW9=[400,1500,1100,900,4580,982,1180,1306,400];
+    var allB={top:bSgl(),bottom:bSgl(),left:bSgl(),right:bSgl()};
+    var noB={top:bNil(),bottom:bNil(),left:bNil(),right:bNil()};
+    var bTop={top:bSgl(8),bottom:bNil(),left:bNil(),right:bNil()};
+    function mkRow(cells){return new TableRow({children:cells});}
+    function mkTable(rows){return new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:rows});}
+    var colWMSlabel = esMuest?'VALIDADO':'WMS';
+
+    // Encabezado logo
+    var logoRun=new ImageRun({data:logoBytes,transformation:{width:90,height:90},type:'png'});
+    var logoPara=new Paragraph({alignment:AlignmentType.CENTER,spacing:sp0,children:[logoRun]});
+
+    // Tabla de datos
+    var headerRow=mkRow([
+      emptyCell(CW9[0],noB),
+      mkCell(CW9[1],allB,[paraC('CODIGO',{bold:true,sz:SZ_S})]),
+      mkCell(CW9[2],allB,[paraC('ESTATUS',{bold:true,sz:SZ_S})]),
+      mkCell(CW9[3],allB,[paraC('%AUD',{bold:true,sz:SZ_S})]),
+      mkCell(CW9[4],allB,[paraC('DESCRIPCIÓN',{bold:true,sz:SZ_S})]),
+      mkCell(CW9[5],allB,[paraC('CANTIDAD',{bold:true,sz:SZ_S})]),
+      mkCell(CW9[6],allB,[paraC(colWMSlabel,{bold:true,sz:SZ_S})]),
+      mkCell(CW9[7],allB,[paraC('DIFERENCIA',{bold:true,sz:SZ_S})]),
+      emptyCell(CW9[8],noB),
+    ]);
+    var dataRows=[headerRow];
+    resSkus.forEach(function(s){
+      dataRows.push(mkRow([
+        emptyCell(CW9[0],noB),
+        mkCell(CW9[1],allB,[paraC(s.sku,{sz:SZ_S})]),
+        mkCell(CW9[2],allB,[paraC(s.estatus,{sz:SZ_S})]),
+        mkCell(CW9[3],allB,[paraC(s.pct_aud,{sz:SZ_S})]),
+        mkCell(CW9[4],allB,[paraC(s.descripcion,{sz:SZ_S})]),
+        mkCell(CW9[5],allB,[paraC(String(s.cantidad),{sz:SZ_S})]),
+        mkCell(CW9[6],allB,[paraC(s.wms_val!==null&&s.wms_val!==undefined?String(s.wms_val):'-',{sz:SZ_S})]),
+        mkCell(CW9[7],allB,[paraC(String(s.diferencia),{sz:SZ_S})]),
+        emptyCell(CW9[8],noB),
+      ]));
+    });
+
+    // Bloques de firma
+    var autoriz=['ASTRID DUARTE','CINTYA RIVERA','HUVALDO PEREZ'];
+
+    var doc = new Document({sections:[{children:[
+      logoPara,
+      paraC('CARGA ENVÍO A BODEGA',{bold:true,sz:SZ_B,align:AlignmentType.CENTER}),
+      new Paragraph({spacing:{after:80}}),
+      paraC('Dirección: 27 Calle Bodega C 41-55 Zona 5 Calzada la Paz'),
+      paraC('Dirección Destino: BODEGA NODUS (Hamilton)'),
+      paraC('Marchamo: '+marchamo+'    Licencia: '+licHija+'    Ubicación: '+ubicacion),
+      paraC('Fecha: '+fecha+'    Carga No.: '+cargaNo),
+      new Paragraph({spacing:{after:80}}),
+      mkTable(dataRows),
+      new Paragraph({spacing:{after:120}}),
+      paraC('AUTORIZACIÓN DE ENVÍO',{bold:true}),
+      ...autoriz.map(function(n){return paraC(n);}),
+      new Paragraph({spacing:{after:80}}),
+      paraC('ENCARGADO DE PEDIDO: HUVALDO PEREZ'),
+      paraC('AUDITOR / VALIDADOR: '+auditor),
+    ]}]});
+
+    var buf = await Packer.toBuffer(doc);
+    var fname = (pt.correlativo||ptId).replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuest?'-muestra':'-manifiesto')+'.docx';
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition','attachment; filename="'+fname+'"');
+    res.setHeader('Content-Length',buf.length);
+    res.end(buf);
+  } catch(e){ console.error('pts manifiesto-word error:',e.message); res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.get('/api/bod/pts/:ptId/manifiesto-pdf', bodGuard, async (req, res) => {
+  try {
+    var {execFile,execFileSync}=require('child_process');
+    try{ execFileSync('wkhtmltopdf',['--version'],{timeout:5000,stdio:'pipe'}); }
+    catch(eW){ return res.status(503).json({ok:false,error:'PDF no disponible: wkhtmltopdf no instalado. Usá el formato Word.'}); }
+
+    var ptId    = String(req.params.ptId).trim();
+    var esMuest = (req.query.muestra==='1'||req.query.muestra==='true');
+    var usuario = String(req.query.usuario||'').trim();
+
+    var ptRows = await supabase('GET','bod_pts',null,'?id=eq.'+encodeURIComponent(ptId)+'&select=*&limit=1');
+    if(!Array.isArray(ptRows)||!ptRows.length) return res.status(404).json({ok:false,error:'PT no encontrado.'});
+    var pt=ptRows[0];
+
+    var papelRows = await supabase('GET','bod_pts_papel',null,'?pt_id=eq.'+encodeURIComponent(ptId)+'&order=creado_en.asc&select=*');
+    papelRows=Array.isArray(papelRows)?papelRows:[];
+    var lichRows = await supabase('GET','bod_pts_licencia_hija',null,'?pt_id=eq.'+encodeURIComponent(ptId)+'&select=sku,cantidad');
+    var lichMap={}; (Array.isArray(lichRows)?lichRows:[]).forEach(function(r){lichMap[r.sku]=Number(r.cantidad)||0;});
+
+    var fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+    var colWMS=esMuest?'VALIDADO':'WMS';
+    var porSku={};
+    papelRows.forEach(function(s){var f=Number(s.fisico_auditoria||0);if(!porSku[s.sku])porSku[s.sku]={total:0,aud:0};porSku[s.sku].total+=f;if((s.estado_papel||'').toLowerCase()==='auditado')porSku[s.sku].aud+=f;});
+    function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+    var rows=papelRows.map(function(s){
+      var fis=Number(s.fisico_auditoria||0);
+      var wms=lichMap[s.sku]!==undefined?lichMap[s.sku]:null;
+      var cant=esMuest?(wms!==null?wms:fis):fis;
+      var val=esMuest?fis:wms;
+      var pd=porSku[s.sku]||{total:1,aud:0};
+      var pct=Math.round(pd.aud/Math.max(pd.total,1)*100)+'%';
+      var dif=(wms!==null?wms:0)-fis;
+      return '<tr><td>'+esc(s.sku)+'</td><td>'+esc(s.estado_papel||'')+'</td><td>'+esc(pct)+'</td><td>'+esc(s.nombre||'')+'</td><td>'+esc(cant)+'</td><td>'+esc(val!==null?val:'-')+'</td><td>'+esc(dif)+'</td></tr>';
+    }).join('');
+
+    var html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:11px;margin:20px;}h2{text-align:center;font-size:14px;}table{width:100%;border-collapse:collapse;margin-top:10px;}th,td{border:1px solid #333;padding:3px 5px;font-size:10px;}th{background:#ddd;font-weight:bold;}.footer{margin-top:20px;font-size:10px;}</style></head><body>'
+      +'<h2>CARGA ENVÍO A BODEGA</h2>'
+      +'<p>Marchamo: '+esc(pt.marchamo||'')+'&nbsp;&nbsp;Licencia: '+esc(pt.licencia_hija||'')+'&nbsp;&nbsp;Ubicación: '+esc(pt.destino_tr999||'')+'</p>'
+      +'<p>Dirección: 27 Calle Bodega C 41-55 Zona 5 Calzada la Paz &nbsp;&nbsp; Fecha: '+esc(fecha)+'&nbsp;&nbsp;Carga No.: '+esc(pt.carga_no||'')+'</p>'
+      +'<p>Dirección Destino: BODEGA NODUS (Hamilton)</p>'
+      +'<table><tr><th>CODIGO</th><th>ESTATUS</th><th>% AUD</th><th>DESCRIPCIÓN</th><th>CANTIDAD</th><th>'+esc(colWMS)+'</th><th>DIFERENCIA</th></tr>'+rows+'</table>'
+      +'<div class="footer"><p><strong>AUTORIZACIÓN DE ENVÍO:</strong> ASTRID DUARTE / CINTYA RIVERA / HUVALDO PEREZ</p><p><strong>ENCARGADO DE PEDIDO:</strong> HUVALDO PEREZ &nbsp;&nbsp; <strong>AUDITOR:</strong> '+esc(pt.auditor_lider||usuario)+'</p></div>'
+      +'</body></html>';
+
+    var tmp=require('os').tmpdir()+'/manif-pt-'+ptId+'.html';
+    var tmpPdf=tmp.replace('.html','.pdf');
+    require('fs').writeFileSync(tmp,html,'utf8');
+
+    execFile('wkhtmltopdf',['--quiet','--page-size','Letter',tmp,tmpPdf],{timeout:30000},function(err){
+      if(err){require('fs').unlink(tmp,function(){}); return res.status(500).json({ok:false,error:'Error generando PDF: '+err.message});}
+      var pdfBuf=require('fs').readFileSync(tmpPdf);
+      require('fs').unlink(tmp,function(){}); require('fs').unlink(tmpPdf,function(){});
+      var fname=(pt.correlativo||ptId).replace(/[^a-zA-Z0-9_-]/g,'_')+(esMuest?'-muestra':'-manifiesto')+'.pdf';
+      res.setHeader('Content-Type','application/pdf');
+      res.setHeader('Content-Disposition','attachment; filename="'+fname+'"');
+      res.setHeader('Content-Length',pdfBuf.length);
+      res.end(pdfBuf);
+    });
+  } catch(e){ console.error('pts manifiesto-pdf error:',e.message); res.status(500).json({ok:false,error:e.message}); }
+});
