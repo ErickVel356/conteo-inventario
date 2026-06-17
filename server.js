@@ -295,6 +295,40 @@ app.use(function(req, res, next){
   next();
 });
 
+// ── GET /api/diagnostico/state-size ─────────────────────────────────────────
+// Solo lectura. Mide el tamaño de cada componente del state en memoria.
+// No modifica nada. Usar para entender qué parte del state pesa más.
+app.get('/api/diagnostico/state-size', (req, res) => {
+  function kb(obj) {
+    try { return Math.round(Buffer.byteLength(JSON.stringify(obj), 'utf8') / 1024); }
+    catch(e) { return -1; }
+  }
+  var teoricoKeys = Object.keys(state.teorico || {});
+  var teoricoDetalle = teoricoKeys.slice(0, 5).map(function(k){
+    var t = state.teorico[k];
+    return { cont: k, items: t.items ? t.items.length : 0, kb: kb(t) };
+  });
+  res.json({
+    total_kb:        kb(state),
+    componentes: {
+      teorico_kb:        kb(state.teorico),
+      fisico_kb:         kb(state.fisico),
+      cdg_kb:            kb(state.cdg),
+      asignaciones_kb:   kb(state.asignaciones),
+      historial_kb:      kb(state.historial),
+      hallazgos_kb:      kb(state.hallazgos),
+      alertasWMS_kb:     kb(state.alertasWMS),
+      conteoMetadata_kb: kb(state.conteoMetadata),
+      puertas_kb:        kb(state.puertas),
+      costos_kb:         kb(state.costos)
+    },
+    teorico_contenedores: teoricoKeys.length,
+    teorico_muestra: teoricoDetalle,
+    cdg_contenedores: Object.keys(state.cdg || {}).length,
+    historial_entradas: (state.historial || []).length
+  });
+});
+
 app.post('/api/heartbeat', (req, res) => {
   const { name } = req.body;
   if(name) activeUsers[name] = Date.now();
