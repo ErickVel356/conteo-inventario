@@ -1549,8 +1549,12 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
   var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRec) {
     btn.disabled = true;
-    btn.title = 'Tu navegador no soporta dictado por voz';
+    btn.title = 'Para dictar usá Google Chrome. Tu navegador actual no soporta dictado por voz.';
     btn.style.opacity = '0.5';
+    // Show a tap-to-learn tooltip on mobile
+    btn.addEventListener('click', function(){
+      alert('⚠️ Dictado no disponible\n\nEste dispositivo necesita Google Chrome para dictar.\n\nAbrí esta app en Chrome e intentá de nuevo.');
+    });
     return false;
   }
   var rec = null;
@@ -1579,7 +1583,20 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
       }
     };
     rec.onerror = function(ev){
-      if(statusEl) statusEl.textContent = 'Error: '+ev.error;
+      isRecording = false;
+      btn.textContent = '🎤 Dictar';
+      btn.style.background = '';
+      btn.style.color = '';
+      if(ev.error === 'not-allowed' || ev.error === 'permission-denied') {
+        if(statusEl) statusEl.textContent = '';
+        alert('🎤 Permiso de micrófono denegado\n\nPasos para activarlo:\n1. Tocá el ícono 🔒 o ⚠️ en la barra de Chrome\n2. Buscá "Micrófono" y cambialo a Permitir\n3. Recargá la página e intentá de nuevo');
+      } else if(ev.error === 'network') {
+        if(statusEl) statusEl.textContent = 'Sin conexión para dictar';
+      } else if(ev.error === 'no-speech') {
+        if(statusEl) statusEl.textContent = 'No se detectó voz';
+      } else {
+        if(statusEl) statusEl.textContent = 'Error: '+ev.error;
+      }
     };
     rec.onend = function(){
       isRecording = false;
@@ -1594,6 +1611,52 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
   });
   btn.dataset.micAttached = '1';
   return true;
+}
+
+// ── abrirFotoSheet ────────────────────────────────────────────────────────────
+// En Android muestra un bottom-sheet para elegir entre cámara y galería.
+// En iOS el picker nativo ya ofrece ambas opciones, así que va directo.
+// callback(file) se llama con el File seleccionado.
+function abrirFotoSheet(callback) {
+  var isAndroid = /android/i.test(navigator.userAgent);
+  if (!isAndroid) {
+    // iOS / escritorio: el picker nativo ya ofrece cámara + galería
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
+    inp.click();
+    return;
+  }
+  // Android: mostrar bottom-sheet con dos opciones
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:99999;display:flex;align-items:flex-end;justify-content:center';
+  var sheet = document.createElement('div');
+  sheet.style.cssText = 'background:#fff;border-radius:18px 18px 0 0;padding:18px 16px 36px;width:100%;max-width:500px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -4px 24px rgba(0,0,0,.18)';
+  sheet.innerHTML =
+    '<div style="width:40px;height:4px;background:#e0e0e0;border-radius:4px;margin:0 auto 8px"></div>'
+    +'<div style="font-size:.9rem;color:#555;text-align:center;font-weight:600;margin-bottom:2px">Agregar foto</div>'
+    +'<button id="_fsheet_cam" style="padding:14px 12px;font-size:1rem;border:none;background:#f5f5f3;border-radius:12px;cursor:pointer;text-align:left">📷&nbsp;&nbsp;Tomar foto con la cámara</button>'
+    +'<button id="_fsheet_gal" style="padding:14px 12px;font-size:1rem;border:none;background:#f5f5f3;border-radius:12px;cursor:pointer;text-align:left">🖼️&nbsp;&nbsp;Elegir de la galería</button>'
+    +'<button id="_fsheet_cancel" style="padding:10px;font-size:.88rem;border:none;background:none;color:#999;cursor:pointer;margin-top:2px">Cancelar</button>';
+  overlay.appendChild(sheet);
+  document.body.appendChild(overlay);
+
+  function closeSheet(){ if(overlay.parentNode) document.body.removeChild(overlay); }
+  function pickWith(useCapture){
+    closeSheet();
+    // Pequeño delay para que el sheet se cierre antes de que el sistema abra la cámara/galería
+    setTimeout(function(){
+      var inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*';
+      if(useCapture) inp.setAttribute('capture', 'environment');
+      inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
+      inp.click();
+    }, 80);
+  }
+  sheet.querySelector('#_fsheet_cam').onclick    = function(){ pickWith(true);  };
+  sheet.querySelector('#_fsheet_gal').onclick    = function(){ pickWith(false); };
+  sheet.querySelector('#_fsheet_cancel').onclick = function(){ closeSheet();   };
+  overlay.addEventListener('click', function(e){ if(e.target === overlay) closeSheet(); });
 }
 function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function nowStr(){ return new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}); }
@@ -3537,18 +3600,18 @@ document.getElementById('btn-hallazgo').addEventListener('click',function(){
   var fotoImg    = document.getElementById('hall-foto-img');
   var fotoStatus = document.getElementById('hall-foto-status');
   var btnFotoDel = document.getElementById('btn-hall-foto-del');
-  if(btnFoto && fotoInput) {
-    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change', function(){
-      var file=this.files[0]; if(!file) return;
-      var reader=new FileReader();
-      reader.onload=function(e){
-        window._hallFotoData=e.target.result;
-        if(fotoImg)    fotoImg.src=e.target.result;
-        if(fotoPrev)   fotoPrev.style.display='';
-        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
-      };
-      reader.readAsDataURL(file);
+  if(btnFoto) {
+    btnFoto.addEventListener('click', function(){
+      abrirFotoSheet(function(file){
+        var reader=new FileReader();
+        reader.onload=function(e){
+          window._hallFotoData=e.target.result;
+          if(fotoImg)    fotoImg.src=e.target.result;
+          if(fotoPrev)   fotoPrev.style.display='';
+          if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
+        };
+        reader.readAsDataURL(file);
+      });
     });
   }
   if(btnFotoDel) {
@@ -7087,17 +7150,17 @@ function exportCDGReporteIndividual(id, c){
   var fotoStatus = document.getElementById('cdg-hall-foto-status');
   var btnFotoDel = document.getElementById('btn-cdg-hall-foto-del');
   if(btnFoto && fotoInput) {
-    btnFoto.addEventListener('click', function(){ fotoInput.click(); });
-    fotoInput.addEventListener('change', function(){
-      var file = this.files[0]; if(!file) return;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        hallFoto = ev.target.result;
-        if(fotoImg) fotoImg.src = ev.target.result;
-        if(fotoPrev) fotoPrev.style.display='';
-        if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
-      };
-      reader.readAsDataURL(file);
+    btnFoto.addEventListener('click', function(){
+      abrirFotoSheet(function(file){
+        var reader = new FileReader();
+        reader.onload = function(ev){
+          hallFoto = ev.target.result;
+          if(fotoImg) fotoImg.src = ev.target.result;
+          if(fotoPrev) fotoPrev.style.display='';
+          if(fotoStatus) fotoStatus.textContent='✓ Foto lista';
+        };
+        reader.readAsDataURL(file);
+      });
     });
   }
   if(btnFotoDel) {
@@ -9726,12 +9789,9 @@ function renderCdgv2Lineas(){
       var sku        = btn.dataset.sku;
       var fotosCount = parseInt(btn.dataset.fotosCount)||0;
       if(fotosCount >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-      var inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
-      inp.onchange = function(){
-        if(!inp.files[0]) return;
+      abrirFotoSheet(function(file){
         btn.textContent = 'Subiendo…'; btn.disabled = true;
-        window.compressImage(inp.files[0])
+        window.compressImage(file)
           .then(function(blob){
             return window.uploadFotoAndGetUrl(blob, 'cdg-sku',
               cdgv2SafeRefId(cdgv2LicenciaActual.id), sku, null);
@@ -9752,8 +9812,7 @@ function renderCdgv2Lineas(){
             alert('Error al subir foto: '+(e.message||e));
             btn.textContent = '📷+'; btn.disabled = false;
           });
-      };
-      inp.click();
+      });
     });
   });
 }
@@ -9792,54 +9851,81 @@ function renderCdgv2Fotos(meta){
 
   if(cerrada) return;
 
-  // Click en slot vacío → abrir file picker para agregar nueva foto
+  // Click en slot vacío → abrir foto sheet para agregar nueva foto
   grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
     var inp = slot.querySelector('input[type=file]');
-    if(!inp) return;
-    // Slots vacíos: click en toda la tarjeta abre el picker
+    // Slots vacíos: click en toda la tarjeta abre el sheet
     if(!slot.classList.contains('has-photo')) {
       slot.addEventListener('click', function(e){
-        inp.click();
+        var idx = parseInt(slot.dataset.idx);
+        var isReplace = slot.classList.contains('has-photo');
+        abrirFotoSheet(function(file){
+          slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+          var safeId = cdgv2SafeRefId(meta.id);
+          window.uploadFotoAndGetUrl(file, 'cdg-gral', safeId, null)
+            .then(function(fotoUrl){
+              return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
+                { usuario: currentUser.name, fotos: [fotoUrl] });
+            })
+            .then(function(d){
+              if(!d.ok) alert(d.error||'Error al guardar foto');
+              cdgv2PollearLicencia(meta.id, false);
+            })
+            .catch(function(e){
+              alert('Error al subir foto: '+e.message);
+              cdgv2PollearLicencia(meta.id, false);
+            });
+        });
       });
     }
-    inp.addEventListener('change', function(){
-      if(!this.files[0]) return;
-      var idx = parseInt(this.dataset.idx);
-      var isReplace = slot.classList.contains('has-photo');
-      slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-      var safeId = cdgv2SafeRefId(meta.id);
-      window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
-        .then(function(fotoUrl){
-          if(isReplace){
-            // Reemplazar foto en slot específico
+    // Keep the hidden input for the replace overlay (existing photos)
+    if(inp) {
+      inp.addEventListener('change', function(){
+        if(!this.files[0]) return;
+        var idx = parseInt(this.dataset.idx);
+        slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+        var safeId = cdgv2SafeRefId(meta.id);
+        window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
+          .then(function(fotoUrl){
             return cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/fotos-encabezado-slot',
               { usuario: currentUser.name, idx: idx, foto: fotoUrl });
-          } else {
-            // Agregar nueva foto
-            return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
-              { usuario: currentUser.name, fotos: [fotoUrl] });
-          }
-        })
-        .then(function(d){
-          if(!d.ok) alert(d.error||'Error al guardar foto');
-          cdgv2PollearLicencia(meta.id, false);
-        })
-        .catch(function(e){
-          alert('Error al subir foto: '+e.message);
-          cdgv2PollearLicencia(meta.id, false);
-        });
-    });
+          })
+          .then(function(d){
+            if(!d.ok) alert(d.error||'Error al guardar foto');
+            cdgv2PollearLicencia(meta.id, false);
+          })
+          .catch(function(e){
+            alert('Error al subir foto: '+e.message);
+            cdgv2PollearLicencia(meta.id, false);
+          });
+      });
+    }
   });
 
-  // Click en overlay "Cambiar" de foto existente → abrir input de reemplazo
+  // Click en overlay "Cambiar" de foto existente → usar abrirFotoSheet
   grid.querySelectorAll('.cdg-foto-replace-overlay').forEach(function(overlay){
     overlay.addEventListener('click', function(e){
       e.stopPropagation();
       var idx = parseInt(overlay.dataset.idx);
       var slot = grid.querySelector('.cdg-foto-slot[data-idx="'+idx+'"]');
       if(!slot) return;
-      var inp = slot.querySelector('.cdg-foto-replace-inp');
-      if(inp) inp.click();
+      abrirFotoSheet(function(file){
+        slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+        var safeId = cdgv2SafeRefId(meta.id);
+        window.uploadFotoAndGetUrl(file, 'cdg-gral', safeId, null)
+          .then(function(fotoUrl){
+            return cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/fotos-encabezado-slot',
+              { usuario: currentUser.name, idx: idx, foto: fotoUrl });
+          })
+          .then(function(d){
+            if(!d.ok) alert(d.error||'Error al guardar foto');
+            cdgv2PollearLicencia(meta.id, false);
+          })
+          .catch(function(e){
+            alert('Error al subir foto: '+e.message);
+            cdgv2PollearLicencia(meta.id, false);
+          });
+      });
     });
   });
 }
@@ -9893,15 +9979,11 @@ function cdgv2SafeRefId(id) {
 document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
   if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
   if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-  var inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*'; 
-  inp.onchange = function(){
-    if(!inp.files[0]) return;
-    var btn = e.target;
+  var btn = e.target;
+  abrirFotoSheet(function(file){
     btn.textContent = 'Subiendo…'; btn.disabled = true;
-    window.compressImage(inp.files[0])
+    window.compressImage(file)
       .then(function(blob){
-        // Subir con un SKU temporal; se reemplazará en el PATCH si es necesario
         var skuTemp = document.getElementById('cdgv2-add-sku').value.trim() || 'tmp';
         var licId   = cdgv2LicenciaActual ? cdgv2SafeRefId(cdgv2LicenciaActual.id) : 'tmp';
         return window.uploadFotoAndGetUrl(blob, 'cdg-sku', licId, skuTemp, null);
@@ -9914,8 +9996,7 @@ document.getElementById('cdgv2-add-fotos-row').addEventListener('click', functio
         alert('Error al subir foto: '+(e2.message||e2));
         btn.textContent = '📷 Agregar foto'; btn.disabled = false;
       });
-  };
-  inp.click();
+  });
 });
 
 function renderCdgv2AddFotosRow(){
