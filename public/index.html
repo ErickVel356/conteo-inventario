@@ -1617,17 +1617,45 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
 // En Android muestra un bottom-sheet para elegir entre cámara y galería.
 // En iOS el picker nativo ya ofrece ambas opciones, así que va directo.
 // callback(file) se llama con el File seleccionado.
+//
+// NOTA EDGE/ANDROID: los inputs se crean y adjuntan al DOM ANTES de mostrar el
+// sheet, y se clickean sin setTimeout para conservar la cadena del gesto del
+// usuario. Edge (y algunos builds de Chrome) ignoran inp.click() si se llama
+// dentro de un setTimeout o desde un input que no está en el DOM.
 function abrirFotoSheet(callback) {
   var isAndroid = /android/i.test(navigator.userAgent);
   if (!isAndroid) {
-    // iOS / escritorio: el picker nativo ya ofrece cámara + galería
     var inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
     inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
     inp.click();
     return;
   }
-  // Android: mostrar bottom-sheet con dos opciones
+
+  // ── Pre-crear los dos inputs y adjuntarlos al DOM AHORA ──────────────────
+  // (Edge on Android requiere que el input esté en el DOM antes del .click())
+  var hiddenStyle = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+
+  var inpCam = document.createElement('input');
+  inpCam.type = 'file'; inpCam.accept = 'image/*';
+  inpCam.setAttribute('capture', 'environment');
+  inpCam.style.cssText = hiddenStyle;
+  document.body.appendChild(inpCam);
+
+  var inpGal = document.createElement('input');
+  inpGal.type = 'file'; inpGal.accept = 'image/*';
+  inpGal.style.cssText = hiddenStyle;
+  document.body.appendChild(inpGal);
+
+  function cleanup(){
+    if(inpCam.parentNode) document.body.removeChild(inpCam);
+    if(inpGal.parentNode) document.body.removeChild(inpGal);
+    if(overlay.parentNode) document.body.removeChild(overlay);
+  }
+  inpCam.onchange = function(){ cleanup(); if(inpCam.files && inpCam.files[0]) callback(inpCam.files[0]); };
+  inpGal.onchange = function(){ cleanup(); if(inpGal.files && inpGal.files[0]) callback(inpGal.files[0]); };
+
+  // ── Mostrar sheet ────────────────────────────────────────────────────────
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:99999;display:flex;align-items:flex-end;justify-content:center';
   var sheet = document.createElement('div');
@@ -1641,22 +1669,17 @@ function abrirFotoSheet(callback) {
   overlay.appendChild(sheet);
   document.body.appendChild(overlay);
 
-  function closeSheet(){ if(overlay.parentNode) document.body.removeChild(overlay); }
-  function pickWith(useCapture){
-    closeSheet();
-    // Pequeño delay para que el sheet se cierre antes de que el sistema abra la cámara/galería
-    setTimeout(function(){
-      var inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
-      if(useCapture) inp.setAttribute('capture', 'environment');
-      inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
-      inp.click();
-    }, 80);
-  }
-  sheet.querySelector('#_fsheet_cam').onclick    = function(){ pickWith(true);  };
-  sheet.querySelector('#_fsheet_gal').onclick    = function(){ pickWith(false); };
-  sheet.querySelector('#_fsheet_cancel').onclick = function(){ closeSheet();   };
-  overlay.addEventListener('click', function(e){ if(e.target === overlay) closeSheet(); });
+  // Sin setTimeout: clic sincrónico dentro del handler del gesto del usuario
+  sheet.querySelector('#_fsheet_cam').onclick = function(){
+    if(overlay.parentNode) document.body.removeChild(overlay);
+    inpCam.click();
+  };
+  sheet.querySelector('#_fsheet_gal').onclick = function(){
+    if(overlay.parentNode) document.body.removeChild(overlay);
+    inpGal.click();
+  };
+  sheet.querySelector('#_fsheet_cancel').onclick = cleanup;
+  overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(); });
 }
 function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function nowStr(){ return new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}); }
@@ -10185,68 +10208,82 @@ document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
   }, 400);
 });
 
-document.getElementById('btn-cdgv2-add-linea').addEventListener('click', function(){
-  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }
-  var meta = cdgv2LicenciaActual;
-  if(!meta){ alert('Abrí una licencia primero.'); return; }
-  if(meta.estado === 'cerrado'){ alert('La licencia está cerrada.'); return; }
-  var sku  = document.getElementById('cdgv2-add-sku').value.trim();
-  var desc = document.getElementById('cdgv2-add-desc').value.trim();
-  var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);
-  var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');
-  var costoUnit = costoRaw ? parseFloat(costoRaw) : null;
-  var tarimaRaw = (document.getElementById('cdgv2-add-tarima').value||'').trim();
-  var tarima    = tarimaRaw ? parseInt(tarimaRaw) : null;
-  var msg  = document.getElementById('cdgv2-add-msg');
-  if(!sku){ msg.innerHTML = '<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
-  // Validar que el SKU fue consultado y existe antes de guardar
-  if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
-    msg.innerHTML = '<span style="color:#e67e22">Esperando validación del SKU…</span>'; return;
-  }
-  if(cdgv2SkuValidado === 'no_encontrado') {
-    msg.innerHTML = '<span style="color:#c0392b">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
-  }
-  if(cdgv2SkuValidado === null) {
-    msg.innerHTML = '<span style="color:#e67e22">Ingresá el SKU y esperá la validación.</span>'; return;
-  }
-  if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
-  msg.innerHTML = '<span style="color:#888">Guardando…</span>';
-  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {
-    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,
-    costoUnit: costoUnit,
-    fotos: cdgv2AddFotos.slice()
-  }).then(function(d){
-    if(!d.ok && !d.aviso){
-      msg.innerHTML = '<span style="color:#c0392b">'+escH(d.error||'Error')+'</span>'; return;
-    }
-    // Si se ingresó tarima, guardarla en el meta de la licencia (no en cdg_lineas)
-    var lineaId = d.linea && d.linea.id;
-    if(tarima != null && lineaId) {
-      var tMap = {}; tMap[lineaId] = tarima;
-      if(cdgv2LicenciaActual) {
-        if(!cdgv2LicenciaActual.tarimaMap) cdgv2LicenciaActual.tarimaMap = {};
-        cdgv2LicenciaActual.tarimaMap[lineaId] = tarima;
-      }
-      cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/meta',
-        { usuario: currentUser.name, tarimaMap: tMap })
-        .then(function(dm){ if(dm.tarimaMap && cdgv2LicenciaActual) cdgv2LicenciaActual.tarimaMap = dm.tarimaMap; })
-        .catch(function(){});
-    }
-    // Reset completo del form tras agregar exitosamente
-    msg.innerHTML = '';
-    document.getElementById('cdgv2-add-sku').value   = '';
-    document.getElementById('cdgv2-add-desc').value  = '';
-    document.getElementById('cdgv2-add-desc').placeholder = 'Ingresá el SKU primero';
-    document.getElementById('cdgv2-add-qty').value   = '';
-    document.getElementById('cdgv2-add-costo').value = '';
-    document.getElementById('cdgv2-add-tarima').value = '';
-    document.getElementById('cdgv2-add-desc-auto').textContent = '';
-    cdgv2SkuValidado     = null;
-    cdgv2SkuValidadoPara = '';
-    cdgv2AddFotos = []; renderCdgv2AddFotosRow();
-    if(d.aviso) msg.innerHTML = '<span style="color:#e67e22">'+escH(d.aviso)+'</span>';
-    cdgv2PollearLicencia(meta.id, false);
-  }).catch(function(){ msg.innerHTML = '<span style="color:#c0392b">Sin conexión. Reintentá.</span>'; });
+document.getElementById('btn-cdgv2-add-linea').addEventListener('click', function(){\
+  if(!currentUser){ alert('Seleccioná tu nombre primero.'); return; }\
+  var meta = cdgv2LicenciaActual;\
+  if(!meta){ alert('Abrí una licencia primero.'); return; }\
+  if(meta.estado === 'cerrado'){ alert('La licencia está cerrada.'); return; }\
+  var sku  = document.getElementById('cdgv2-add-sku').value.trim();\
+  var desc = document.getElementById('cdgv2-add-desc').value.trim();\
+  var qty  = parseFloat(document.getElementById('cdgv2-add-qty').value);\
+  var costoRaw  = (document.getElementById('cdgv2-add-costo').value||'').replace(/[^0-9.]/g,'');\
+  var costoUnit = costoRaw ? parseFloat(costoRaw) : null;\
+  var tarimaRaw = (document.getElementById('cdgv2-add-tarima').value||'').trim();\
+  var tarima    = tarimaRaw ? parseInt(tarimaRaw) : null;\
+  var msg  = document.getElementById('cdgv2-add-msg');\
+  if(!sku){ msg.innerHTML = '<span style=\"color:#c0392b\">Ingresá el SKU.</span>'; return; }\
+  // Validar que el SKU fue consultado y existe antes de guardar\
+  if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {\
+    msg.innerHTML = '<span style=\"color:#e67e22\">Esperando validación del SKU…</span>'; return;\
+  }\
+  if(cdgv2SkuValidado === 'no_encontrado') {\
+    msg.innerHTML = '<span style=\"color:#c0392b\">El SKU no existe en el catálogo. Verificá el número.</span>'; return;\
+  }\
+  if(cdgv2SkuValidado === null) {\
+    msg.innerHTML = '<span style=\"color:#e67e22\">Ingresá el SKU y esperá la validación.</span>'; return;\
+  }\
+  if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style=\"color:#c0392b\">Ingresá una cantidad válida.</span>'; return; }\
+\
+  // ── ANTI-DUPLICADO: deshabilitar el botón hasta que llegue la respuesta ──\
+  // Evita que toques múltiples o doble-toque en tablet envíen el POST 2+ veces.\
+  var addBtn = document.getElementById('btn-cdgv2-add-linea');\
+  addBtn.disabled = true;\
+  addBtn.textContent = 'Guardando…';\
+\
+  msg.innerHTML = '<span style=\"color:#888\">Guardando…</span>';\
+  cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/linea', {\
+    usuario: currentUser.name, sku: sku, descripcion: desc, cantidad: qty,\
+    costoUnit: costoUnit,\
+    fotos: cdgv2AddFotos.slice()\
+  }).then(function(d){\
+    // Re-habilitar siempre al recibir respuesta\
+    addBtn.disabled = false;\
+    addBtn.textContent = '+ Agregar';\
+    if(!d.ok && !d.aviso){\
+      msg.innerHTML = '<span style=\"color:#c0392b\">'+escH(d.error||'Error')+'</span>'; return;\
+    }\
+    // Si se ingresó tarima, guardarla en el meta de la licencia (no en cdg_lineas)\
+    var lineaId = d.linea && d.linea.id;\
+    if(tarima != null && lineaId) {\
+      var tMap = {}; tMap[lineaId] = tarima;\
+      if(cdgv2LicenciaActual) {\
+        if(!cdgv2LicenciaActual.tarimaMap) cdgv2LicenciaActual.tarimaMap = {};\
+        cdgv2LicenciaActual.tarimaMap[lineaId] = tarima;\
+      }\
+      cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/meta',\
+        { usuario: currentUser.name, tarimaMap: tMap })\
+        .then(function(dm){ if(dm.tarimaMap && cdgv2LicenciaActual) cdgv2LicenciaActual.tarimaMap = dm.tarimaMap; })\
+        .catch(function(){});\
+    }\
+    // Reset completo del form tras agregar exitosamente\
+    msg.innerHTML = '';\
+    document.getElementById('cdgv2-add-sku').value   = '';\
+    document.getElementById('cdgv2-add-desc').value  = '';\
+    document.getElementById('cdgv2-add-desc').placeholder = 'Ingresá el SKU primero';\
+    document.getElementById('cdgv2-add-qty').value   = '';\
+    document.getElementById('cdgv2-add-costo').value = '';\
+    document.getElementById('cdgv2-add-tarima').value = '';\
+    document.getElementById('cdgv2-add-desc-auto').textContent = '';\
+    cdgv2SkuValidado     = null;\
+    cdgv2SkuValidadoPara = '';\
+    cdgv2AddFotos = []; renderCdgv2AddFotosRow();\
+    if(d.aviso) msg.innerHTML = '<span style=\"color:#e67e22\">'+escH(d.aviso)+'</span>';\
+    cdgv2PollearLicencia(meta.id, false);\
+  }).catch(function(){\
+    addBtn.disabled = false;\
+    addBtn.textContent = '+ Agregar';\
+    msg.innerHTML = '<span style=\"color:#c0392b\">Sin conexión. Reintentá.</span>';\
+  });\
 });
 
 /* ── GUARDAR PROGRESO ───────────────────────────────────────────── */
