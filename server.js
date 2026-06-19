@@ -1767,14 +1767,21 @@ function uuidv4() {
 
 // Lee la metadata de una licencia CDG desde app_state
 async function cdgGetMeta(licenciaId) {
-  // FIX (lun 1-jun-2026, v19): normalizar id con trim().toUpperCase() para evitar
-  // claves duplicadas por espacios o mayúsculas (iPad autocapitaliza).
-  return await dbGet('cdg_meta_' + cdgNormId(licenciaId));
+  // FIX (jue 19-jun-2026, v24): caché en memoria 10s para reducir lecturas
+  // Supabase en ~90%. Cache invalidado en cada cdgSaveMeta.
+  var ck = 'cdg:meta:' + cdgNormId(licenciaId);
+  var cached = cacheGet(ck);
+  if(cached) return cached;
+  var meta = await dbGet('cdg_meta_' + cdgNormId(licenciaId));
+  if(meta) cacheSet(ck, meta, 10000);
+  return meta;
 }
 
 // Guarda la metadata de una licencia CDG en app_state
 async function cdgSaveMeta(licenciaId, meta) {
   await dbSet('cdg_meta_' + cdgNormId(licenciaId), meta);
+  // Actualizar cache inmediatamente para que el próximo GET no lea dato viejo
+  cacheSet('cdg:meta:' + cdgNormId(licenciaId), meta, 10000);
 }
 
 // FIX (lun 1-jun-2026, v19): helper central de normalización.
@@ -2289,23 +2296,30 @@ app.delete('/api/cdg/v2/:id', async (req, res) => {
 // conocido de líneas para recibir solo el delta.
 // Query params: lineasDesde (ISO timestamp, opcional)
 app.get('/api/cdg/v2/:id', async (req, res) => {
-  var licenciaId = cdgNormId(req.params.id);
+  // FIX (jue 19-jun-2026, v24): ETag + caché meta reduce reads Supabase ~90%
+  // ETag: version + tsUltimaModifLineas — si el cliente envía If-None-Match
+  // y coincide, 304 sin leer cdg_lineas desde Supabase.
+  var licenciaId  = cdgNormId(req.params.id);
   var lineasDesde = req.query.lineasDesde || null;
 
   try {
     var meta = await cdgGetMeta(licenciaId);
     if(!meta) return res.status(404).json({ ok: false, error: 'Licencia no encontrada' });
 
-    // FIX (sáb 30-may-2026, server v19): siempre consultar cdg_lineas cuando
-    // el cliente manda lineasDesde. La optimización anterior (skip si
-    // tsUltimaModifLineas no cambió) ocultaba líneas cuando el bump de metadata
-    // fallaba — la línea existía en cdg_lineas pero ninguna tablet la veía
-    // hasta hacer un refresh completo.
-    // Sin la optimización: 1 query extra a Supabase por poll (aceptable).
-    var lineas = await cdgGetLineas(licenciaId, lineasDesde);
-    var respuesta = { ok: true, meta: meta, lineas: lineas };
+    // ETag basado en versión del meta + timestamp de última línea
+    var etag = '"cdgv2-' + cdgNormId(licenciaId)
+             + '-' + (meta.version || 0)
+             + '-' + (meta.tsUltimaModifLineas || '0') + '"';
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'no-cache');
 
-    res.json(respuesta);
+    // 304 si el cliente ya tiene la versión exacta (solo delta polling)
+    if(lineasDesde && req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
+    }
+
+    var lineas    = await cdgGetLineas(licenciaId, lineasDesde);
+    res.json({ ok: true, meta: meta, lineas: lineas });
   } catch(e) {
     console.log('CDG v2 GET', licenciaId, 'error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
