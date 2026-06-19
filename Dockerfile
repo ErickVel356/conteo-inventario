@@ -38,4 +38,4 @@ COPY . .
 EXPOSE 3000
 
 # Comando de inicio — mismo que package.json pero respeta $PORT de Render
-CMD ["node", "--max-old-space-size=460", "server.js"]
+CMD ["node", "--max-old-space-size=1800", "server.js"]
