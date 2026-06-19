@@ -1950,6 +1950,7 @@ document.getElementById('btn-logout').addEventListener('click',function(){
   window.ACCESS_SCOPE = 'full';
   try { sessionStorage.removeItem(GATE_MARK_KEY); sessionStorage.removeItem(GATE_SCOPE_KEY); } catch(e){}
   currentUser=null;
+  window._cdgv2Joined = {};  // FIX (jue 19-jun-2026, BW): reset unirse guard on logout
   // Reset ALL role-specific UI before login screen
   var tabAsign = document.getElementById('tab-btn-asign');
   if(tabAsign) tabAsign.style.display='none';
@@ -9488,8 +9489,11 @@ function cdgv2AbrirLicencia(licenciaId){
   cdgv2PollearLicencia(licenciaId, true);
   cdgv2PollTimer = setInterval(function(){ cdgv2PollearLicencia(licenciaId, false); }, CDGV2_POLL_MS);
 
-  // Unirse a la licencia
-  if(currentUser){
+  // FIX (jue 19-jun-2026, v5.2.33-BW): unirse solo 1 vez por licencia/sesión.
+  // Evita writes Supabase repetidos cada vez que el estado recarga la página.
+  if(!window._cdgv2Joined) window._cdgv2Joined = {};
+  if(currentUser && !window._cdgv2Joined[licenciaId]) {
+    window._cdgv2Joined[licenciaId] = true;
     cdgv2Fetch('POST', '/api/cdg/v2/'+licenciaId+'/accion', { usuario: currentUser.name, tipo: 'unirse' })
       .catch(function(){});
   }
