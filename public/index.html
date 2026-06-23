@@ -5266,7 +5266,28 @@ document.getElementById('fecha').textContent=new Date().toLocaleDateString('es',
 // SERVER SYNC — Polling every 3s
 // ════════════════════════════════════════════════════════════════════
 var lastVersion  = -1;
-var pollInterval = null;
+// BW-FIX (lun 23-jun-2026): caché de campo raw del teórico para exports.
+// El primer /api/state devuelve raw completo; los polls siguientes usan
+// ?lean=1 (sin raw). Antes de aplicar cada poll, se re-inyecta el raw
+// cacheado para que los exports Excel sigan funcionando sin cambios.
+var _teoricoRawCache = {}; // { cont: [ {oc,ingresado,...}, ... ] }
+function saveRawCache(teorico) {
+  Object.keys(teorico || {}).forEach(function(k) {
+    var items = teorico[k] && teorico[k].items;
+    if(!Array.isArray(items)) return;
+    _teoricoRawCache[k] = items.map(function(it) { return it.raw || null; });
+  });
+}
+function restoreRawIntoTeorico(teorico) {
+  Object.keys(teorico || {}).forEach(function(k) {
+    var cache = _teoricoRawCache[k];
+    var items = teorico[k] && teorico[k].items;
+    if(!cache || !Array.isArray(items)) return;
+    items.forEach(function(it, i) {
+      if(cache[i] && !it.raw) it.raw = cache[i];
+    });
+  });
+}
 var isSyncing    = false;
 window.serverLocks = {};
 
@@ -5299,9 +5320,12 @@ function pollNow() {
       .catch(function(){});
   }
   isSyncing = true;
-  // Enviar versión conocida — el server responde 304 sin body si no hay cambios
-  var vParam = (typeof lastVersion !== 'undefined' && lastVersion >= 0)
-    ? '?version=' + encodeURIComponent(lastVersion) : '';
+  // BW-FIX: primer load (version=-1) recibe estado completo con raw.
+  // Polls siguientes usan ?lean=1 → server omite item.raw (~40-60% menos datos).
+  var isFirstLoad = (typeof lastVersion === 'undefined' || lastVersion < 0);
+  var vParam = isFirstLoad
+    ? ''
+    : '?version=' + encodeURIComponent(lastVersion) + '&lean=1';
   fetch('/api/state' + vParam)
     .then(function(r){
       if(r.status === 304) {
@@ -5321,6 +5345,13 @@ function pollNow() {
       if(incomingVersion >= 0) lastVersion = incomingVersion;
       isSyncing = false;
       if(sameVersion) return; // ya teníamos esta versión — no re-renderizar
+
+      // BW-FIX: cachear raw en el primer load; restaurarlo en los polls lean.
+      if(isFirstLoad && s.teorico) {
+        saveRawCache(s.teorico);
+      } else if(s.teorico) {
+        restoreRawIntoTeorico(s.teorico);
+      }
 
       // NOTA locks: s.locks solo se actualiza con 200 (state.version cambió).
       // Si el lock expiró por tiempo (ACTIVE_TIMEOUT) pero state.version no cambió,
@@ -7823,7 +7854,7 @@ window.cdgv2Cleanup = function(){
   cdgv2LineasDesde = null;        cdgv2AddFotos = [];
   if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
 };
-var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
+var CDGV2_POLL_MS       = 15000;  // BW-FIX: 10000→15000ms, -33% CDG licencia poll
 var CDGV2_LISTA_POLL_MS = 20000;  // BW-FIX: 5000→20000ms, -75% CDG lista poll
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
