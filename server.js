@@ -298,6 +298,28 @@ function publicState() {
   };
 }
 
+// BW-FIX (lun 23-jun-2026): publicStateLean — igual que publicState pero
+// sin el campo .raw de cada ítem del teórico. El campo raw solo se necesita
+// al generar el export Excel; durante el polling normal es puro peso muerto.
+// Ahorro estimado: 40-60% del tamaño del state (raw ~150 bytes × 30k items).
+// El cliente guarda rawCache en el primer load (full) y lo reutiliza en export.
+function leanTeorico() {
+  var teo = {};
+  Object.keys(state.teorico).forEach(function(k) {
+    var c = state.teorico[k];
+    // Copiar todo menos los .raw de cada item
+    var leanItems = (c.items || []).map(function(it) {
+      return { sku: it.sku, desc: it.desc, qty: it.qty,
+               teoricoWMS: it.teoricoWMS !== undefined ? it.teoricoWMS : undefined };
+    });
+    teo[k] = Object.assign({}, c, { items: leanItems });
+  });
+  return teo;
+}
+function publicStateLean() {
+  return Object.assign({}, publicState(), { teorico: leanTeorico() });
+}
+
 // ── API ───────────────────────────────────────────────────────────────────
 // ── Middleware de log de bandwidth (>200ms o >50KB) — debe ir antes de rutas ─
 app.use(function(req, res, next){
@@ -366,7 +388,11 @@ app.get('/api/state', (req, res) => {
      req.headers['if-none-match'] === stateTag) {
     return res.status(304).end();
   }
-  var ps = publicState();
+  // BW-FIX: polls con ?lean=1 reciben teórico sin campo raw (~40-60% menos datos).
+  // El primer load (version=-1 o sin param) siempre recibe el estado completo
+  // para que el cliente pueda cachear raw para el export Excel.
+  var useLean = req.query.lean === '1' && clientVersion >= 0;
+  var ps = useLean ? publicStateLean() : publicState();
   try {
     ps.stateSizeBytes = Buffer.byteLength(JSON.stringify(buildDailyStatePayload()), 'utf8');
   } catch(e) { /* no bloquear el estado si falla el cálculo */ }
@@ -1915,6 +1941,16 @@ app.get('/api/cdg/v2/listar', async (req, res) => {
 
     var historico = req.query.historico === 'true';
 
+    // BW-FIX (lun 23-jun-2026): caché 30s para modo operativo (no histórico).
+    // Sin caché, cada usuario polleaba Supabase cada 20s recuperando TODOS
+    // los cdg_meta_* — principal causa de Service-Initiated bandwidth.
+    // El modo histórico no se cachea (se usa poco y necesita datos frescos).
+    var cacheKey = 'cdgv2:listar:operativo';
+    if(!historico) {
+      var cached = cacheGet(cacheKey);
+      if(cached) return res.json(cached);
+    }
+
     // Busca claves que empiecen con "cdg_meta_" en app_state
     var query = '?key=like.cdg_meta_*&order=key.asc&select=key,value';
     var rows = await supabase('GET', 'app_state', null, query);
@@ -1992,7 +2028,10 @@ app.get('/api/cdg/v2/listar', async (req, res) => {
       }
     }
 
-    res.json({ ok: true, licencias: licencias });
+    var resp = { ok: true, licencias: licencias };
+    // Cachear solo el modo operativo (no histórico)
+    if(!historico) cacheSet(cacheKey, resp, 30000); // 30s TTL
+    res.json(resp);
   } catch(e) {
     console.log('CDG v2 listar error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
