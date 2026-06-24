@@ -1614,16 +1614,20 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
 }
 
 // ── abrirFotoSheet ────────────────────────────────────────────────────────────
-// En Android muestra un bottom-sheet para elegir entre cámara y galería.
+// Muestra un bottom-sheet para elegir entre cámara y galería en Android
+// (teléfonos Y tablets — incluyendo Samsung Galaxy Tab con Chrome/Edge).
 // En iOS el picker nativo ya ofrece ambas opciones, así que va directo.
 // callback(file) se llama con el File seleccionado.
 //
-// NOTA EDGE/ANDROID: los inputs se crean y adjuntan al DOM ANTES de mostrar el
-// sheet, y se clickean sin setTimeout para conservar la cadena del gesto del
-// usuario. Edge (y algunos builds de Chrome) ignoran inp.click() si se llama
-// dentro de un setTimeout o desde un input que no está en el DOM.
+// FIX (jun-2026, Samsung Galaxy Tab S5E): en tablets Android Chrome/Edge,
+// el selector del sistema abre directo la galería sin opción de cámara.
+// Solución: mostrar SIEMPRE el sheet en cualquier Android, sin excepción.
+// Los inputs se crean y adjuntan al DOM ANTES de mostrar el sheet para que
+// Edge/Chrome tablet no bloquee el .click() por estar fuera del gesto.
 function abrirFotoSheet(callback) {
   var isAndroid = /android/i.test(navigator.userAgent);
+
+  // iOS y desktop: ir directo al picker nativo (ya incluye cámara en iOS)
   if (!isAndroid) {
     var inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
@@ -1632,32 +1636,28 @@ function abrirFotoSheet(callback) {
     return;
   }
 
-  // ── Pre-crear los dos inputs y adjuntarlos al DOM AHORA ──────────────────
-  // (Edge on Android requiere que el input esté en el DOM antes del .click())
+  // ── Android (teléfono Y tablet): SIEMPRE mostrar el sheet ────────────────
+  // Pre-crear los dos inputs y adjuntarlos al DOM ANTES de mostrar el overlay.
+  // Edge/Chrome tablet ignora inp.click() si el input no está en el DOM.
   var hiddenStyle = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
 
   var inpCam = document.createElement('input');
   inpCam.type = 'file'; inpCam.accept = 'image/*';
-  inpCam.setAttribute('capture', 'environment');
+  inpCam.setAttribute('capture', 'environment'); // abre cámara trasera directamente
   inpCam.style.cssText = hiddenStyle;
   document.body.appendChild(inpCam);
 
   var inpGal = document.createElement('input');
   inpGal.type = 'file'; inpGal.accept = 'image/*';
+  // Sin capture: abre el selector de archivos/galería del sistema
   inpGal.style.cssText = hiddenStyle;
   document.body.appendChild(inpGal);
 
-  function cleanup(){
-    if(inpCam.parentNode) document.body.removeChild(inpCam);
-    if(inpGal.parentNode) document.body.removeChild(inpGal);
-    if(overlay.parentNode) document.body.removeChild(overlay);
-  }
-  inpCam.onchange = function(){ cleanup(); if(inpCam.files && inpCam.files[0]) callback(inpCam.files[0]); };
-  inpGal.onchange = function(){ cleanup(); if(inpGal.files && inpGal.files[0]) callback(inpGal.files[0]); };
-
-  // ── Mostrar sheet ────────────────────────────────────────────────────────
+  // Overlay oscuro de fondo
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:99999;display:flex;align-items:flex-end;justify-content:center';
+
+  // Sheet blanco desde abajo
   var sheet = document.createElement('div');
   sheet.style.cssText = 'background:#fff;border-radius:18px 18px 0 0;padding:18px 16px 36px;width:100%;max-width:500px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -4px 24px rgba(0,0,0,.18)';
   sheet.innerHTML =
@@ -1669,7 +1669,16 @@ function abrirFotoSheet(callback) {
   overlay.appendChild(sheet);
   document.body.appendChild(overlay);
 
-  // Sin setTimeout: clic sincrónico dentro del handler del gesto del usuario
+  function cleanup(){
+    if(overlay.parentNode) document.body.removeChild(overlay);
+    if(inpCam.parentNode) document.body.removeChild(inpCam);
+    if(inpGal.parentNode) document.body.removeChild(inpGal);
+  }
+
+  inpCam.onchange = function(){ cleanup(); if(inpCam.files && inpCam.files[0]) callback(inpCam.files[0]); };
+  inpGal.onchange = function(){ cleanup(); if(inpGal.files && inpGal.files[0]) callback(inpGal.files[0]); };
+
+  // Clicks sincrónicos (sin setTimeout) para preservar la cadena del gesto
   sheet.querySelector('#_fsheet_cam').onclick = function(){
     if(overlay.parentNode) document.body.removeChild(overlay);
     inpCam.click();
