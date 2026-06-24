@@ -9881,7 +9881,7 @@ function renderCdgv2Fotos(meta){
     }
     return '<div class="cdg-foto-slot" data-idx="'+i+'">'
       +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div>'
-      +'<input type="file" accept="image/*" capture="environment" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer" data-idx="'+i+'">'
+      +'<input type="file" accept="image/*" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2" data-idx="'+i+'">'
       +'</div>';
   }).join('');
 
