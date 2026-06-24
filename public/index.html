@@ -9881,70 +9881,73 @@ function renderCdgv2Fotos(meta){
     }
     return '<div class="cdg-foto-slot" data-idx="'+i+'">'
       +'<div class="slot-ico">📷</div><div class="slot-label">'+escH(lbl)+'</div>'
-      +'<input type="file" accept="image/*" style="display:none" data-idx="'+i+'">'
+      +'<input type="file" accept="image/*" capture="environment" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer" data-idx="'+i+'">'
       +'</div>';
   }).join('');
 
   if(cerrada) return;
 
-  // Click en slot vacío → abrir foto sheet para agregar nueva foto
+  // FIX (jun-2026, Samsung Galaxy Tab S10 FE+): usar inputs directos en los slots
+  // en lugar de abrirFotoSheet con callback. Chrome en tablets Samsung bloquea
+  // el inp.click() cuando no está directamente en la cadena del gesto del usuario.
+  // Solución: cada slot tiene su propio input[type=file] visible al tocar,
+  // y mostramos el sheet ANTES de hacer click en el input correcto.
   grid.querySelectorAll('.cdg-foto-slot').forEach(function(slot){
     var inp = slot.querySelector('input[type=file]');
-    // Slots vacíos: click en toda la tarjeta abre el sheet
-    if(!slot.classList.contains('has-photo')) {
-      slot.addEventListener('click', function(e){
-        var idx = parseInt(slot.dataset.idx);
-        var isReplace = slot.classList.contains('has-photo');
-        abrirFotoSheet(function(file){
-          slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-          var safeId = cdgv2SafeRefId(meta.id);
-          window.uploadFotoAndGetUrl(file, 'cdg-gral', safeId, null)
-            .then(function(fotoUrl){
-              return cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
+
+    function subirFotoEncabezado(file, esReemplazo, idx){
+      slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
+      var safeId = cdgv2SafeRefId(meta.id);
+      window.uploadFotoAndGetUrl(file, 'cdg-gral', safeId, null)
+        .then(function(fotoUrl){
+          var endpoint = esReemplazo
+            ? cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/fotos-encabezado-slot',
+                { usuario: currentUser.name, idx: idx, foto: fotoUrl })
+            : cdgv2Fetch('POST', '/api/cdg/v2/'+meta.id+'/fotos-encabezado',
                 { usuario: currentUser.name, fotos: [fotoUrl] });
-            })
-            .then(function(d){
-              if(!d.ok) alert(d.error||'Error al guardar foto');
-              cdgv2PollearLicencia(meta.id, false);
-            })
-            .catch(function(e){
-              alert('Error al subir foto: '+e.message);
-              cdgv2PollearLicencia(meta.id, false);
-            });
+          return endpoint;
+        })
+        .then(function(d){
+          if(!d.ok) alert(d.error||'Error al guardar foto');
+          cdgv2PollearLicencia(meta.id, false);
+        })
+        .catch(function(e){
+          alert('Error al subir foto: '+e.message);
+          cdgv2PollearLicencia(meta.id, false);
         });
-      });
     }
-    // Keep the hidden input for the replace overlay (existing photos)
-    if(inp) {
+
+    // Slots vacíos: click directo en el input (sin sheet intermedio)
+    if(!slot.classList.contains('has-photo') && inp) {
       inp.addEventListener('change', function(){
         if(!this.files[0]) return;
-        var idx = parseInt(this.dataset.idx);
-        slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
-        var safeId = cdgv2SafeRefId(meta.id);
-        window.uploadFotoAndGetUrl(this.files[0], 'cdg-gral', safeId, null)
-          .then(function(fotoUrl){
-            return cdgv2Fetch('PATCH', '/api/cdg/v2/'+meta.id+'/fotos-encabezado-slot',
-              { usuario: currentUser.name, idx: idx, foto: fotoUrl });
-          })
-          .then(function(d){
-            if(!d.ok) alert(d.error||'Error al guardar foto');
-            cdgv2PollearLicencia(meta.id, false);
-          })
-          .catch(function(e){
-            alert('Error al subir foto: '+e.message);
-            cdgv2PollearLicencia(meta.id, false);
-          });
+        subirFotoEncabezado(this.files[0], false, parseInt(slot.dataset.idx));
+      });
+      slot.addEventListener('click', function(e){
+        if(e.target === inp) return; // ya clickeó el input directamente
+        inp.click();
+      });
+    }
+
+    // Input de reemplazo (slots con foto existente)
+    if(slot.classList.contains('has-photo') && inp) {
+      inp.addEventListener('change', function(){
+        if(!this.files[0]) return;
+        subirFotoEncabezado(this.files[0], true, parseInt(this.dataset.idx));
       });
     }
   });
 
-  // Click en overlay "Cambiar" de foto existente → usar abrirFotoSheet
+  // Click en overlay "Cambiar" → click directo en el input oculto del slot
   grid.querySelectorAll('.cdg-foto-replace-overlay').forEach(function(overlay){
     overlay.addEventListener('click', function(e){
       e.stopPropagation();
       var idx = parseInt(overlay.dataset.idx);
       var slot = grid.querySelector('.cdg-foto-slot[data-idx="'+idx+'"]');
       if(!slot) return;
+      var inp2 = slot.querySelector('input[type=file]');
+      if(inp2){ inp2.click(); return; }
+      // Fallback si no hay input: usar abrirFotoSheet
       abrirFotoSheet(function(file){
         slot.innerHTML = '<div style="text-align:center;padding:.5rem;font-size:.75rem;color:#888">Subiendo…</div>';
         var safeId = cdgv2SafeRefId(meta.id);
