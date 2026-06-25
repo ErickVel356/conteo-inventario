@@ -10074,10 +10074,13 @@ function cdgv2SafeRefId(id) {
 }
 
 // Handler para agregar foto ANTES de crear la línea
+// FIX (jun-2026, Samsung Galaxy Tab): usar closest() en lugar de e.target directo.
+// En tablets Samsung el click registra en el nodo de texto/emoji dentro del botón,
+// por lo que classList.contains falla y nunca llama abrirFotoSheet.
 document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
-  if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
+  var btn = e.target.closest('.cdgv2-add-foto-nueva');
+  if(!btn) return;
   if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-  var btn = e.target;
   abrirFotoSheet(function(file){
     btn.textContent = 'Subiendo…'; btn.disabled = true;
     window.compressImage(file)
