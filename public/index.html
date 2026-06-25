@@ -1619,11 +1619,8 @@ function setupMic(btnId, langSelId, statusId, targetTextareaId){
 // En iOS el picker nativo ya ofrece ambas opciones, así que va directo.
 // callback(file) se llama con el File seleccionado.
 //
-// FIX (jun-2026, Samsung Galaxy Tab S5E): en tablets Android Chrome/Edge,
-// el selector del sistema abre directo la galería sin opción de cámara.
-// Solución: mostrar SIEMPRE el sheet en cualquier Android, sin excepción.
-// Los inputs se crean y adjuntan al DOM ANTES de mostrar el sheet para que
-// Edge/Chrome tablet no bloquee el .click() por estar fuera del gesto.
+// FIX (jun-2026, Samsung Galaxy Tab S10 FE+): usar getUserMedia para la cámara
+// en lugar de input[capture], que en tablets Samsung no muestra opción de cámara.
 function abrirFotoSheet(callback) {
   var isAndroid = /android/i.test(navigator.userAgent);
 
@@ -1636,28 +1633,10 @@ function abrirFotoSheet(callback) {
     return;
   }
 
-  // ── Android (teléfono Y tablet): SIEMPRE mostrar el sheet ────────────────
-  // Pre-crear los dos inputs y adjuntarlos al DOM ANTES de mostrar el overlay.
-  // Edge/Chrome tablet ignora inp.click() si el input no está en el DOM.
-  var hiddenStyle = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
-
-  var inpCam = document.createElement('input');
-  inpCam.type = 'file'; inpCam.accept = 'image/*';
-  inpCam.setAttribute('capture', 'environment'); // abre cámara trasera directamente
-  inpCam.style.cssText = hiddenStyle;
-  document.body.appendChild(inpCam);
-
-  var inpGal = document.createElement('input');
-  inpGal.type = 'file'; inpGal.accept = 'image/*';
-  // Sin capture: abre el selector de archivos/galería del sistema
-  inpGal.style.cssText = hiddenStyle;
-  document.body.appendChild(inpGal);
-
-  // Overlay oscuro de fondo
+  // ── Android: mostrar sheet con cámara via getUserMedia ───────────────────
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:99999;display:flex;align-items:flex-end;justify-content:center';
 
-  // Sheet blanco desde abajo
   var sheet = document.createElement('div');
   sheet.style.cssText = 'background:#fff;border-radius:18px 18px 0 0;padding:18px 16px 36px;width:100%;max-width:500px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -4px 24px rgba(0,0,0,.18)';
   sheet.innerHTML =
@@ -1669,26 +1648,106 @@ function abrirFotoSheet(callback) {
   overlay.appendChild(sheet);
   document.body.appendChild(overlay);
 
+  // Input para galería (sin capture)
+  var inpGal = document.createElement('input');
+  inpGal.type = 'file'; inpGal.accept = 'image/*';
+  inpGal.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+  document.body.appendChild(inpGal);
+
   function cleanup(){
     if(overlay.parentNode) document.body.removeChild(overlay);
-    if(inpCam.parentNode) document.body.removeChild(inpCam);
     if(inpGal.parentNode) document.body.removeChild(inpGal);
   }
 
-  inpCam.onchange = function(){ cleanup(); if(inpCam.files && inpCam.files[0]) callback(inpCam.files[0]); };
-  inpGal.onchange = function(){ cleanup(); if(inpGal.files && inpGal.files[0]) callback(inpGal.files[0]); };
-
-  // Clicks sincrónicos (sin setTimeout) para preservar la cadena del gesto
-  sheet.querySelector('#_fsheet_cam').onclick = function(){
-    if(overlay.parentNode) document.body.removeChild(overlay);
-    inpCam.click();
+  inpGal.onchange = function(){
+    cleanup();
+    if(inpGal.files && inpGal.files[0]) callback(inpGal.files[0]);
   };
+
+  // ── Botón Galería ────────────────────────────────────────────────────────
   sheet.querySelector('#_fsheet_gal').onclick = function(){
     if(overlay.parentNode) document.body.removeChild(overlay);
     inpGal.click();
   };
+
+  // ── Botón Cámara: usar getUserMedia directamente ─────────────────────────
+  sheet.querySelector('#_fsheet_cam').onclick = function(){
+    if(overlay.parentNode) document.body.removeChild(overlay);
+    abrirCamaraGetUserMedia(callback);
+  };
+
   sheet.querySelector('#_fsheet_cancel').onclick = cleanup;
   overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(); });
+}
+
+// ── abrirCamaraGetUserMedia ───────────────────────────────────────────────
+// Abre la cámara trasera usando getUserMedia y muestra un visor en pantalla.
+// Al tocar "Capturar" toma la foto y la convierte a File para el callback.
+// Funciona en Samsung Galaxy Tab donde input[capture] no muestra cámara.
+function abrirCamaraGetUserMedia(callback) {
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // Fallback: abrir selector de archivos normal
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
+    inp.click();
+    return;
+  }
+
+  // UI del visor de cámara
+  var camOverlay = document.createElement('div');
+  camOverlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  camOverlay.innerHTML =
+    '<video id="_cam_video" autoplay playsinline style="width:100%;max-height:75vh;object-fit:cover"></video>'
+    +'<div style="display:flex;gap:16px;margin-top:16px;padding:0 16px;width:100%;justify-content:center">'
+    +'<button id="_cam_cancel" style="flex:1;max-width:140px;padding:14px;font-size:1rem;border:none;background:#333;color:#fff;border-radius:12px;cursor:pointer">✕ Cancelar</button>'
+    +'<button id="_cam_capture" style="flex:1;max-width:140px;padding:14px;font-size:1rem;border:none;background:#1e7e34;color:#fff;border-radius:12px;cursor:pointer;font-weight:700">📸 Capturar</button>'
+    +'</div>'
+    +'<canvas id="_cam_canvas" style="display:none"></canvas>';
+  document.body.appendChild(camOverlay);
+
+  var video   = document.getElementById('_cam_video');
+  var canvas  = document.getElementById('_cam_canvas');
+  var stream  = null;
+
+  function stopCamera(){
+    if(stream) stream.getTracks().forEach(function(t){ t.stop(); });
+    if(camOverlay.parentNode) document.body.removeChild(camOverlay);
+  }
+
+  // Pedir acceso a cámara trasera
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false
+  }).then(function(s){
+    stream = s;
+    video.srcObject = s;
+  }).catch(function(err){
+    stopCamera();
+    // Fallback a selector de archivos si no hay permiso
+    alert('No se pudo acceder a la cámara. Usá la galería o revisá los permisos de cámara en Chrome.');
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = function(){ if(inp.files && inp.files[0]) callback(inp.files[0]); };
+    inp.click();
+  });
+
+  // Capturar foto
+  document.getElementById('_cam_capture').onclick = function(){
+    if(!video.videoWidth){ alert('La cámara aún no está lista. Esperá un momento.'); return; }
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob(function(blob){
+      stopCamera();
+      if(blob){
+        var file = new File([blob], 'foto_'+Date.now()+'.jpg', { type: 'image/jpeg' });
+        callback(file);
+      }
+    }, 'image/jpeg', 0.85);
+  };
+
+  document.getElementById('_cam_cancel').onclick = stopCamera;
 }
 function norm(s){ return String(s||'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function nowStr(){ return new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}); }
