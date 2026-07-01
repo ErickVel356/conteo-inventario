@@ -10259,12 +10259,13 @@ document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
           cdgv2SkuValidado     = 'ok';
           cdgv2SkuValidadoPara = skuConsultado;
         } else {
-          // SKU no encontrado en catálogo
-          autoEl.innerHTML     = '<span style="color:#c0392b">SKU no encontrado en catálogo</span>';
+          // SKU no encontrado en catálogo — se permite igual, descripción editable
+          autoEl.innerHTML     = '<span style="color:#e67e22">⚠️ SKU no encontrado en catálogo — podés escribir la descripción</span>';
           descEl.value         = '';
-          descEl.readOnly      = true;
-          descEl.style.background = '#fff3f3';
-          descEl.placeholder   = 'SKU no existe en catálogo';
+          descEl.readOnly      = false;
+          descEl.style.background = '#fffbf0';
+          descEl.placeholder   = 'Escribí la descripción manualmente';
+          descEl.focus();
           costoEl.value        = '';
           cdgv2SkuValidado     = 'no_encontrado';
           cdgv2SkuValidadoPara = skuConsultado;
@@ -10300,8 +10301,8 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
     msg.innerHTML = '<span style=\"color:#e67e22\">Esperando validación del SKU…</span>'; return;
   }
-  if(cdgv2SkuValidado === 'no_encontrado') {
-    msg.innerHTML = '<span style=\"color:#c0392b\">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
+  if(cdgv2SkuValidado === 'no_encontrado' && !desc.trim()) {
+    msg.innerHTML = '<span style=\"color:#e67e22\">⚠️ SKU fuera de catálogo — escribí la descripción antes de agregar.</span>'; return;
   }
   if(cdgv2SkuValidado === null) {
     msg.innerHTML = '<span style=\"color:#e67e22\">Ingresá el SKU y esperá la validación.</span>'; return;
