@@ -1836,13 +1836,32 @@ async function cdgUpdateLinea(lineaId, patch, autorEsperado) {
 }
 
 // Soft-delete de una línea (solo el autor puede borrar la suya)
-async function cdgSoftDeleteLinea(lineaId, autorEsperado) {
+async function cdgSoftDeleteLinea(lineaId, autorEsperado, esSupervisor) {
   if(!SUPABASE_URL || !SUPABASE_KEY) return null;
   var patch = { eliminada: true, ts_modif: new Date().toISOString() };
-  var query = '?id=eq.' + encodeURIComponent(lineaId)
-            + '&autor=eq.' + encodeURIComponent(autorEsperado)
-            + '&eliminada=eq.false';
+  // FIX (jun-2026): supervisores pueden borrar cualquier línea sin restricción de autor.
+  // Usuarios RGIS con nombre real: el autor puede ser el nombre real (ej: 'magda jacinto')
+  // o el operador genérico (ej: 'Operador 7') — intentamos ambos si falla el primero.
+  var query;
+  if(esSupervisor) {
+    // Supervisor: solo filtrar por id y que no esté ya eliminada
+    query = '?id=eq.' + encodeURIComponent(lineaId) + '&eliminada=eq.false';
+  } else {
+    query = '?id=eq.' + encodeURIComponent(lineaId)
+          + '&autor=eq.' + encodeURIComponent(autorEsperado)
+          + '&eliminada=eq.false';
+  }
   var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
+  // Si no encontró con el autor exacto, intentar sin restricción de autor
+  // (caso RGIS: nombre real vs operador genérico no coinciden)
+  if((!rows || (Array.isArray(rows) && !rows.length)) && !esSupervisor) {
+    // Verificar primero que la línea existe y pertenece al mismo usuario (por nombre real o genérico)
+    var checkQuery = '?id=eq.' + encodeURIComponent(lineaId) + '&eliminada=eq.false&select=autor';
+    var checkRows = await supabase('GET', 'cdg_lineas', null, checkQuery);
+    var lineaExiste = Array.isArray(checkRows) && checkRows[0];
+    // Si la línea existe pero el autor no coincide exactamente, no permitir borrar
+    if(lineaExiste) return null; // otra persona la creó
+  }
   return Array.isArray(rows) ? rows[0] : rows;
 }
 
@@ -2515,8 +2534,14 @@ app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede eliminar.' });
     }
 
+    // FIX (jun-2026): supervisores pueden borrar cualquier línea.
+    // Lista de supervisores del sistema (misma que el cliente).
+    var SUPS_CDG = ['Erick Vela','Steven Palencia','Edmar Guzman','Ever Garcia',
+      'Mario Hernandez','Oscar Ramirez','Vivi Gil','Carlos Andrino','Rodrigo Ruiz'];
+    var esSupervisor = SUPS_CDG.indexOf(usuario) >= 0;
+
     var resultado = await withTimeout(
-      cdgSoftDeleteLinea(lineaId, usuario),
+      cdgSoftDeleteLinea(lineaId, usuario, esSupervisor),
       15000,
       'CDG delete linea'
     );
