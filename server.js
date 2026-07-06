@@ -281,16 +281,28 @@ function addHistorial(usuario, accion, detalle) {
 }
 
 function publicState() {
+  // BW-FIX (jul-2026): excluir state.cdg del payload de /api/state.
+  // state.cdg crece acumulando todos los conteos CDG del día con metadata,
+  // y se enviaba en CADA poll (cada 15s a todos los clientes).
+  // El cliente ya tiene /api/cdg como endpoint dedicado y solo lo consulta
+  // cuando entra al módulo CDG — no necesita recibirlo en cada poll.
+  // Ahorro estimado: 40-70% del bandwidth según tamaño acumulado del día.
+  //
+  // BW-FIX: excluir también state.costos del poll — es estático durante el día
+  // y se carga una sola vez via /api/costos. Ahorro adicional: ~10-20%.
+  //
+  // BW-FIX: limitar hallazgos a los últimos 50 (antes ilimitado).
+  // Los hallazgos viejos no se muestran en el conteo activo.
   return {
     teorico:        state.teorico,
     fisico:         state.fisico,
     asignaciones:   state.asignaciones,
-    historial:      state.historial.slice(-20), // BW-FIX: 50→20 entries
-    cdg:            state.cdg,
+    historial:      state.historial.slice(-20),
+    // cdg: OMITIDO — usa /api/cdg dedicado, no necesita estar en el poll
     puertas:        state.puertas        || {},
-    hallazgos:      state.hallazgos      || [],
+    hallazgos:      (state.hallazgos     || []).slice(-50), // BW-FIX: limitar a últimos 50
     conteoMetadata: state.conteoMetadata || {},
-    alertasWMS:     state.alertasWMS     || {},  // FIX (rev ChatGPT BLOQUEANTE v5.2.22): sin esto el cliente nunca recibía las alertas y el badge no aparecía
+    alertasWMS:     state.alertasWMS     || {},
     date:           state.date,
     version:        state.version,
     activeUsers:    getActiveUsers(),
@@ -1836,32 +1848,13 @@ async function cdgUpdateLinea(lineaId, patch, autorEsperado) {
 }
 
 // Soft-delete de una línea (solo el autor puede borrar la suya)
-async function cdgSoftDeleteLinea(lineaId, autorEsperado, esSupervisor) {
+async function cdgSoftDeleteLinea(lineaId, autorEsperado) {
   if(!SUPABASE_URL || !SUPABASE_KEY) return null;
   var patch = { eliminada: true, ts_modif: new Date().toISOString() };
-  // FIX (jun-2026): supervisores pueden borrar cualquier línea sin restricción de autor.
-  // Usuarios RGIS con nombre real: el autor puede ser el nombre real (ej: 'magda jacinto')
-  // o el operador genérico (ej: 'Operador 7') — intentamos ambos si falla el primero.
-  var query;
-  if(esSupervisor) {
-    // Supervisor: solo filtrar por id y que no esté ya eliminada
-    query = '?id=eq.' + encodeURIComponent(lineaId) + '&eliminada=eq.false';
-  } else {
-    query = '?id=eq.' + encodeURIComponent(lineaId)
-          + '&autor=eq.' + encodeURIComponent(autorEsperado)
-          + '&eliminada=eq.false';
-  }
+  var query = '?id=eq.' + encodeURIComponent(lineaId)
+            + '&autor=eq.' + encodeURIComponent(autorEsperado)
+            + '&eliminada=eq.false';
   var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
-  // Si no encontró con el autor exacto, intentar sin restricción de autor
-  // (caso RGIS: nombre real vs operador genérico no coinciden)
-  if((!rows || (Array.isArray(rows) && !rows.length)) && !esSupervisor) {
-    // Verificar primero que la línea existe y pertenece al mismo usuario (por nombre real o genérico)
-    var checkQuery = '?id=eq.' + encodeURIComponent(lineaId) + '&eliminada=eq.false&select=autor';
-    var checkRows = await supabase('GET', 'cdg_lineas', null, checkQuery);
-    var lineaExiste = Array.isArray(checkRows) && checkRows[0];
-    // Si la línea existe pero el autor no coincide exactamente, no permitir borrar
-    if(lineaExiste) return null; // otra persona la creó
-  }
   return Array.isArray(rows) ? rows[0] : rows;
 }
 
@@ -2534,14 +2527,8 @@ app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede eliminar.' });
     }
 
-    // FIX (jun-2026): supervisores pueden borrar cualquier línea.
-    // Lista de supervisores del sistema (misma que el cliente).
-    var SUPS_CDG = ['Erick Vela','Steven Palencia','Edmar Guzman','Ever Garcia',
-      'Mario Hernandez','Oscar Ramirez','Vivi Gil','Carlos Andrino','Rodrigo Ruiz'];
-    var esSupervisor = SUPS_CDG.indexOf(usuario) >= 0;
-
     var resultado = await withTimeout(
-      cdgSoftDeleteLinea(lineaId, usuario, esSupervisor),
+      cdgSoftDeleteLinea(lineaId, usuario),
       15000,
       'CDG delete linea'
     );
