@@ -1087,11 +1087,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div style="margin-top:.6rem">
           <div style="font-size:.75rem;color:#666;margin-bottom:4px">📷 Fotos de evidencia (máx 3, opcional)</div>
           <div id="cdgv2-add-fotos-row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <button type="button" id="cdgv2-btn-camara" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Cámara</button>
-            <label style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555;display:inline-flex;align-items:center;gap:4px">
-              🖼️ Galería
-              <input type="file" accept="image/*" id="cdgv2-inp-galeria" style="display:none">
-            </label>
+            <button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>
           </div>
         </div>
         <div id="cdgv2-add-msg" style="font-size:.82rem;margin-top:.4rem"></div>
@@ -5347,7 +5343,7 @@ function startPolling() {
   pollNow();
   // Polling every 5 s — balances "live feel" with Render bandwidth cost.
   // Previously was 3 s which consumed ~67% more bandwidth.
-  pollInterval = setInterval(pollNow, 15000); // BW-FIX: 5000→15000ms, -67% bandwidth
+  pollInterval = setInterval(pollNow, 30000); // BW-FIX: 15000→30000ms, -50% más bandwidth
 }
 
 function stopPolling() {
@@ -7895,8 +7891,8 @@ window.cdgv2Cleanup = function(){
   cdgv2LineasDesde = null;        cdgv2AddFotos = [];
   if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
 };
-var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
-var CDGV2_LISTA_POLL_MS = 20000;  // BW-FIX: 5000→20000ms, -75% CDG lista poll
+var CDGV2_POLL_MS       = 20000;  // BW-FIX: 10s→20s entre polls de licencia activa
+var CDGV2_LISTA_POLL_MS = 45000;  // BW-FIX: 20000→45000ms, CDG lista poll
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
 // FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
@@ -9771,15 +9767,9 @@ function renderCdgv2Lineas(){
     +'</tr></thead><tbody>';
 
   cdgv2Lineas.forEach(function(l){
-    // FIX (jun-2026): para usuarios RGIS, currentUser.name es el nombre real (ej: 'magda jacinto')
-    // pero l.autor puede ser el nombre real O el operador genérico (ej: 'Operador 7').
-    // Comparar contra ambos para que el botón de borrar aparezca correctamente.
-    var nombreReal    = currentUser && currentUser.name;
-    var operadorGen   = currentUser && currentUser.operadorGenerico;
-    var esMia      = !!(currentUser && (
-      l.autor === nombreReal ||
-      (operadorGen && l.autor === operadorGen)
-    ));
+    var nombreReal  = currentUser && currentUser.name;
+    var operadorGen = currentUser && currentUser.operadorGenerico;
+    var esMia      = !!(currentUser && (l.autor === nombreReal || (operadorGen && l.autor === operadorGen)));
     var esSup      = typeof isSup === 'function' && isSup();
     var puedeAct   = !cerrada && (esMia || esSup); // borrar: propio o sup
     var costoFmt   = l.costo_unit != null
@@ -10085,17 +10075,13 @@ function cdgv2SafeRefId(id) {
   return String(id||'').replace(/[^A-Za-z0-9_\-\.]/g, '_');
 }
 
-// Handler botón Cámara — usa getUserMedia directamente (sin input[file])
-// FIX (jun-2026, Samsung Galaxy Tab): input[file] siempre abre galería en estas tablets.
-// getUserMedia abre la cámara directamente dentro del navegador.
-(function(){
-  var btnCam = document.getElementById('cdgv2-btn-camara');
-  var inpGal = document.getElementById('cdgv2-inp-galeria');
-  if(!btnCam || !inpGal) return;
-
-  function subirFotoLinea(file){
-    if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-    btnCam.textContent = 'Subiendo…'; btnCam.disabled = true;
+// Handler para agregar foto ANTES de crear la línea
+document.getElementById('cdgv2-add-fotos-row').addEventListener('click', function(e){
+  if(!e.target.classList.contains('cdgv2-add-foto-nueva')) return;
+  if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
+  var btn = e.target;
+  abrirFotoSheet(function(file){
+    btn.textContent = 'Subiendo…'; btn.disabled = true;
     window.compressImage(file)
       .then(function(blob){
         var skuTemp = document.getElementById('cdgv2-add-sku').value.trim() || 'tmp';
@@ -10105,59 +10091,30 @@ function cdgv2SafeRefId(id) {
       .then(function(url){
         cdgv2AddFotos.push(url);
         renderCdgv2AddFotosRow();
-        btnCam.textContent = '📷 Cámara'; btnCam.disabled = false;
       })
       .catch(function(e2){
         alert('Error al subir foto: '+(e2.message||e2));
-        btnCam.textContent = '📷 Cámara'; btnCam.disabled = false;
+        btn.textContent = '📷 Agregar foto'; btn.disabled = false;
       });
-  }
-
-  // Botón Cámara → getUserMedia directamente
-  btnCam.addEventListener('click', function(){
-    if(cdgv2AddFotos.length >= 3){ alert('Máximo 3 fotos por línea.'); return; }
-    abrirCamaraGetUserMedia(subirFotoLinea);
   });
-
-  // Input Galería → change event
-  inpGal.addEventListener('change', function(){
-    if(!this.files || !this.files[0]) return;
-    subirFotoLinea(this.files[0]);
-    this.value = '';
-  });
-})();
+});
 
 function renderCdgv2AddFotosRow(){
   var row = document.getElementById('cdgv2-add-fotos-row');
   if(!row) return;
-  // Solo actualizar las miniaturas — NO tocar los botones Cámara/Galería
-  // que ya están en el HTML estático y tienen sus handlers registrados.
-  var thumbsHtml = cdgv2AddFotos.map(function(url, i){
+  var html = cdgv2AddFotos.map(function(url, i){
     return '<div style="position:relative;display:inline-block">'
       +'<img src="'+escH(url)+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #ccc">'
       +'<button class="cdgv2-add-foto-del" data-idx="'+i+'"'
         +' style="position:absolute;top:-4px;right:-4px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:.65rem;cursor:pointer;line-height:1">×</button>'
       +'</div>';
   }).join('');
-  // Actualizar solo el contenedor de miniaturas, preservando los botones
-  var thumbsContainer = row.querySelector('#cdgv2-thumbs-container');
-  if(!thumbsContainer){
-    thumbsContainer = document.createElement('div');
-    thumbsContainer.id = 'cdgv2-thumbs-container';
-    thumbsContainer.style.display = 'inline-flex';
-    thumbsContainer.style.gap = '6px';
-    thumbsContainer.style.flexWrap = 'wrap';
-    row.insertBefore(thumbsContainer, row.firstChild);
+  if(cdgv2AddFotos.length < 3){
+    html += '<button type="button" class="cdgv2-add-foto-nueva" style="background:#f0f0ee;border:1px dashed #bbb;border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer;color:#555">📷 Agregar foto</button>';
   }
-  thumbsContainer.innerHTML = thumbsHtml;
-  // Mostrar/ocultar botones según cantidad de fotos
-  var btnCam = document.getElementById('cdgv2-btn-camara');
-  var lblGal = row.querySelector('label');
-  var mostrar = cdgv2AddFotos.length < 3;
-  if(btnCam) btnCam.style.display = mostrar ? '' : 'none';
-  if(lblGal) lblGal.style.display = mostrar ? '' : 'none';
-  // Handler de borrar miniaturas
-  thumbsContainer.querySelectorAll('.cdgv2-add-foto-del').forEach(function(btn){
+  row.innerHTML = html;
+  // Handler de borrar foto del formulario
+  row.querySelectorAll('.cdgv2-add-foto-del').forEach(function(btn){
     btn.addEventListener('click', function(){
       cdgv2AddFotos.splice(parseInt(btn.dataset.idx), 1);
       renderCdgv2AddFotosRow();
