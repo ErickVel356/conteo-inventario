@@ -1059,7 +1059,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
           <div class="cdg-field" style="flex:1;min-width:90px;position:relative">
             <label>SKU</label>
-            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="numeric" autocomplete="off">
+            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters">
             <div id="cdgv2-sku-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;font-size:.82rem"></div>
           </div>
           <div class="cdg-field" style="flex:3;min-width:150px">
@@ -5343,7 +5343,7 @@ function startPolling() {
   pollNow();
   // Polling every 5 s — balances "live feel" with Render bandwidth cost.
   // Previously was 3 s which consumed ~67% more bandwidth.
-  pollInterval = setInterval(pollNow, 30000); // BW-FIX: 15000→30000ms, -50% más bandwidth
+  pollInterval = setInterval(pollNow, 15000); // BW-FIX: 5000→15000ms, -67% bandwidth
 }
 
 function stopPolling() {
@@ -7891,8 +7891,8 @@ window.cdgv2Cleanup = function(){
   cdgv2LineasDesde = null;        cdgv2AddFotos = [];
   if(typeof renderCdgv2AddFotosRow === 'function') renderCdgv2AddFotosRow();
 };
-var CDGV2_POLL_MS       = 20000;  // BW-FIX: 10s→20s entre polls de licencia activa
-var CDGV2_LISTA_POLL_MS = 45000;  // BW-FIX: 20000→45000ms, CDG lista poll
+var CDGV2_POLL_MS       = 10000;  // 10s entre polls de licencia activa
+var CDGV2_LISTA_POLL_MS = 20000;  // BW-FIX: 5000→20000ms, -75% CDG lista poll
 
 /* ── Helpers de navegación CDG v2 ──────────────────────────────── */
 // FIX (lun 1-jun-2026, v5.2.28 rev): Fase 1 CDG — handlers menú + historial propio.
@@ -9767,9 +9767,7 @@ function renderCdgv2Lineas(){
     +'</tr></thead><tbody>';
 
   cdgv2Lineas.forEach(function(l){
-    var nombreReal  = currentUser && currentUser.name;
-    var operadorGen = currentUser && currentUser.operadorGenerico;
-    var esMia      = !!(currentUser && (l.autor === nombreReal || (operadorGen && l.autor === operadorGen)));
+    var esMia      = currentUser && l.autor === currentUser.name;
     var esSup      = typeof isSup === 'function' && isSup();
     var puedeAct   = !cerrada && (esMia || esSup); // borrar: propio o sup
     var costoFmt   = l.costo_unit != null
