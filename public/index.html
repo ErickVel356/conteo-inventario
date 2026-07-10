@@ -1059,7 +1059,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
           <div class="cdg-field" style="flex:1;min-width:90px;position:relative">
             <label>SKU</label>
-            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters">
+            <input type="text" class="field-inp" id="cdgv2-add-sku" placeholder="SKU o C999.###.##" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters">
             <div id="cdgv2-sku-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;font-size:.82rem"></div>
           </div>
           <div class="cdg-field" style="flex:3;min-width:150px">
@@ -10174,6 +10174,21 @@ function cdgv2SeleccionarSugerencia(sku, descripcion, costo){
   if(qtyEl) qtyEl.focus();
 }
 
+// ── Detección de formato C999.###.## ────────────────────────────────────────
+// C999.001.01 a C999.079.99 → "Multi código"
+// C999.080.01 a C999.100.99 → "Big Pack Candis"
+function cdgv2EsFormatoC999(sku) {
+  return /^[Cc]999\.\d{3}\.\d{2}$/.test(String(sku||'').trim());
+}
+function cdgv2DescripcionC999(sku) {
+  var m = String(sku).match(/^[Cc]999\.(\d{3})\.\d{2}$/);
+  if(!m) return null;
+  var grupo = parseInt(m[1], 10);
+  if(grupo >= 1  && grupo <= 79)  return 'Multi código';
+  if(grupo >= 80 && grupo <= 100) return 'Big Pack Candis';
+  return null;
+}
+
 document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
   clearTimeout(cdgv2SkuTimer);
   clearTimeout(cdgv2SugerirTimer);
@@ -10182,7 +10197,6 @@ document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
   var descEl = document.getElementById('cdgv2-add-desc');
   var costoEl = document.getElementById('cdgv2-add-costo');
   if(!sku){
-    // SKU borrado: limpiar todo y volver a estado inicial
     autoEl.textContent   = '';
     descEl.value         = '';
     descEl.readOnly      = true;
@@ -10192,6 +10206,31 @@ document.getElementById('cdgv2-add-sku').addEventListener('input', function(){
     cdgv2SkuValidado     = null;
     cdgv2SkuValidadoPara = '';
     cdgv2CerrarSugerencias();
+    return;
+  }
+  // ── Detección C999.###.## ────────────────────────────────────────────────
+  if(cdgv2EsFormatoC999(sku)) {
+    var desc999 = cdgv2DescripcionC999(sku);
+    cdgv2CerrarSugerencias();
+    if(desc999) {
+      autoEl.innerHTML     = '<span style="color:#1565c0">✓ '+desc999+'</span>';
+      descEl.value         = desc999;
+      descEl.readOnly      = true;
+      descEl.style.background = '#f5f5f3';
+      descEl.placeholder   = '';
+      costoEl.value        = '0';
+      cdgv2SkuValidado     = 'ok';
+      cdgv2SkuValidadoPara = sku;
+    } else {
+      autoEl.innerHTML     = '<span style="color:#e67e22">C999 fuera de rango — ingresá descripción manual</span>';
+      descEl.value         = '';
+      descEl.readOnly      = false;
+      descEl.style.background = '#fff';
+      descEl.placeholder   = 'Descripción';
+      costoEl.value        = '0';
+      cdgv2SkuValidado     = 'ok';
+      cdgv2SkuValidadoPara = sku;
+    }
     return;
   }
   // Sugerencias: disparar rápido (250ms) para dar feedback mientras escribe
@@ -10293,15 +10332,18 @@ document.getElementById('btn-cdgv2-add-linea').addEventListener('click', functio
   var tarima    = tarimaRaw ? parseInt(tarimaRaw) : null;
   var msg  = document.getElementById('cdgv2-add-msg');
   if(!sku){ msg.innerHTML = '<span style=\"color:#c0392b\">Ingresá el SKU.</span>'; return; }
-  // Validar que el SKU fue consultado y existe antes de guardar
-  if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
-    msg.innerHTML = '<span style=\"color:#e67e22\">Esperando validación del SKU…</span>'; return;
-  }
-  if(cdgv2SkuValidado === 'no_encontrado') {
-    msg.innerHTML = '<span style=\"color:#c0392b\">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
-  }
-  if(cdgv2SkuValidado === null) {
-    msg.innerHTML = '<span style=\"color:#e67e22\">Ingresá el SKU y esperá la validación.</span>'; return;
+  // Formato C999.###.## siempre válido — no requiere catálogo
+  var esC999 = typeof cdgv2EsFormatoC999 === 'function' && cdgv2EsFormatoC999(sku);
+  if(!esC999) {
+    if(cdgv2SkuValidado === 'pendiente' || cdgv2SkuValidadoPara !== sku) {
+      msg.innerHTML = '<span style=\"color:#e67e22\">Esperando validación del SKU…</span>'; return;
+    }
+    if(cdgv2SkuValidado === 'no_encontrado') {
+      msg.innerHTML = '<span style=\"color:#c0392b\">El SKU no existe en el catálogo. Verificá el número.</span>'; return;
+    }
+    if(cdgv2SkuValidado === null) {
+      msg.innerHTML = '<span style=\"color:#e67e22\">Ingresá el SKU y esperá la validación.</span>'; return;
+    }
   }
   if(isNaN(qty)||qty<0){ msg.innerHTML = '<span style=\"color:#c0392b\">Ingresá una cantidad válida.</span>'; return; }
 
