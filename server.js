@@ -1848,12 +1848,18 @@ async function cdgUpdateLinea(lineaId, patch, autorEsperado) {
 }
 
 // Soft-delete de una línea (solo el autor puede borrar la suya)
-async function cdgSoftDeleteLinea(lineaId, autorEsperado) {
+async function cdgSoftDeleteLinea(lineaId, autorEsperado, esSupervisor) {
   if(!SUPABASE_URL || !SUPABASE_KEY) return null;
   var patch = { eliminada: true, ts_modif: new Date().toISOString() };
-  var query = '?id=eq.' + encodeURIComponent(lineaId)
-            + '&autor=eq.' + encodeURIComponent(autorEsperado)
-            + '&eliminada=eq.false';
+  // FIX (jun-2026): supervisores pueden borrar cualquier línea sin restricción de autor.
+  var query;
+  if(esSupervisor) {
+    query = '?id=eq.' + encodeURIComponent(lineaId) + '&eliminada=eq.false';
+  } else {
+    query = '?id=eq.' + encodeURIComponent(lineaId)
+          + '&autor=eq.' + encodeURIComponent(autorEsperado)
+          + '&eliminada=eq.false';
+  }
   var rows = await supabase('PATCH', 'cdg_lineas', patch, query);
   return Array.isArray(rows) ? rows[0] : rows;
 }
@@ -1933,7 +1939,8 @@ app.get('/api/cdg/v2/listar', async (req, res) => {
     if(!Array.isArray(rows)) return res.json({ ok: true, licencias: [] });
 
     var licencias = [];
-    var hace48h = new Date(Date.now() - 48*60*60*1000).toISOString();
+    // FIX (jul-2026): ampliar ventana de licencias cerradas de 48h a 30 días.
+    var hace30d = new Date(Date.now() - 30*24*60*60*1000).toISOString();
 
     rows.forEach(function(row) {
       try {
@@ -1944,9 +1951,10 @@ app.get('/api/cdg/v2/listar', async (req, res) => {
           // Modo histórico: incluir todas (activas, pausadas, cerradas sin límite de fecha)
           incluir = true;
         } else {
-          // Modo operativo: activas, pausadas, cerradas recientes (últimas 48h)
+          // Modo operativo: activas, pausadas, cerradas en los últimos 30 días
           incluir = meta.estado === 'activo' || meta.estado === 'pausado' ||
-            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace48h);
+            (meta.estado === 'cerrado' && meta.fechaCierre && meta.fechaCierre > hace30d) ||
+            (meta.estado === 'cerrado' && meta.fechaCreacion && meta.fechaCreacion > hace30d);
         }
         if(incluir) {
           licencias.push({
@@ -2527,8 +2535,13 @@ app.delete('/api/cdg/v2/:id/linea/:lineaId', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'La licencia está cerrada. No se puede eliminar.' });
     }
 
+    // FIX (jun-2026): supervisores pueden borrar cualquier línea
+    var SUPS_CDG = ['Erick Vela','Steven Palencia','Edmar Guzman','Ever Garcia',
+      'Mario Hernandez','Oscar Ramirez','Vivi Gil','Carlos Andrino','Rodrigo Ruiz'];
+    var esSupervisor = SUPS_CDG.indexOf(usuario) >= 0;
+
     var resultado = await withTimeout(
-      cdgSoftDeleteLinea(lineaId, usuario),
+      cdgSoftDeleteLinea(lineaId, usuario, esSupervisor),
       15000,
       'CDG delete linea'
     );
