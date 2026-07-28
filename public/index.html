@@ -576,6 +576,14 @@ textarea.field-inp{resize:vertical;min-height:72px}
           </div>
           <span class="submenu-badge badge b-cdg" id="cnt-cdg">0</span>
         </div>
+        <div class="submenu-item" id="sm-boomroom">
+          <div class="si-icon">🏗</div>
+          <div class="si-text">
+            <div class="si-title">BoomRooms</div>
+            <div class="si-sub">Ubicaciones de almacenamiento Hamilton</div>
+          </div>
+          <span class="submenu-badge badge" style="background:#f0e6ff;color:#6a0dad" id="cnt-boomroom">0</span>
+        </div>
       </div>
 
       <!-- Carga teórico (supervisor) -->
@@ -1367,6 +1375,117 @@ textarea.field-inp{resize:vertical;min-height:72px}
       </div>
 
     </div><!-- /pg-conteo -->
+
+    <!-- ── PÁGINA: BOOMROOMS ─────────────────────────────────── -->
+    <div id="pg-boomroom" class="page">
+
+      <!-- Tab pills -->
+      <div class="tab-pills" id="br-tab-pills">
+        <button class="tab-pill on" id="br-tab-btn-conteo">📋 Conteo</button>
+        <button class="tab-pill" id="br-tab-btn-reporte">📊 Reporte</button>
+      </div>
+
+      <!-- TAB CONTEO BOOMROOM -->
+      <div id="br-tab-conteo">
+        <!-- Selector de Tarima -->
+        <div class="sel-wrap">
+          <label>Tarima (BoomRoom):</label>
+          <select id="br-sel-tarima"></select>
+          <span class="prog" id="br-prog-text"></span>
+          <!-- Agregar SKU no teórico -->
+          <span id="br-add-sku-wrap" style="margin-left:12px;display:none">
+            <button class="btn btn-sm btn-blue" id="br-btn-show-add">➕ Agregar SKU</button>
+          </span>
+        </div>
+
+        <!-- Formulario agregar SKU extra -->
+        <div id="br-add-form" style="display:none;background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.75rem">
+          <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar SKU no teórico</div>
+          <div class="cdg-row" style="margin-bottom:0;flex-wrap:wrap">
+            <div class="cdg-field" style="flex:1;min-width:90px">
+              <label>SKU</label>
+              <input type="text" class="field-inp" id="br-add-sku" placeholder="SKU" autocomplete="off" autocorrect="off">
+            </div>
+            <div class="cdg-field" style="flex:3;min-width:150px">
+              <label>Descripción <span id="br-add-desc-auto" style="font-size:.72rem;color:#1e7e34;font-weight:normal"></span></label>
+              <input type="text" class="field-inp" id="br-add-desc" placeholder="Ingresá el SKU primero" readonly style="background:#f5f5f3">
+            </div>
+            <div class="cdg-field" style="min-width:80px">
+              <label>Cantidad</label>
+              <input type="number" class="field-inp" id="br-add-qty" min="0" placeholder="0">
+            </div>
+            <div class="cdg-field" style="justify-content:flex-end">
+              <label>&nbsp;</label>
+              <button class="btn btn-sm btn-dark" id="br-btn-add-sku" style="min-width:100px">+ Agregar</button>
+            </div>
+          </div>
+          <div id="br-add-msg" style="font-size:.82rem;margin-top:.4rem"></div>
+        </div>
+
+        <!-- Tabla conteo BoomRoom -->
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>SKU</th>
+              <th>Nombre / Descripción</th>
+              <th class="tc">Tipo</th>
+              <th class="tc">Teórico</th>
+              <th class="tc">Físico</th>
+              <th class="tc">Diferencia</th>
+              <th class="tc">Estado</th>
+            </tr></thead>
+            <tbody id="br-tbody-conteo"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button class="btn btn-dark" id="br-btn-save">Guardar conteo ✓</button>
+        </div>
+      </div>
+
+      <!-- TAB REPORTE BOOMROOM -->
+      <div id="br-tab-reporte" style="display:none">
+        <!-- Export bar -->
+        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:.875rem 1rem;margin-bottom:1rem">
+          <p style="font-size:.82rem;font-weight:600;color:#555;margin-bottom:.5rem">⬇ Exportar a Excel</p>
+          <button class="btn btn-green" id="br-btn-export">⬇ Exportar Reporte BoomRoom</button>
+        </div>
+
+        <!-- Filtros -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:.875rem">
+          <label style="font-size:.78rem;color:#666">Clasif:</label>
+          <div style="display:inline-flex;gap:2px;background:#f0f0ee;padding:3px;border-radius:8px">
+            <button class="br-clasif-btn" data-clasif="todos" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:600;min-height:30px;font-family:inherit">Todos</button>
+            <button class="br-clasif-btn" data-clasif="Auditado" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Auditado</button>
+            <button class="br-clasif-btn" data-clasif="Pendiente" style="font-size:.72rem;padding:5px 10px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#666;font-weight:600;min-height:30px;font-family:inherit">Pendiente</button>
+          </div>
+          <label style="font-size:.78rem;color:#666;margin-left:8px">Fecha:</label>
+          <input type="date" id="br-filtro-desde" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
+          <input type="date" id="br-filtro-hasta" style="padding:6px 10px;font-size:.82rem;border:1px solid #ccc;border-radius:6px;min-height:34px">
+          <button id="br-filtro-clear" style="font-size:.72rem;background:none;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;min-height:34px">× Limpiar</button>
+        </div>
+
+        <!-- Tabla resumen BoomRoom -->
+        <div class="tbl-wrap" style="margin-bottom:1.5rem">
+          <table>
+            <thead><tr>
+              <th>Tipo</th>
+              <th>Tarima (BoomRoom)</th>
+              <th class="tc">Ítems teórico</th>
+              <th class="tc">Ítems finales</th>
+              <th class="tc">Exactos</th>
+              <th class="tc">Sobrantes</th>
+              <th class="tc">Faltantes</th>
+              <th class="tc">% Cobertura</th>
+              <th class="tc">IRA</th>
+              <th class="tc">Costo total Q</th>
+              <th>Fecha trabajo</th>
+              <th>Clasificación</th>
+            </tr></thead>
+            <tbody id="br-tbody-reporte"></tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /pg-boomroom -->
   </div><!-- /wrap -->
 </div><!-- /main-wrap -->
 
@@ -2209,9 +2328,12 @@ function updateSubmenúCounts(){
   var emb=conts.filter(function(c){return teorico[c]&&teorico[c].type==='Embarques';}).length;
   var trasl=conts.filter(function(c){return teorico[c]&&teorico[c].type==='Traslados';}).length;
   var cdg=conts.filter(function(c){return teorico[c]&&(teorico[c].type==='CDG'||teorico[c].cdgValidado);}).length;
+  var br=conts.filter(function(c){return teorico[c]&&teorico[c].type==='BoomRoom';}).length;
   document.getElementById('cnt-embarques').textContent=emb;
   document.getElementById('cnt-traslados').textContent=trasl;
   document.getElementById('cnt-cdg').textContent=cdg;
+  var cntBr=document.getElementById('cnt-boomroom');
+  if(cntBr) cntBr.textContent=br;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2228,6 +2350,10 @@ document.getElementById('sm-traslados').addEventListener('click',function(){
 document.getElementById('sm-cdg-hamilton').addEventListener('click',function(){
   _currentFilter='CDG';
   openConteoPage('✅ Traslados CDG');
+});
+document.getElementById('sm-boomroom').addEventListener('click',function(){
+  navTo('pg-boomroom','🏗 BoomRooms');
+  brInit();
 });
 
 function openConteoPage(title){
@@ -11821,5 +11947,499 @@ function bodAudTab5(tb){
 })(); // FIN BOD MODULE v3
 </script>
 
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   BOOMROOMS MODULE — Conteos Hamilton v1 (jul-2026)
+   Módulo independiente. No toca Embarques, Traslados ni CDG.
+   State: usa state.teorico (type=BoomRoom) y state.fisico globales.
+   Extra SKUs (no teóricos) se guardan en state.fisico[tarima] con
+   flag extraSku=true para distinguirlos en el reporte.
+══════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ── Estado BoomRoom ─────────────────────────────────────────────── */
+var brTarimaActual = null;     // tarima (BoomRoom) seleccionada
+var brFiltroClasif = 'todos';  // filtro del reporte
+
+/* ── Helpers ─────────────────────────────────────────────────────── */
+function brConts() {
+  return conts.filter(function(c){ return teorico[c] && teorico[c].type === 'BoomRoom'; });
+}
+
+function brEscH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function brGetFechaTrabajo(tarima) {
+  var t = teorico[tarima];
+  if(!t || !t.fechaCarga) return '';
+  var p = String(t.fechaCarga).split('-');
+  if(p.length !== 3) return t.fechaCarga;
+  return p[2]+'/'+p[1]+'/'+p[0];
+}
+
+function brClasif(tarima) {
+  var t = teorico[tarima]; if(!t) return 'Pendiente';
+  if(t.clasificacion) return t.clasificacion;
+  var fis = fisico[tarima];
+  if(!fis || !Array.isArray(fis)) return 'Pendiente';
+  var items = t.items || [];
+  var contados = fis.filter(function(f){ return f && f.fisico !== null && f.fisico !== undefined && f.fisico !== ''; }).length;
+  return contados >= items.length && items.length > 0 ? 'Auditado' : 'Pendiente';
+}
+
+/* ── Inicialización ──────────────────────────────────────────────── */
+function brInit() {
+  brRenderTarimaSelector();
+  brRenderConteo();
+  brWireEvents();
+}
+
+function brWireEvents() {
+  // Tab pills
+  var btnConteo  = document.getElementById('br-tab-btn-conteo');
+  var btnReporte = document.getElementById('br-tab-btn-reporte');
+  if(btnConteo && !btnConteo._brWired) {
+    btnConteo._brWired = true;
+    btnConteo.addEventListener('click', function(){
+      brSwitchTab('conteo');
+    });
+    btnReporte.addEventListener('click', function(){
+      brSwitchTab('reporte');
+      brRenderReporte();
+    });
+  }
+
+  // Tarima selector
+  var selTarima = document.getElementById('br-sel-tarima');
+  if(selTarima && !selTarima._brWired) {
+    selTarima._brWired = true;
+    selTarima.addEventListener('change', function(){
+      brTarimaActual = this.value || null;
+      brRenderConteo();
+    });
+  }
+
+  // Agregar SKU button toggle
+  var btnShowAdd = document.getElementById('br-btn-show-add');
+  if(btnShowAdd && !btnShowAdd._brWired) {
+    btnShowAdd._brWired = true;
+    btnShowAdd.addEventListener('click', function(){
+      var form = document.getElementById('br-add-form');
+      if(form) form.style.display = form.style.display === 'none' ? '' : 'none';
+    });
+  }
+
+  // SKU autocomplete en agregar
+  var brSkuInp = document.getElementById('br-add-sku');
+  if(brSkuInp && !brSkuInp._brWired) {
+    brSkuInp._brWired = true;
+    var _t = null;
+    brSkuInp.addEventListener('input', function(){
+      clearTimeout(_t);
+      var sku = this.value.trim();
+      var descEl = document.getElementById('br-add-desc');
+      var autoEl = document.getElementById('br-add-desc-auto');
+      if(!sku){ descEl.value=''; return; }
+      _t = setTimeout(function(){
+        fetch('/api/cdg/v2/sku-catalog/buscar?sku='+encodeURIComponent(sku))
+          .then(function(r){return r.json();})
+          .then(function(d){
+            if(d.encontrado){
+              descEl.value = d.descripcion||'';
+              if(autoEl) autoEl.textContent = '✓ '+d.descripcion;
+            } else {
+              // Buscar en teórico existente
+              var found = '';
+              brConts().forEach(function(c){
+                if(found) return;
+                var it = (teorico[c].items||[]).find(function(i){ return String(i.sku).trim()===sku; });
+                if(it && it.desc) found = it.desc;
+              });
+              descEl.value = found;
+              if(autoEl) autoEl.textContent = found ? '✓ del teórico' : '';
+            }
+          }).catch(function(){});
+      }, 400);
+    });
+  }
+
+  // Botón agregar SKU extra
+  var btnAddSku = document.getElementById('br-btn-add-sku');
+  if(btnAddSku && !btnAddSku._brWired) {
+    btnAddSku._brWired = true;
+    btnAddSku.addEventListener('click', function(){
+      if(!brTarimaActual || !currentUser) return;
+      var sku  = (document.getElementById('br-add-sku').value||'').trim();
+      var desc = (document.getElementById('br-add-desc').value||'').trim();
+      var qty  = parseFloat(document.getElementById('br-add-qty').value);
+      var msg  = document.getElementById('br-add-msg');
+      if(!sku){ msg.innerHTML='<span style="color:#c0392b">Ingresá el SKU.</span>'; return; }
+      if(isNaN(qty)||qty<0){ msg.innerHTML='<span style="color:#c0392b">Ingresá una cantidad válida.</span>'; return; }
+      // Verificar que no está ya en el teórico de esta tarima
+      var items = (teorico[brTarimaActual] && teorico[brTarimaActual].items)||[];
+      var existeEnTeo = items.some(function(it){ return String(it.sku).trim()===sku; });
+      if(existeEnTeo){ msg.innerHTML='<span style="color:#e67e22">El SKU ya está en el teórico. Editá su físico directamente en la tabla.</span>'; return; }
+      // Agregar como extra SKU en fisico
+      if(!fisico[brTarimaActual]) fisico[brTarimaActual] = new Array(items.length).fill(null);
+      fisico[brTarimaActual].push({
+        fisico:    qty,
+        daniado:   null,
+        quien:     currentUser.name,
+        ts:        new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}),
+        lastAt:    Date.now(),
+        extraSku:  true,
+        sku:       sku,
+        desc:      desc||sku
+      });
+      // Guardar
+      brSaveField();
+      msg.innerHTML='<span style="color:#1e7e34">✓ SKU agregado</span>';
+      document.getElementById('br-add-sku').value='';
+      document.getElementById('br-add-desc').value='';
+      document.getElementById('br-add-qty').value='';
+      document.getElementById('br-add-form').style.display='none';
+      brRenderConteo();
+    });
+  }
+
+  // Guardar conteo
+  var btnSave = document.getElementById('br-btn-save');
+  if(btnSave && !btnSave._brWired) {
+    btnSave._brWired = true;
+    btnSave.addEventListener('click', function(){
+      brSaveField();
+      var orig = this.textContent;
+      this.textContent = '✓ Guardado';
+      this.style.background = '#1e7e34';
+      var self = this;
+      setTimeout(function(){
+        self.textContent = orig;
+        self.style.background = '';
+      }, 1500);
+    });
+  }
+
+  // Export
+  var btnExport = document.getElementById('br-btn-export');
+  if(btnExport && !btnExport._brWired) {
+    btnExport._brWired = true;
+    btnExport.addEventListener('click', brExportExcel);
+  }
+
+  // Filtros reporte
+  var btnFiltroClr = document.getElementById('br-filtro-clear');
+  if(btnFiltroClr && !btnFiltroClr._brWired) {
+    btnFiltroClr._brWired = true;
+    btnFiltroClr.addEventListener('click', function(){
+      var d = document.getElementById('br-filtro-desde');
+      var h = document.getElementById('br-filtro-hasta');
+      if(d) d.value=''; if(h) h.value='';
+      brRenderReporte();
+    });
+    document.querySelectorAll('.br-clasif-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        brFiltroClasif = this.dataset.clasif;
+        document.querySelectorAll('.br-clasif-btn').forEach(function(b){
+          b.style.background = b.dataset.clasif===brFiltroClasif?'#1a1a1a':'transparent';
+          b.style.color      = b.dataset.clasif===brFiltroClasif?'#fff':'#666';
+        });
+        brRenderReporte();
+      });
+    });
+    var fd=document.getElementById('br-filtro-desde');
+    var fh=document.getElementById('br-filtro-hasta');
+    if(fd) fd.addEventListener('change', brRenderReporte);
+    if(fh) fh.addEventListener('change', brRenderReporte);
+  }
+}
+
+function brSwitchTab(tab) {
+  var conteoDiv  = document.getElementById('br-tab-conteo');
+  var reporteDiv = document.getElementById('br-tab-reporte');
+  var btnC = document.getElementById('br-tab-btn-conteo');
+  var btnR = document.getElementById('br-tab-btn-reporte');
+  if(conteoDiv)  conteoDiv.style.display  = tab==='conteo'  ? '' : 'none';
+  if(reporteDiv) reporteDiv.style.display = tab==='reporte' ? '' : 'none';
+  if(btnC) btnC.classList.toggle('on', tab==='conteo');
+  if(btnR) btnR.classList.toggle('on', tab==='reporte');
+}
+
+/* ── Selector de Tarima ──────────────────────────────────────────── */
+function brRenderTarimaSelector() {
+  var sel = document.getElementById('br-sel-tarima'); if(!sel) return;
+  var brs = brConts();
+  sel.innerHTML = brs.length
+    ? '<option value="">— Seleccioná una Tarima (BoomRoom) —</option>'
+      + brs.map(function(c){ return '<option value="'+brEscH(c)+'">'+brEscH(c)+'</option>'; }).join('')
+    : '<option value="">Sin BoomRooms cargados</option>';
+  sel.value = (brTarimaActual && brs.indexOf(brTarimaActual)>=0) ? brTarimaActual : '';
+  brTarimaActual = sel.value || null;
+
+  // Mostrar botón agregar SKU
+  var wrap = document.getElementById('br-add-sku-wrap');
+  if(wrap) wrap.style.display = brTarimaActual ? '' : 'none';
+}
+
+/* ── Tabla Conteo ────────────────────────────────────────────────── */
+function brRenderConteo() {
+  var tbody = document.getElementById('br-tbody-conteo'); if(!tbody) return;
+  var prog  = document.getElementById('br-prog-text');
+  if(!brTarimaActual || !teorico[brTarimaActual]) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">Seleccioná una Tarima.</td></tr>';
+    if(prog) prog.textContent = '';
+    return;
+  }
+  var items = teorico[brTarimaActual].items || [];
+  var fis   = fisico[brTarimaActual] || [];
+  var html  = '';
+  var contadas = 0;
+
+  // Líneas teóricas
+  items.forEach(function(item, i){
+    var fiObj = fis[i] || null;
+    var fval  = fiObj && fiObj.fisico!==null && fiObj.fisico!==undefined ? fiObj.fisico : '';
+    var diff  = fval!=='' ? Number(fval) - Number(item.qty) : null;
+    var estado = diff===null ? '—' : diff===0 ? '<span style="color:#1e7e34">Exacto</span>' : diff>0 ? '<span style="color:#1565c0">Sobrante</span>' : '<span style="color:#c0392b">Faltante</span>';
+    var costo = typeof getCosto==='function' ? getCosto(item.sku)||item.costo||0 : item.costo||0;
+    if(fval!=='') contadas++;
+    html += '<tr>'
+      +'<td>'+brEscH(item.sku)+'</td>'
+      +'<td>'+brEscH(item.desc||'—')+'</td>'
+      +'<td class="tc"><span style="background:#e8f4fd;color:#1565c0;font-size:.7rem;padding:2px 7px;border-radius:8px">Teórico</span></td>'
+      +'<td class="tc">'+item.qty+'</td>'
+      +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" class="br-fis-inp" data-i="'+i+'" style="width:70px;padding:5px;border:1px solid #ccc;border-radius:6px;text-align:center;font-size:.85rem"></td>'
+      +'<td class="tc" style="font-weight:600">'+(diff!==null?(diff>0?'+':'')+diff:'—')+'</td>'
+      +'<td class="tc">'+estado+'</td>'
+      +'</tr>';
+  });
+
+  // SKUs extra (no teóricos)
+  for(var j=items.length; j<fis.length; j++){
+    var ex = fis[j]; if(!ex || !ex.extraSku) continue;
+    var fvalEx = ex.fisico!==null && ex.fisico!==undefined ? ex.fisico : '';
+    html += '<tr style="background:#fffef0">'
+      +'<td>'+brEscH(ex.sku||'—')+'</td>'
+      +'<td>'+brEscH(ex.desc||'—')+'</td>'
+      +'<td class="tc"><span style="background:#fef9e7;color:#b7770d;font-size:.7rem;padding:2px 7px;border-radius:8px">Agregado</span></td>'
+      +'<td class="tc" style="color:#aaa">—</td>'
+      +'<td class="tc"><strong>'+fvalEx+'</strong></td>'
+      +'<td class="tc" style="color:#1565c0">+'+(fvalEx||0)+'</td>'
+      +'<td class="tc"><span style="color:#1565c0">Sobrante</span></td>'
+      +'</tr>';
+  }
+
+  tbody.innerHTML = html || '<tr><td colspan="7" class="empty">Sin SKUs en esta tarima.</td></tr>';
+  if(prog) prog.textContent = contadas+' / '+items.length+' líneas contadas';
+
+  // Wire inputs
+  tbody.querySelectorAll('.br-fis-inp').forEach(function(inp){
+    if(inp._brWired) return;
+    inp._brWired = true;
+    var timer = null;
+    inp.addEventListener('input', function(){
+      clearTimeout(timer);
+      var idx = parseInt(this.dataset.i);
+      var val = this.value==='' ? null : parseFloat(this.value);
+      if(!fisico[brTarimaActual]) fisico[brTarimaActual] = new Array(items.length).fill(null);
+      fisico[brTarimaActual][idx] = {
+        fisico:  val,
+        daniado: null,
+        quien:   currentUser ? currentUser.name : '—',
+        ts:      new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}),
+        lastAt:  Date.now()
+      };
+      // Actualizar diferencia en la fila
+      var diff2 = val!==null ? val - Number(items[idx].qty) : null;
+      var row = inp.closest('tr'); if(!row) return;
+      var tds = row.querySelectorAll('td');
+      if(tds[5]) tds[5].textContent = diff2!==null?(diff2>0?'+':'')+diff2:'—';
+      if(tds[6]) tds[6].innerHTML = diff2===null?'—':diff2===0?'<span style="color:#1e7e34">Exacto</span>':diff2>0?'<span style="color:#1565c0">Sobrante</span>':'<span style="color:#c0392b">Faltante</span>';
+      timer = setTimeout(function(){ brSaveField(); }, 2000);
+    });
+  });
+}
+
+/* ── Guardar ─────────────────────────────────────────────────────── */
+function brSaveField() {
+  if(!brTarimaActual || !currentUser) return;
+  fetch('/api/conteo/field', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      cont:      brTarimaActual,
+      idx:       -1, // señal de que es BoomRoom (bulk save)
+      fisico:    null,
+      daniado:   null,
+      cobertura: 'En revisión',
+      usuario:   currentUser.name,
+      fisicoArr: fisico[brTarimaActual] // enviar array completo
+    })
+  }).then(function(r){return r.json();})
+    .then(function(d){ if(d.ok) lastVersion=d.version; })
+    .catch(function(){
+      if(typeof saveDirectToSupabase==='function') saveDirectToSupabase();
+    });
+}
+
+/* ── Tabla Reporte ───────────────────────────────────────────────── */
+function brRenderReporte() {
+  var tbody = document.getElementById('br-tbody-reporte'); if(!tbody) return;
+  var brs   = brConts();
+  var fdStr = (document.getElementById('br-filtro-desde')||{value:''}).value;
+  var fhStr = (document.getElementById('br-filtro-hasta')||{value:''}).value;
+
+  var filtrados = brs.filter(function(c){
+    var cl = brClasif(c);
+    if(brFiltroClasif!=='todos' && cl!==brFiltroClasif) return false;
+    var fc = teorico[c] && teorico[c].fechaCarga;
+    if(fdStr || fhStr){
+      if(!fc) return false;
+      if(fdStr && fc<fdStr) return false;
+      if(fhStr && fc>fhStr) return false;
+    }
+    return true;
+  });
+
+  if(!filtrados.length){
+    tbody.innerHTML='<tr><td colspan="12" class="empty">Sin BoomRooms para el filtro seleccionado.</td></tr>';
+    return;
+  }
+
+  var html = '';
+  filtrados.forEach(function(tarima){
+    var items = teorico[tarima].items || [];
+    var fis   = fisico[tarima] || [];
+    var exactos=0, sobrantes=0, faltantes=0;
+    var costoTotal=0;
+    var itemsFinales = items.length;
+
+    items.forEach(function(item, i){
+      var fiObj = fis[i];
+      var fv    = fiObj && fiObj.fisico!==null && fiObj.fisico!==undefined ? Number(fiObj.fisico) : null;
+      var cu    = typeof getCosto==='function' ? getCosto(item.sku)||item.costo||0 : item.costo||0;
+      costoTotal += cu * (Number(item.qty)||0);
+      if(fv===null) return;
+      var diff = fv - Number(item.qty);
+      if(diff===0) exactos++;
+      else if(diff>0) sobrantes++;
+      else faltantes++;
+    });
+
+    // Extra SKUs
+    for(var j=items.length; j<fis.length; j++){
+      var ex = fis[j]; if(!ex||!ex.extraSku) continue;
+      itemsFinales++;
+      sobrantes++;
+    }
+
+    var contadas = exactos+sobrantes+faltantes;
+    var cobertura = items.length>0 ? Math.round((contadas/items.length)*100) : 0;
+    var ira = items.length>0 ? (exactos/items.length*100).toFixed(1)+'%' : '—';
+    var clasif = brClasif(tarima);
+    var fechaTrabajo = brGetFechaTrabajo(tarima);
+    var estadoBadge = clasif==='Auditado'
+      ? '<span style="background:#eafaf1;color:#1e7e34;font-size:.72rem;padding:2px 8px;border-radius:8px">Auditado</span>'
+      : '<span style="background:#fef9e7;color:#b7770d;font-size:.72rem;padding:2px 8px;border-radius:8px">Pendiente</span>';
+
+    html += '<tr>'
+      +'<td><span class="badge b-type">BoomRoom</span></td>'
+      +'<td style="font-weight:600">'+brEscH(tarima)+'</td>'
+      +'<td class="tc">'+items.length+'</td>'
+      +'<td class="tc">'+itemsFinales+'</td>'
+      +'<td class="tc green">'+exactos+'</td>'
+      +'<td class="tc blue">'+sobrantes+'</td>'
+      +'<td class="tc red">'+faltantes+'</td>'
+      +'<td class="tc">'+cobertura+'%</td>'
+      +'<td class="tc">'+ira+'</td>'
+      +'<td class="tc" style="font-family:monospace">Q'+Math.round(costoTotal).toLocaleString('es-GT')+'</td>'
+      +'<td style="font-size:.78rem">'+fechaTrabajo+'</td>'
+      +'<td>'+estadoBadge+'</td>'
+      +'</tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+/* ── Export Excel ────────────────────────────────────────────────── */
+function brExportExcel() {
+  var brs = brConts();
+  if(!brs.length){ alert('No hay BoomRooms cargados.'); return; }
+  var today = new Date();
+  var ds = today.getFullYear()+'_'+String(today.getMonth()+1).padStart(2,'0')+'_'+String(today.getDate()).padStart(2,'0');
+  var wb = XLSX.utils.book_new();
+
+  // Hoja detalle
+  var detRows = [['Fecha auditoría','Tipo SKU','SKU','Descripción','Ubicación Boomroom','Teórico','Físico','Diferencia','Diferencia ABS','Costo unitario','Costo diferencia Q','Costo diferencia Q (ABS)','Estatus']];
+  brs.forEach(function(tarima){
+    var items = teorico[tarima].items || [];
+    var fis   = fisico[tarima] || [];
+    var fechaAud = brGetFechaTrabajo(tarima)||today.toLocaleDateString('es-GT');
+    // Teóricos
+    items.forEach(function(item, i){
+      var fiObj = fis[i];
+      var fv    = fiObj && fiObj.fisico!==null && fiObj.fisico!==undefined ? Number(fiObj.fisico) : null;
+      var cu    = typeof getCosto==='function' ? getCosto(item.sku)||item.costo||0 : item.costo||0;
+      var diff  = fv!==null ? fv-Number(item.qty) : null;
+      var estatus = fv!==null ? (diff===0?'Exacto':diff>0?'Sobrante':'Faltante') : 'Pendiente';
+      detRows.push([
+        fechaAud, 'Teórico', item.sku, item.desc||'', tarima,
+        Number(item.qty), fv!==null?fv:'', diff!==null?diff:'', diff!==null?Math.abs(diff):'',
+        cu||'', diff!==null&&cu?cu*diff:'', diff!==null&&cu?Math.abs(cu*diff):'',
+        estatus
+      ]);
+    });
+    // Agregados
+    for(var j=items.length; j<fis.length; j++){
+      var ex=fis[j]; if(!ex||!ex.extraSku) continue;
+      var fvEx = ex.fisico!==null&&ex.fisico!==undefined?Number(ex.fisico):0;
+      var cuEx = typeof getCosto==='function'?getCosto(ex.sku)||0:0;
+      detRows.push([
+        fechaAud, 'Agregado', ex.sku||'', ex.desc||'', tarima,
+        0, fvEx, fvEx, fvEx,
+        cuEx||'', cuEx?cuEx*fvEx:'', cuEx?cuEx*fvEx:'',
+        'Sobrante'
+      ]);
+    }
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detRows), 'Detalle BoomRoom');
+
+  // Hoja resumen
+  var sumRows = [['Tarima (BoomRoom)','Ítems teórico','Ítems finales','Exactos','Sobrantes','Faltantes','% Cobertura','IRA','Costo total Q','Fecha trabajo','Clasificación']];
+  brs.forEach(function(tarima){
+    var items=teorico[tarima].items||[];
+    var fis=fisico[tarima]||[];
+    var exactos=0,sobrantes=0,faltantes=0,costoTotal=0,itemsFinales=items.length;
+    items.forEach(function(item,i){
+      var fiObj=fis[i];
+      var fv=fiObj&&fiObj.fisico!==null&&fiObj.fisico!==undefined?Number(fiObj.fisico):null;
+      var cu=typeof getCosto==='function'?getCosto(item.sku)||item.costo||0:item.costo||0;
+      costoTotal+=cu*(Number(item.qty)||0);
+      if(fv===null)return;
+      var diff=fv-Number(item.qty);
+      if(diff===0)exactos++; else if(diff>0)sobrantes++; else faltantes++;
+    });
+    for(var j=items.length;j<fis.length;j++){var ex=fis[j];if(!ex||!ex.extraSku)continue;itemsFinales++;sobrantes++;}
+    var contadas=exactos+sobrantes+faltantes;
+    var cob=items.length>0?Math.round((contadas/items.length)*100):0;
+    var ira=items.length>0?(exactos/items.length*100).toFixed(1)+'%':'—';
+    sumRows.push([tarima,items.length,itemsFinales,exactos,sobrantes,faltantes,cob+'%',ira,Math.round(costoTotal),brGetFechaTrabajo(tarima),brClasif(tarima)]);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumRows), 'Resumen BoomRoom');
+  XLSX.writeFile(wb, 'Reporte_BoomRoom_'+ds+'.xlsx');
+}
+
+/* ── Actualizar conteo cuando llega polling ──────────────────────── */
+// Hook en el polling: si pg-boomroom está activo, re-renderizar
+var _brOrigPollNow = typeof pollNow !== 'undefined' ? pollNow : null;
+window._brRefreshIfActive = function(){
+  var pg = document.getElementById('pg-boomroom');
+  if(pg && pg.classList.contains('active')){
+    brRenderTarimaSelector();
+    brRenderConteo();
+  }
+};
+
+})(); // FIN BOOMROOM MODULE
+</script>
 </body>
 </html>
