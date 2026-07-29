@@ -12469,7 +12469,8 @@ function brExport(){
   XLSX.writeFile(wb, 'Reporte_BoomRoom_'+ds+'.xlsx');
 }
 
-/* ── Refresh cuando llega polling ────────────────────────────────── */
+/* ── Exponer funciones globalmente ───────────────────────────────── */
+window.brInit             = brInit;
 window._brRefreshIfActive = function(){
   var pg = document.getElementById('pg-boomroom');
   if(pg && pg.classList.contains('active')){
