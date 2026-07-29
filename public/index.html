@@ -12218,17 +12218,24 @@ function brRenderConteo(){
       :'<span style="color:#c0392b">Faltante</span>';
     if(fval!=='') contadas++;
 
-    // Lock
-    var lockKey = brTarima+'_'+i;
-    var lock    = locks[lockKey];
-    var isLocked = lock && lock.quien !== currentUser.name && (now - lock.at) < 90000;
-    var lockLabel = isLocked ? '<div class="lock-label">🔒 '+brEsc(lock.quien)+' lo está editando</div>' : '';
+    // Lock — igual que Embarques: combinar serverLocks (del polling) + locks local
+    var srvLock = window.serverLocks ? window.serverLocks[brTarima+':'+i] : null;
+    var locLock = locks[brTarima+'_'+i];
+    var myName  = currentUser ? currentUser.name : '';
+    var isLockedSrv = srvLock && srvLock.user !== myName;
+    var isLockedLoc = locLock && locLock.quien !== myName && (now - locLock.at) < 90000;
+    var isLocked  = isLockedSrv || isLockedLoc;
+    var lockWho   = isLockedSrv ? srvLock.user : (isLockedLoc ? locLock.quien : '');
+    var lockLabel = isLocked ? '<div class="lock-label">🔒 '+brEsc(lockWho)+' lo está editando</div>' : '';
     var disabled  = isLocked ? 'disabled' : '';
 
-    // Hint de quien contó
+    // Hint de quien contó — igual que Embarques muestra nombre + tiempo
     var quien = sv && sv.quien ? sv.quien : '';
     var ts    = sv && sv.ts ? sv.ts : '';
-    var hint  = quien ? '<div class="trace-hint">✏️ '+brEsc(quien)+(ts?' · '+ts:'')+'</div>' : '';
+    var ago   = sv && sv.lastAt ? Math.round((now - sv.lastAt)/1000) : null;
+    var agoStr = ago !== null ? (ago < 60 ? ago+'s' : Math.round(ago/60)+'min') : '';
+    var hint  = quien ? '<div class="trace-hint">✏️ '+brEsc(quien)+(ts?' · '+brEsc(ts):'')+'</div>'
+      +(agoStr?'<div class="trace-hint">✏️ '+brEsc(quien)+' · '+agoStr+'</div>':'') : '';
 
     html += '<tr>'
       +'<td>'+brEsc(it.sku)+'</td>'
@@ -12605,7 +12612,11 @@ window._brRefreshIfActive = function(){
     var conteoVisible = document.getElementById('br-tab-conteo');
     if(conteoVisible && conteoVisible.style.display !== 'none'){
       brRenderSelector();
-      brRenderConteo();
+      brRenderConteo(); // re-render aplica serverLocks actualizados del polling
+    }
+    var reporteVisible = document.getElementById('br-tab-reporte');
+    if(reporteVisible && reporteVisible.style.display !== 'none'){
+      brRenderReporte();
     }
   }
 };
