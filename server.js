@@ -1179,8 +1179,15 @@ app.post('/api/unlock', (req, res) => {
 
 // Auto-save single field
 app.post('/api/conteo/field', (req, res) => {
-  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario } = req.body;
+  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario, fisicoArr } = req.body;
   if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
+  // BoomRoom bulk save: idx=-1 con fisicoArr completo
+  if(idx === -1 && Array.isArray(fisicoArr)) {
+    state.fisico[cont] = fisicoArr;
+    state.version++;
+    scheduleSave();
+    return res.json({ ok:true, version:state.version });
+  }
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
   // Preserve null/undefined distinction — only fall back to prev when the
@@ -1254,7 +1261,28 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     var snapshotVersion    = state.version;
 
     let loaded = [];
+
+    // FIX (jul-2026): detectar hoja BoomRoom.
+    // Acepta: hoja llamada "TEORICO BR" O "PT-Analítica" (archivo real de producción).
+    // Ambas tienen la misma estructura: fila 7 = encabezados, AT = Ubicación Boomroom.
+    // Detectar hoja BoomRoom: acepta "Boomroom" (estándar), "TEORICO BR" o "PT-Analítica"
+    const brSheetName = wb.SheetNames.find(sn => {
+      const n = sn.trim();
+      return n === 'Boomroom' || n.toUpperCase() === 'TEORICO BR' || n === 'PT-Analítica';
+    });
+    if(brSheetName) {
+      // Leer con header:'A' → claves = letras de columna (E, F, G, H, I)
+      const brRows = XLSX.utils.sheet_to_json(wb.Sheets[brSheetName], { header:'A', defval:'', raw:false });
+      const brCount = mergeBoomRoomSheet(brRows);
+      if(brCount > 0) {
+        loaded.push(brSheetName+'('+brCount+' tarimas)');
+        addHistorial(usuario, 'Teórico BoomRoom cargado', brCount+' tarimas desde "'+brSheetName+'"');
+      }
+    }
+
     wb.SheetNames.forEach(sn => {
+      // Saltar la hoja BoomRoom ya procesada
+      if(brSheetName && sn.trim() === brSheetName.trim()) return;
       const nl = sn.toLowerCase();
       const type = nl.includes('traslado') ? 'Traslados'
                  : nl.includes('embarque') ? 'Embarques'
@@ -1461,6 +1489,55 @@ function findCol(hdr, terms) {
   for(const t of terms) { const i = hdr.findIndex(h => h === norm(t)); if(i >= 0) return i; }
   for(const t of terms) { const i = hdr.findIndex(h => h.includes(norm(t))); if(i >= 0) return i; }
   return -1;
+}
+
+// ── mergeBoomRoomSheet ─────────────────────────────────────────────────────
+// Procesa la hoja "Boomroom" del Excel teórico de BoomRooms.
+// Formato estándar (jul-2026):
+//   Fila 1 = encabezados | E=SKU | F=Descripción | G=Cantidad | H=Costo unitario | I=Ubicación Boomroom
+// Ignora filas con col I = "TR" (pendiente sin BoomRoom asignado).
+// Al re-subir: actualiza tarimas existentes SIN tocar fisico ni fechaCarga ya guardados.
+function mergeBoomRoomSheet(rows) {
+  if(!rows || rows.length < 2) return 0;
+
+  // Leer con header:'A' → cada row es objeto con claves = letra de columna
+  // E=SKU, F=Desc, G=Qty, H=Costo, I=UbicBR
+  // Fila 0 = encabezados, datos desde fila 1
+  const newConts = {};
+  rows.slice(1)
+    .filter(r => r && Object.keys(r).length > 0)
+    .forEach(row => {
+      const tarima = String(row['I']||'').trim();
+      // Ignorar TR (pendiente) y vacíos
+      if(!tarima || tarima.toUpperCase() === 'TR') return;
+      const sku   = String(row['E']||'').trim();
+      const qty   = parseFloat(String(row['G']||'0').replace(',','.')) || 0;
+      if(!sku || !qty) return;
+      const desc  = String(row['F']||'').trim();
+      const costo = parseFloat(String(row['H']||'0').replace(',','.')) || 0;
+      if(!newConts[tarima]) newConts[tarima] = [];
+      newConts[tarima].push({ sku, desc, qty, costo, raw:{} });
+    });
+
+  const tarimas = Object.keys(newConts);
+  if(!tarimas.length) return 0;
+
+  tarimas.forEach(tarima => {
+    const existing = state.teorico[tarima];
+    // Preservar fechaCarga si ya existe (re-subir no resetea la fecha)
+    const fechaCarga = (existing && existing.fechaCarga) || null;
+    state.teorico[tarima] = {
+      items: newConts[tarima],
+      type: 'BoomRoom',
+      fechaCarga,
+      meta: {}
+    };
+    // Solo inicializar fisico si no existe — re-subir NO borra lo ya contado
+    if(!state.fisico.hasOwnProperty(tarima)) state.fisico[tarima] = null;
+  });
+
+  console.log('mergeBoomRoomSheet: '+tarimas.length+' tarimas →', tarimas.join(', '));
+  return tarimas.length;
 }
 
 function mergeSheet(rows, type) {
