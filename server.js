@@ -1498,40 +1498,49 @@ function findCol(hdr, terms) {
 function mergeBoomRoomSheet(rows) {
   if(!rows || rows.length < 8) return 0;
 
-  // Buscar fila de encabezados: contiene 'SKU' en columna H (índice 7)
-  let hdrRowIdx = 6; // fila 7 = índice 6 (0-based)
-  for(let ri = 0; ri < Math.min(rows.length, 10); ri++) {
-    const r = rows[ri].map(h => norm(h));
-    if(r[7] === 'sku' || r.some(h => h === 'sku')) { hdrRowIdx = ri; break; }
-  }
-  const hdr = rows[hdrRowIdx].map(h => norm(h));
+  // La hoja PT-Analítica tiene encabezados FIJOS en fila 7 (índice 6 en 0-based).
+  // Las filas 1-6 tienen metadatos del papel de trabajo — se saltan siempre.
+  // Columnas fijas (validadas contra el XML real del archivo):
+  //   H=7: SKU | I=8: Descripción | J=9: Cantidad
+  //   AE=30: Costo unitario | AT=45: Ubicación Boomroom
+  const HDR_ROW = 6;  // índice 0-based de la fila de encabezados
+  const COL_SKU   = 7;
+  const COL_DESC  = 8;
+  const COL_QTY   = 9;
+  const COL_COSTO = 30;
+  const COL_AT    = 45;
 
-  // Columnas por nombre con fallback a índice fijo
-  const colSku   = (() => { const i=findCol(hdr,['sku']); return i>=0?i:7; })();
-  const colDesc  = (() => { const i=findCol(hdr,['descripcion','descripción','nombre']); return i>=0?i:8; })();
-  const colQty   = (() => { const i=findCol(hdr,['cantidad','cant.','cant']); return i>=0?i:9; })();
-  const colCosto = (() => { const i=findCol(hdr,['costo unitario','costo unit']); return i>=0?i:30; })();
-  // AT = índice 45 (col A=0, AT=45)
-  const colAt    = (() => {
-    const i=findCol(hdr,['ubicacion boomroom','ubicación boomroom','boomroom','ubicacion']);
-    // "ubicacion" puede matchear otras columnas — verificar que sea la última
-    if(i>=0 && i>40) return i;
-    // Fallback: buscar por posición AT=45
-    return 45;
-  })();
+  // Verificar que la fila 7 sea realmente el header (contiene 'SKU' en col H)
+  const hdrRow = rows[HDR_ROW] || [];
+  const skuHeader = norm(hdrRow[COL_SKU]||'');
+  if(skuHeader !== 'sku') {
+    // Buscar fila de header si no está en índice 6
+    let found = -1;
+    for(let ri=0; ri<Math.min(rows.length,15); ri++){
+      if(norm(rows[ri][COL_SKU]||'') === 'sku'){ found=ri; break; }
+    }
+    if(found < 0) {
+      console.log('mergeBoomRoomSheet: no se encontró fila de encabezados');
+      return 0;
+    }
+  }
 
   const newConts = {};
-  const dataRows = rows.slice(hdrRowIdx + 1);
+  const dataRows = rows.slice(HDR_ROW + 1);
 
   dataRows
     .filter(r => r && r.some(c => String(c||'').trim() !== ''))
     .forEach(row => {
-      const tarima = String(row[colAt]||'').trim();
+      // Ubicación Boomroom: puede ser string o número en la misma celda AT
+      // xlsx a veces devuelve ambos — tomar el que sea string no vacío
+      const rawAt = row[COL_AT];
+      const tarima = String(rawAt||'').trim();
       if(!tarima || tarima.toLowerCase() === 'dd/mm/yy' || tarima === '0') return;
-      const sku   = String(row[colSku]||'').trim();
-      const desc  = String(row[colDesc]||'').trim();
-      const qty   = parseFloat(String(row[colQty]||'0').replace(',','.')) || 0;
-      const costo = parseFloat(String(row[colCosto]||'0').replace(',','.')) || 0;
+      const sku   = String(row[COL_SKU]||'').trim();
+      const desc  = String(row[COL_DESC]||'').trim();
+      const rawQty = row[COL_QTY];
+      const qty   = parseFloat(String(rawQty||'0').replace(',','.')) || 0;
+      const costo = parseFloat(String(row[COL_COSTO]||'0').replace(',','.')) || 0;
       if(!sku || !qty) return;
       if(!newConts[tarima]) newConts[tarima] = [];
       newConts[tarima].push({ sku, desc, qty, costo, raw:{} });
