@@ -1465,9 +1465,10 @@ textarea.field-inp{resize:vertical;min-height:72px}
         </div>
       </div>
 
-      <!-- TAB HALLAZGOS — reutiliza los mismos elementos que Embarques -->
+      <!-- TAB HALLAZGOS — igual que Embarques -->
       <div id="br-tab-hallazgos" style="display:none">
-        <div id="br-hall-container"></div>
+        <div id="br-hall-list"></div>
+        <p class="empty" id="br-hall-empty">Sin hallazgos registrados aún.</p>
       </div>
 
       <!-- TAB ASIGNACIONES — igual que Embarques, solo supervisores -->
@@ -12123,8 +12124,6 @@ function brWireEvents(){
         window._hallFotoData=null;
         window._editingHallId=null;
         window._hallContOverride=brTarima; // override para que se guarde en la tarima BR
-        // Inicializar micrófono igual que en Embarques
-        if(typeof setupMic==='function') setupMic('btn-hall-mic','hall-mic-lang','hall-mic-status','hall-input');
         document.getElementById('modal-hallazgo').classList.add('open');
       });
     }
@@ -12268,19 +12267,33 @@ function brRenderConteo(){
     inp._brW = true;
     var saveT = null;
     inp.addEventListener('focus', function(){
-      // Usar exactamente acquireLock de Embarques — requiere que current esté seteado
       var idx = parseInt(this.dataset.i);
-      var prevCurrent = current;
-      current = brTarima; // temporalmente setear current para que acquireLock funcione
-      if(typeof acquireLock === 'function') acquireLock(idx);
-      current = prevCurrent;
+      // Usar mismo mecanismo de lock que Embarques (/api/lock y /api/unlock)
+      var key = brTarima+':'+idx;
+      if(!window.myLocks) window.myLocks = {};
+      if(window.myLocks[key]) return;
+      fetch('/api/lock',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d.ok){
+            window.myLocks[key]=true;
+            setTimeout(function(){
+              delete window.myLocks[key];
+              fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+            },90000);
+          }
+        }).catch(function(){});
     });
     inp.addEventListener('blur', function(){
       var idx = parseInt(this.dataset.i);
-      var prevCurrent = current;
-      current = brTarima;
-      if(typeof releaseLock === 'function') releaseLock(idx);
-      current = prevCurrent;
+      var key = brTarima+':'+idx;
+      if(window.myLocks && window.myLocks[key]){
+        delete window.myLocks[key];
+        fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+      }
     });
     inp.addEventListener('input', function(){
       var idx = parseInt(this.dataset.i);
@@ -12427,32 +12440,17 @@ function brRenderReporte(){
 }
 
 /* ── Hallazgos BoomRoom ──────────────────────────────────────────── */
-// Reutiliza exactamente renderHallazgosList() de Embarques moviendo los
-// elementos hall-list y hall-empty al contenedor de BoomRoom.
-// Esto garantiza el mismo comportamiento: Modificar, Exportar Word, micrófono, etc.
 function brRenderHallazgos(){
-  var container = document.getElementById('br-hall-container'); if(!container) return;
-
-  // Mover hall-list y hall-empty al contenedor de BoomRoom si no están ya ahí
-  var hallList  = document.getElementById('hall-list');
-  var hallEmpty = document.getElementById('hall-empty');
-  if(!hallList){ hallList = document.createElement('div'); hallList.id='hall-list'; }
-  if(!hallEmpty){ hallEmpty = document.createElement('p'); hallEmpty.id='hall-empty'; hallEmpty.className='empty'; hallEmpty.textContent='Sin hallazgos registrados aún.'; }
-
-  if(!container.contains(hallList))  container.appendChild(hallList);
-  if(!container.contains(hallEmpty)) container.appendChild(hallEmpty);
-
-  // Filtrar temporalmente para mostrar solo hallazgos de BoomRoom
+  // Reutilizar exactamente renderHallazgosList() de Embarques.
+  // Filtra temporalmente hallazgos[] para mostrar solo los de tarimas BoomRoom,
+  // llama renderHallazgosList() que incluye Modificar, Exportar Word y micrófono,
+  // luego restaura hallazgos[].
+  var listEl = document.getElementById('br-hall-list'); if(!listEl) return;
   var brs = brConts();
-  var todosHall = hallazgos ? hallazgos.slice() : [];
-  // Temporalmente setear hallazgos solo de BR para que renderHallazgosList filtre correctamente
-  // Usar override pattern: inyectar filtro en la lista global, renderizar, restaurar
-  var origHallazgos = hallazgos;
-  hallazgos = todosHall.filter(function(h){
-    return h.cont && brs.indexOf(h.cont) >= 0;
-  });
+  var orig = hallazgos ? hallazgos.slice() : [];
+  hallazgos = orig.filter(function(h){ return h.cont && brs.indexOf(h.cont) >= 0; });
   renderHallazgosList();
-  hallazgos = origHallazgos;
+  hallazgos = orig;
 }
 
 /* ── Asignaciones BoomRoom ───────────────────────────────────────── */
