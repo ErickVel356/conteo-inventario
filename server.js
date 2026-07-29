@@ -1179,15 +1179,8 @@ app.post('/api/unlock', (req, res) => {
 
 // Auto-save single field
 app.post('/api/conteo/field', (req, res) => {
-  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario, fisicoArr } = req.body;
+  const { cont, idx, fisico, daniado, cobertura, calcExpr, usuario } = req.body;
   if(cont === undefined || idx === undefined) return res.status(400).json({ ok:false });
-  // BoomRoom bulk save: idx=-1 con fisicoArr completo
-  if(idx === -1 && Array.isArray(fisicoArr)) {
-    state.fisico[cont] = fisicoArr;
-    state.version++;
-    scheduleSave();
-    return res.json({ ok:true, version:state.version });
-  }
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
   // Preserve null/undefined distinction — only fall back to prev when the
@@ -1261,28 +1254,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     var snapshotVersion    = state.version;
 
     let loaded = [];
-
-    // FIX (jul-2026): detectar hoja BoomRoom.
-    // Acepta: hoja llamada "TEORICO BR" O "PT-Analítica" (archivo real de producción).
-    // Ambas tienen la misma estructura: fila 7 = encabezados, AT = Ubicación Boomroom.
-    const brSheetName = wb.SheetNames.find(sn => {
-      const n = sn.trim();
-      return n.toUpperCase() === 'TEORICO BR' || n === 'PT-Analítica';
-    });
-    if(brSheetName) {
-      // Leer con header:'A' para acceder por letra de columna (H, I, J, AE, AT)
-      // Más confiable que índices numéricos en archivos con celdas combinadas.
-      const brRows = XLSX.utils.sheet_to_json(wb.Sheets[brSheetName], { header:'A', defval:'', raw:false });
-      const brCount = mergeBoomRoomSheet(brRows);
-      if(brCount > 0) {
-        loaded.push(brSheetName+'('+brCount+' tarimas)');
-        addHistorial(usuario, 'Teórico BoomRoom cargado', brCount+' tarimas desde "'+brSheetName+'"');
-      }
-    }
-
     wb.SheetNames.forEach(sn => {
-      // Saltar la hoja BoomRoom ya procesada
-      if(brSheetName && sn.trim() === brSheetName.trim()) return;
       const nl = sn.toLowerCase();
       const type = nl.includes('traslado') ? 'Traslados'
                  : nl.includes('embarque') ? 'Embarques'
@@ -1489,62 +1461,6 @@ function findCol(hdr, terms) {
   for(const t of terms) { const i = hdr.findIndex(h => h === norm(t)); if(i >= 0) return i; }
   for(const t of terms) { const i = hdr.findIndex(h => h.includes(norm(t))); if(i >= 0) return i; }
   return -1;
-}
-
-// ── mergeBoomRoomSheet ─────────────────────────────────────────────────────
-// Procesa la hoja BoomRoom ("TEORICO BR" o "PT-Analítica").
-// Encabezados en fila 7 (índice 6): H=SKU, I=Descripción, J=Cantidad,
-// AE=Costo unitario, AT=Ubicación Boomroom.
-// Agrupa por Ubicación Boomroom — cada valor único es una tarima (contenedor BoomRoom).
-// Preserva fechaCarga si ya existe. Ignora filas sin tarima asignada (vacío o "dd/mm/yy").
-function mergeBoomRoomSheet(rows) {
-  // rows viene de sheet_to_json con header:'A' — cada fila es un objeto
-  // con claves = letras de columna (A, B, ..., H, I, J, ..., AE, AT).
-  // Estructura fija del archivo PT-Analítica / TEORICO BR:
-  //   Fila 7 = encabezados | H=SKU | I=Descripción | J=Cantidad | AE=Costo | AT=Ubicación Boomroom
-  if(!rows || rows.length < 8) return 0;
-
-  // Encontrar fila de encabezados: la que tiene 'SKU' en columna H
-  let hdrRowIdx = -1;
-  for(let ri=0; ri<Math.min(rows.length,15); ri++){
-    if(norm(String(rows[ri]['H']||'')) === 'sku'){ hdrRowIdx=ri; break; }
-  }
-  if(hdrRowIdx < 0){
-    console.log('mergeBoomRoomSheet: no se encontró encabezado SKU en col H');
-    return 0;
-  }
-
-  const newConts = {};
-  rows.slice(hdrRowIdx + 1)
-    .filter(r => r && Object.keys(r).length > 0)
-    .forEach(row => {
-      const tarima = String(row['AT']||'').trim();
-      if(!tarima || tarima.toLowerCase()==='dd/mm/yy' || tarima==='0') return;
-      const sku   = String(row['H']||'').trim();
-      const qty   = parseFloat(String(row['J']||'0').replace(',','.')) || 0;
-      if(!sku || !qty) return;
-      const desc  = String(row['I']||'').trim();
-      const costo = parseFloat(String(row['AE']||'0').replace(',','.')) || 0;
-      if(!newConts[tarima]) newConts[tarima] = [];
-      newConts[tarima].push({ sku, desc, qty, costo, raw:{} });
-    });
-
-  const tarimas = Object.keys(newConts);
-  if(!tarimas.length) return 0;
-
-  tarimas.forEach(tarima => {
-    const existing = state.teorico[tarima];
-    state.teorico[tarima] = {
-      items: newConts[tarima],
-      type: 'BoomRoom',
-      fechaCarga: (existing && existing.fechaCarga) || null,
-      meta: {}
-    };
-    if(!state.fisico.hasOwnProperty(tarima)) state.fisico[tarima] = null;
-  });
-
-  console.log('mergeBoomRoomSheet: '+tarimas.length+' tarimas →', tarimas.join(', '));
-  return tarimas.length;
 }
 
 function mergeSheet(rows, type) {
