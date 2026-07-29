@@ -12309,8 +12309,6 @@ function brRenderConteo(){
         lastAt:   Date.now()
       };
       // Actualizar diff inline
-      var diff2 = val!==null ? val - Number(it.qty) : null;
-      // it no está en scope aquí, recalcular
       var itLocal = items[idx];
       if(itLocal){
         var diff2b = val!==null ? val - Number(itLocal.qty) : null;
