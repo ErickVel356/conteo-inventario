@@ -1433,6 +1433,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
           </table>
         </div>
         <div class="actions">
+          <button class="btn btn-orange" id="br-btn-hallazgo">⚠ Crear hallazgo</button>
           <button class="btn btn-dark" id="br-btn-save">Guardar conteo ✓</button>
         </div>
       </div>
@@ -3904,8 +3905,11 @@ document.getElementById('btn-hall-save').addEventListener('click',async function
         .catch(function(){});
     }
   } else {
+    // FIX (jul-2026): BoomRoom override — usar brTarima si viene desde BoomRoom
+    var hallCont = window._hallContOverride || current;
+    window._hallContOverride = null;
     hall = {
-      id:makeId(), cont:current, quePaso:desc,
+      id:makeId(), cont:hallCont, quePaso:desc,
       condicion:document.getElementById('hall-condicion').value.trim(),
       criterio:document.getElementById('hall-criterio').value.trim(),
       causa:document.getElementById('hall-causa').value.trim(),
@@ -12097,6 +12101,33 @@ function brWireEvents(){
       brRenderConteo();
     });
 
+    // Botón Crear hallazgo — usa el mismo modal que Embarques
+    var btnHall = document.getElementById('br-btn-hallazgo');
+    if(btnHall && !btnHall._brW) {
+      btnHall._brW = true;
+      btnHall.addEventListener('click', function(){
+        if(!brTarima){ alert('Seleccioná una tarima primero.'); return; }
+        // Setear el contenedor actual al de la tarima BoomRoom
+        var hallName = document.getElementById('hall-cont-name');
+        if(hallName) hallName.textContent = brTarima;
+        ['hall-input','hall-condicion','hall-criterio','hall-causa','hall-efecto','hall-recomendacion'].forEach(function(id){
+          var el=document.getElementById(id); if(el) el.value='';
+        });
+        var preview=document.getElementById('hall-foto-preview');
+        var img=document.getElementById('hall-foto-img');
+        var status=document.getElementById('hall-foto-status');
+        var inp=document.getElementById('hall-foto-input');
+        if(preview) preview.style.display='none';
+        if(img) img.src='';
+        if(status) status.textContent='';
+        if(inp) inp.value='';
+        window._hallFotoData=null;
+        window._editingHallId=null;
+        window._hallContOverride=brTarima; // override para que se guarde en la tarima BR
+        document.getElementById('modal-hallazgo').classList.add('open');
+      });
+    }
+
     // Botón Guardar
     document.getElementById('br-btn-save').addEventListener('click', function(){
       brSaveAll();
@@ -12237,9 +12268,32 @@ function brRenderConteo(){
     var saveT = null;
     inp.addEventListener('focus', function(){
       var idx = parseInt(this.dataset.i);
-      // Registrar lock
-      fetch('/api/conteo/lock',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({cont:brTarima, idx:idx, usuario:currentUser.name})}).catch(function(){});
+      // Usar mismo mecanismo de lock que Embarques (/api/lock y /api/unlock)
+      var key = brTarima+':'+idx;
+      if(!window.myLocks) window.myLocks = {};
+      if(window.myLocks[key]) return;
+      fetch('/api/lock',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d.ok){
+            window.myLocks[key]=true;
+            setTimeout(function(){
+              delete window.myLocks[key];
+              fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+            },90000);
+          }
+        }).catch(function(){});
+    });
+    inp.addEventListener('blur', function(){
+      var idx = parseInt(this.dataset.i);
+      var key = brTarima+':'+idx;
+      if(window.myLocks && window.myLocks[key]){
+        delete window.myLocks[key];
+        fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+      }
     });
     inp.addEventListener('input', function(){
       var idx = parseInt(this.dataset.i);
@@ -12387,26 +12441,124 @@ function brRenderReporte(){
 
 /* ── Hallazgos BoomRoom ──────────────────────────────────────────── */
 function brRenderHallazgos(){
-  var el = document.getElementById('br-hall-list'); if(!el) return;
-  // Reutilizar renderHallazgosList si existe, filtrando por BoomRoom
-  if(typeof renderHallazgosList === 'function'){
-    // Hallazgos comparten el mismo array global — mostrar los de tarimas BR
-    renderHallazgosList('br-hall-list', 'br-hall-empty', function(h){
-      return h.cont && brConts().indexOf(h.cont) >= 0;
-    });
-  } else {
-    el.innerHTML = '<p class="empty">Sin hallazgos.</p>';
+  var listEl  = document.getElementById('br-hall-list');
+  var emptyEl = document.getElementById('br-hall-empty');
+  if(!listEl) return;
+  var brs = brConts();
+  // Filtrar hallazgos que pertenecen a tarimas BoomRoom
+  var brHalls = (hallazgos||[]).filter(function(h){
+    return h.cont && brs.indexOf(h.cont) >= 0;
+  });
+  if(!brHalls.length){
+    listEl.innerHTML = '';
+    if(emptyEl) emptyEl.style.display = '';
+    return;
   }
+  if(emptyEl) emptyEl.style.display = 'none';
+  // Renderizar igual que renderHallazgosList pero solo los de BR
+  var html = '';
+  brHalls.slice().reverse().forEach(function(h){
+    html += '<div class="hall-item">'
+      +'<div class="hall-hdr"><span class="hall-cont">'+brEsc(h.cont||'—')+'</span>'
+      +' <span class="hall-ts" style="font-size:.72rem;color:#aaa">'+brEsc(h.ts||'')+'</span>'
+      +' <span style="font-size:.72rem;color:#888">— '+brEsc(h.autor||'')+'</span></div>'
+      +'<div class="hall-body">'
+      +'<div><strong>¿Qué pasó?</strong> '+brEsc(h.quePaso||'')+'</div>'
+      +(h.condicion?'<div><strong>Condición:</strong> '+brEsc(h.condicion)+'</div>':'')
+      +(h.criterio?'<div><strong>Criterio:</strong> '+brEsc(h.criterio)+'</div>':'')
+      +(h.causa?'<div><strong>Causa:</strong> '+brEsc(h.causa)+'</div>':'')
+      +(h.efecto?'<div><strong>Efecto:</strong> '+brEsc(h.efecto)+'</div>':'')
+      +(h.recomendacion?'<div><strong>Recomendación:</strong> '+brEsc(h.recomendacion)+'</div>':'')
+      +(h.foto?'<div style="margin-top:6px"><img src="'+brEsc(h.foto)+'" style="max-width:180px;border-radius:8px"></div>':'')
+      +'</div></div>';
+  });
+  listEl.innerHTML = html;
 }
 
 /* ── Asignaciones BoomRoom ───────────────────────────────────────── */
 function brRenderAsign(){
-  var el = document.getElementById('br-asign-content'); if(!el) return;
-  if(typeof renderAsignaciones === 'function'){
-    renderAsignaciones('br-asign-content', brConts());
-  } else {
-    el.innerHTML = '<p class="empty">Sin asignaciones.</p>';
+  var div = document.getElementById('br-asign-content'); if(!div) return;
+  var brs = brConts();
+  var allPeople = (typeof SUPERVISORES!=='undefined'?SUPERVISORES:[])
+    .concat(typeof CONTADORES_LIST!=='undefined'?CONTADORES_LIST:[]);
+  var html = '';
+
+  // Asignación de tarimas BoomRoom
+  html += '<div class="collapsible-hdr" id="br-asign-hdr-main"><span class="ch-title">Asignación de tarimas BoomRoom</span><span class="ch-ico">▼</span></div>';
+  html += '<div id="br-asign-body-main" class="collapsible-body">';
+  if(!brs.length){ html += '<p class="empty">Cargá el teórico BoomRoom primero.</p>'; }
+  else{
+    brs.forEach(function(t){
+      var assigned = asignaciones[t]||[];
+      var fis = fisico[t];
+      var estado = fis ? '<span class="badge b-ok">Contado</span>'
+        : assigned.length ? '<span class="badge b-diff">En proceso</span>'
+        : '<span class="badge b-pend">Pendiente</span>';
+      html += '<div class="asign-row">'
+        +'<div style="flex:1;min-width:120px"><strong style="font-size:.875rem">'+brEsc(t)+'</strong>'
+        +'<div style="font-size:.75rem;color:#aaa">BoomRoom</div></div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:4px;flex:2">'
+        +assigned.map(function(a){return'<span class="asign-chip">'+brEsc(a)+'<button data-br-cont="'+brEsc(t)+'" data-name="'+brEsc(a)+'" class="br-btn-rm-asign">×</button></span>';}).join('')
+        +'</div>'
+        +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'+estado
+        +'<select class="br-asign-sel" data-cont="'+brEsc(t)+'" style="font-size:.8rem;padding:5px 8px;border:1px solid #ccc;border-radius:8px;min-height:36px;max-width:150px">'
+        +'<option value="">+ Asignar</option>'
+        +allPeople.filter(function(p){return assigned.indexOf(p)<0;}).map(function(p){return'<option value="'+brEsc(p)+'">'+brEsc(p)+'</option>';}).join('')
+        +'</select></div></div>';
+    });
   }
+  html += '</div>';
+
+  // Historial del día
+  html += '<div class="collapsible-hdr" id="br-asign-hdr-hist" style="margin-top:1rem"><span class="ch-title">Historial del día</span><span class="ch-ico">▼</span></div>';
+  html += '<div id="br-asign-body-hist" class="collapsible-body">';
+  if(!historial||!historial.length){ html += '<p class="empty">Sin actividad.</p>'; }
+  else{
+    html += '<div style="max-height:300px;overflow-y:auto">';
+    historial.slice().reverse().forEach(function(h){
+      html += '<div class="hist-item"><span class="hist-time">'+brEsc(h.ts||'')+'</span> <strong>'+brEsc(h.usuario||'')+'</strong> — '+brEsc(h.accion||'')+'</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  div.innerHTML = html;
+
+  // Collapsibles
+  ['main','hist'].forEach(function(k){
+    var hdr  = div.querySelector('#br-asign-hdr-'+k);
+    var body = div.querySelector('#br-asign-body-'+k);
+    if(!hdr||!body) return;
+    hdr.addEventListener('click', function(){
+      var open = body.style.display!=='none';
+      body.style.display = open?'none':'';
+      var ico = hdr.querySelector('.ch-ico');
+      if(ico) ico.textContent = open?'▶':'▼';
+    });
+  });
+
+  // Wire asign selects
+  div.querySelectorAll('.br-asign-sel').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      var t = this.dataset.cont; var name = this.value; if(!name) return;
+      if(!asignaciones[t]) asignaciones[t]=[];
+      if(asignaciones[t].indexOf(name)<0) asignaciones[t].push(name);
+      fetch('/api/asignar',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:t, nombre:name, usuario:currentUser.name})}).catch(function(){});
+      brRenderAsign();
+    });
+  });
+
+  // Wire remove buttons
+  div.querySelectorAll('.br-btn-rm-asign').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var t = this.dataset.brCont; var name = this.dataset.name;
+      if(!asignaciones[t]) return;
+      asignaciones[t] = asignaciones[t].filter(function(a){ return a!==name; });
+      fetch('/api/asignar',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:t, nombre:name, action:'remove', usuario:currentUser.name})}).catch(function(){});
+      brRenderAsign();
+    });
+  });
 }
 
 /* ── Export Excel ────────────────────────────────────────────────── */
