@@ -1389,11 +1389,13 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
       <!-- TAB CONTEO -->
       <div id="br-tab-conteo">
-        <!-- Selector de Tarima -->
-        <div class="sel-wrap" style="flex-wrap:wrap;gap:8px">
+        <!-- Selector de Tarima + Fecha de trabajo -->
+        <div class="sel-wrap" style="flex-wrap:wrap;gap:8px;align-items:center">
           <label style="font-size:.8rem;color:#666;font-weight:600">Tarima (BoomRoom):</label>
           <select id="br-sel-tarima" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:200px"></select>
-          <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888"></span>
+          <label style="font-size:.8rem;color:#666;font-weight:600;margin-left:12px">F. Trabajo:</label>
+          <input type="date" id="br-fecha-trabajo" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-height:36px">
+          <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888;margin-left:8px"></span>
         </div>
 
         <!-- Formulario agregar SKU — siempre visible cuando hay tarima seleccionada -->
@@ -12030,8 +12032,33 @@ function brWireEvents(){
     // Selector tarima
     document.getElementById('br-sel-tarima').addEventListener('change', function(){
       brTarima = this.value || null;
+      // Cargar fecha existente de la tarima seleccionada
+      var fechaInp = document.getElementById('br-fecha-trabajo');
+      if(fechaInp && brTarima && teorico[brTarima] && teorico[brTarima].fechaCarga){
+        fechaInp.value = teorico[brTarima].fechaCarga;
+      } else if(fechaInp) {
+        fechaInp.value = '';
+      }
       brRenderConteo();
     });
+
+    // Fecha de trabajo — guarda en teorico[brTarima].fechaCarga
+    var brFechaInp = document.getElementById('br-fecha-trabajo');
+    if(brFechaInp && !brFechaInp._brW) {
+      brFechaInp._brW = true;
+      brFechaInp.addEventListener('change', function(){
+        if(!brTarima) return;
+        if(!teorico[brTarima]) return;
+        teorico[brTarima].fechaCarga = this.value;
+        // Guardar en server via conteo/field con idx=-1 para que persista
+        fetch('/api/conteo/field',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:brTarima, idx:-2, fisico:null, daniado:null,
+            cobertura:'En revision', usuario:currentUser?currentUser.name:'',
+            fechaCarga:this.value})
+        }).catch(function(){});
+        brRenderReporte(); // actualizar reporte
+      });
+    }
 
     // SKU autocomplete
     document.getElementById('br-add-sku').addEventListener('input', function(){
@@ -12124,6 +12151,8 @@ function brWireEvents(){
         window._hallFotoData=null;
         window._editingHallId=null;
         window._hallContOverride=brTarima; // override para que se guarde en la tarima BR
+        // Inicializar micrófono igual que en Embarques
+        if(typeof setupMic==='function') setupMic('btn-hall-mic','hall-mic-lang','hall-mic-status','hall-input');
         document.getElementById('modal-hallazgo').classList.add('open');
       });
     }
@@ -12178,6 +12207,13 @@ function brRenderSelector(){
 
   if(brTarima && brs.indexOf(brTarima) < 0) brTarima = null;
   sel.value = brTarima || '';
+
+  // Cargar fecha de trabajo de la tarima actual
+  var fechaInp2 = document.getElementById('br-fecha-trabajo');
+  if(fechaInp2){
+    fechaInp2.value = (brTarima && teorico[brTarima] && teorico[brTarima].fechaCarga)
+      ? teorico[brTarima].fechaCarga : '';
+  }
 
   // Mostrar formulario si hay tarima
   document.getElementById('br-add-form').style.display = brTarima ? '' : 'none';
@@ -12493,11 +12529,29 @@ function brRenderReporte(){
 
 /* ── Hallazgos BoomRoom ──────────────────────────────────────────── */
 function brRenderHallazgos(){
-  var listEl = document.getElementById('br-hall-list'); if(!listEl) return;
-  var brs = brConts();
+  var brList  = document.getElementById('br-hall-list'); if(!brList) return;
+  var embList = document.getElementById('hall-list');
+
+  // Filtrar hallazgos de BoomRoom
+  var brs  = brConts();
   var orig = hallazgos ? hallazgos.slice() : [];
   hallazgos = orig.filter(function(h){ return h.cont && brs.indexOf(h.cont) >= 0; });
+
+  // Mover temporalmente hall-list al contenedor de BoomRoom para que
+  // renderHallazgosList() escriba en el lugar correcto
+  if(embList && embList.parentNode) {
+    brList.appendChild(embList);
+  }
   renderHallazgosList();
+
+  // Restaurar hall-list a su lugar original (tab-hallazgos de Embarques)
+  var embTab = document.getElementById('tab-hallazgos');
+  if(embList && embTab) {
+    var emptyP = embTab.querySelector('p.empty');
+    if(emptyP) embTab.insertBefore(embList, emptyP);
+    else embTab.appendChild(embList);
+  }
+
   hallazgos = orig;
 }
 
