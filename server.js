@@ -1188,6 +1188,16 @@ app.post('/api/conteo/field', (req, res) => {
     scheduleSave();
     return res.json({ ok:true, version:state.version });
   }
+
+  // BoomRoom fecha de trabajo: idx=-2 guarda fechaCarga en teorico
+  if(idx === -2 && req.body.fechaCarga !== undefined) {
+    if(state.teorico[cont]) {
+      state.teorico[cont].fechaCarga = req.body.fechaCarga;
+      state.version++;
+      scheduleSave();
+    }
+    return res.json({ ok:true, version:state.version });
+  }
   if(!Array.isArray(state.fisico[cont])) state.fisico[cont] = [];
   const prev = state.fisico[cont][idx] || {};
   // Preserve null/undefined distinction — only fall back to prev when the
