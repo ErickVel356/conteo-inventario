@@ -12187,14 +12187,14 @@ function brRenderSelector(){
   if(btnA) btnA.style.display = isSup() ? '' : 'none';
 }
 
-/* ── Render Conteo ── igual que Embarques: solo HTML, listeners una vez ── */
+/* -- Render Conteo -- igual que Embarques: solo HTML, locks via brApplyConteoLocks -- */
 function brRenderConteo(){
   brRenderSelector();
   var tbody = document.getElementById('br-tbody-conteo'); if(!tbody) return;
   var prog  = document.getElementById('br-prog-text');
 
   if(!brTarima || !teorico[brTarima]){
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">Seleccioná una Tarima para comenzar.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">Selecciona una Tarima para comenzar.</td></tr>';
     if(prog) prog.textContent = '';
     return;
   }
@@ -12211,111 +12211,62 @@ function brRenderConteo(){
     var fval = sv && sv.fisico !== null && sv.fisico !== undefined ? sv.fisico : '';
     var diff = fval !== '' ? Number(fval) - Number(it.qty) : null;
     var dc   = diff===null?'gray':diff===0?'green':diff>0?'blue':'red';
-    var dv   = diff===null?'—':(diff>0?'+':'')+diff;
-    var estado = diff===null?'—':diff===0
+    var dv   = diff===null?'&mdash;':(diff>0?'+':'')+diff;
+    var estado = diff===null?'&mdash;':diff===0
       ?'<span style="color:#1e7e34;font-weight:600">Exacto</span>'
       :diff>0?'<span style="color:#1565c0">Sobrante</span>'
       :'<span style="color:#c0392b">Faltante</span>';
     if(fval!=='') contadas++;
 
-    var srvLock     = window.serverLocks ? window.serverLocks[brTarima+':'+i] : null;
-    var locLock     = locks[brTarima+'_'+i];
+    // Lock display -- serverLocks applied dynamically by brApplyConteoLocks
+    var srvLock = window.serverLocks ? window.serverLocks[brTarima+':'+i] : null;
+    var locLock = locks[brTarima+'_'+i];
     var isLockedSrv = srvLock && srvLock.user !== myName;
     var isLockedLoc = locLock && locLock.quien !== myName && (now - locLock.at) < 90000;
-    var isLocked    = isLockedSrv || isLockedLoc;
-    var lockWho     = isLockedSrv ? srvLock.user : (isLockedLoc ? locLock.quien : '');
-    var lockLabel   = isLocked ? '<div class="lock-label">\uD83D\uDD12 '+brEsc(lockWho)+' lo está editando</div>' : '';
-    var dis         = isLocked ? 'disabled' : '';
+    var isLocked = isLockedSrv || isLockedLoc;
+    var lockWho  = isLockedSrv ? srvLock.user : (isLockedLoc ? locLock.quien : '');
+    var lockLabel = isLocked ? '<div class="lock-label">' + lockWho + ' lo esta editando</div>' : '';
+    var dis = isLocked ? 'disabled' : '';
 
     var quien  = sv && sv.quien ? sv.quien : '';
     var ts     = sv && sv.ts ? sv.ts : '';
     var ago    = sv && sv.lastAt ? Math.round((now - sv.lastAt)/1000) : null;
     var agoStr = ago !== null ? (ago < 60 ? ago+'s' : Math.round(ago/60)+'min') : '';
     var hint   = quien
-      ? '<div class="trace-hint">✏\uFE0F '+brEsc(quien)+(ts?' · '+brEsc(ts):'')+'</div>'
-        +(agoStr?'<div class="trace-hint">✏\uFE0F '+brEsc(quien)+' · '+agoStr+'</div>':'')
+      ? '<div class="trace-hint">' + brEsc(quien) + (ts?' - '+brEsc(ts):'') + '</div>'
+        +(agoStr?'<div class="trace-hint">'+brEsc(quien)+' - '+agoStr+'</div>':'')
       : '';
 
     html += '<tr>'
       +'<td>'+brEsc(it.sku)+'</td>'
-      +'<td>'+brEsc(it.desc||'—')+'</td>'
+      +'<td>'+brEsc(it.desc||'--')+'</td>'
       +'<td class="tc">'+it.qty+'</td>'
       +'<td class="tc"><input type="number" min="0" step="1" value="'+fval+'" id="br-fi'+i+'" data-i="'+i+'" '+dis
         +' style="width:80px;padding:5px 8px;border:1px solid #ccc;border-radius:6px;text-align:center;font-size:.88rem">'
         +hint+lockLabel+'</td>'
       +'<td class="tc '+dc+'" id="br-d'+i+'">'+dv+'</td>'
       +'<td class="tc">'+estado+'</td>'
-      +'<td class="tc">—</td>'
+      +'<td class="tc">--</td>'
       +'</tr>';
   });
 
   for(var j=items.length; j<fis.length; j++){
     var ex = fis[j]; if(!ex || !ex.extraSku) continue;
-    var exQty = ex.fisico !== null && ex.fisico !== undefined ? ex.fisico : '—';
+    var exQty = ex.fisico !== null && ex.fisico !== undefined ? ex.fisico : '--';
     html += '<tr style="background:#fffef0">'
-      +'<td>'+brEsc(ex.sku||'—')+'</td>'
-      +'<td>'+brEsc(ex.desc||'—')+'</td>'
-      +'<td class="tc" style="color:#aaa">—</td>'
+      +'<td>'+brEsc(ex.sku||'--')+'</td>'
+      +'<td>'+brEsc(ex.desc||'--')+'</td>'
+      +'<td class="tc" style="color:#aaa">--</td>'
       +'<td class="tc" style="font-weight:600">'+exQty+'</td>'
-      +'<td class="tc blue">+'+(exQty!=='—'?exQty:0)+'</td>'
+      +'<td class="tc blue">+'+(exQty!=='--'?exQty:0)+'</td>'
       +'<td class="tc"><span style="color:#1565c0">Sobrante</span></td>'
       +'<td class="tc"><button class="btn btn-sm br-del-extra" data-br-del="'+j
-        +'" style="background:#fdecea;color:#c0392b;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:.75rem">🗑</button></td>'
+        +'" style="background:#fdecea;color:#c0392b;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:.75rem">DEL</button></td>'
       +'</tr>';
   }
 
   tbody.innerHTML = html || '<tr><td colspan="7" class="empty">Sin SKUs en esta tarima.</td></tr>';
-  if(prog) prog.textContent = contadas+' / '+items.length+' teóricos contados';
-
-  // Registrar listeners UNA SOLA VEZ por input (fi._brSrv flag, igual que Embarques fi._srv)
-  for(var k=0; k<items.length; k++){
-    (function(idx){
-      var inp = document.getElementById('br-fi'+idx);
-      if(!inp || inp._brSrv) return;
-      inp._brSrv = 1;
-      var saveT = null;
-
-      inp.addEventListener('focus', function(){
-        var key = brTarima+':'+idx;
-        if(myLocks[key]) return;
-        myLocks[key] = true;
-        fetch('/api/lock',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
-      });
-
-      inp.addEventListener('blur', function(){
-        var key = brTarima+':'+idx;
-        if(!myLocks[key]) return;
-        delete myLocks[key];
-        fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
-        clearTimeout(saveT);
-        brSaveField(idx);
-      });
-
-      inp.addEventListener('input', function(){
-        var val = this.value==='' ? null : parseFloat(this.value);
-        if(!Array.isArray(fisico[brTarima])) fisico[brTarima] = new Array(items.length).fill(null);
-        var it3 = items[idx];
-        fisico[brTarima][idx] = {
-          fisico:   val,
-          daniado:  null,
-          cobertura: val!==null?'Auditado':'En revisión',
-          quien:    currentUser?currentUser.name:'',
-          lastUser: currentUser?currentUser.name:'',
-          ts:       new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}),
-          lastAt:   Date.now()
-        };
-        if(it3){
-          var d3 = val!==null ? val - Number(it3.qty) : null;
-          var dEl = document.getElementById('br-d'+idx);
-          if(dEl) dEl.textContent = d3===null?'—':(d3>0?'+':'')+d3;
-        }
-        clearTimeout(saveT);
-        saveT = setTimeout(function(){ brSaveField(idx); }, 2500);
-      });
-    })(k);
-  }
+  if(prog) prog.textContent = contadas+' / '+items.length+' teoricos contados';
 
   // Botones eliminar extra
   tbody.querySelectorAll('.br-del-extra').forEach(function(btn){
@@ -12323,15 +12274,119 @@ function brRenderConteo(){
     btn._brSrv = 1;
     btn.addEventListener('click', function(){
       var idx = parseInt(this.dataset.brDel);
-      if(!confirm('¿Eliminás esta línea extra?')) return;
+      if(!confirm('Eliminar esta linea extra?')) return;
       fisico[brTarima].splice(idx, 1);
       brSaveAll();
       brRenderConteo();
     });
   });
+
+  // Aplicar locks y registrar listeners -- igual que el patch de Embarques
+  brApplyConteoLocks();
 }
 
-/* ── Guardar campo individual ────────────────────────────────────── */
+/* -- brApplyConteoLocks -- identico al patch renderConteo de Embarques --
+   Corre despues de cada brRenderConteo Y en cada poll via _brRefreshIfActive.
+   1. Aplica locks en vivo sobre inputs existentes (sin recrear HTML)
+   2. Registra listeners UNA SOLA VEZ con _brSrv flag -- igual que fi._srv de Embarques
+   Usa myLocks global (mismo objeto de Embarques), /api/lock y /api/unlock.
+-- */
+var brSaveTimers = {};
+function brApplyConteoLocks(){
+  if(!brTarima || !teorico[brTarima]) return;
+  var items  = brItems(brTarima);
+  var myName = currentUser ? currentUser.name : '';
+
+  for(var ii=0; ii<items.length; ii++){
+    (function(idx){
+      var fi = document.getElementById('br-fi'+idx);
+      if(!fi) return;
+
+      // 1. Lock state en vivo -- igual que Embarques patch post-renderConteo
+      var lock = window.serverLocks ? window.serverLocks[brTarima+':'+idx] : null;
+      var isLockedByOther = lock && lock.user !== myName;
+      if(isLockedByOther){
+        fi.disabled = true;
+        fi.style.borderColor = '#e0c96e';
+        fi.style.background  = '#fffef0';
+        var par = fi.parentNode;
+        if(par && !par.querySelector('.br-srv-lock')){
+          var badge = document.createElement('div');
+          badge.className = 'br-srv-lock';
+          badge.style.cssText = 'font-size:.68rem;color:#e67e22;margin-top:2px';
+          badge.textContent = lock.user + ' contando...';
+          par.appendChild(badge);
+        }
+      } else {
+        if(!myLocks[brTarima+':'+idx]) {
+          fi.disabled = false;
+          fi.style.borderColor = '';
+          fi.style.background  = '';
+        }
+        var par2 = fi.parentNode;
+        if(par2){ var bl=par2.querySelector('.br-srv-lock'); if(bl) par2.removeChild(bl); }
+      }
+
+      // 2. Listeners UNA SOLA VEZ con _brSrv -- igual que Embarques fi._srv
+      if(fi._brSrv) return;
+      fi._brSrv = 1;
+
+      fi.addEventListener('focus', function(){
+        var key = brTarima+':'+idx;
+        if(myLocks[key]) return;
+        fetch('/api/lock',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})})
+          .then(function(r){return r.json();})
+          .then(function(d){
+            if(d.ok){
+              myLocks[key] = true;
+              setTimeout(function(){
+                if(!myLocks[key]) return;
+                delete myLocks[key];
+                fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+              }, 90000);
+            }
+          }).catch(function(){});
+      });
+
+      fi.addEventListener('blur', function(){
+        clearTimeout(brSaveTimers[idx]);
+        brSaveField(idx);
+        var key = brTarima+':'+idx;
+        if(!myLocks[key]) return;
+        delete myLocks[key];
+        fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cont:brTarima, idx:idx, user:currentUser.name})}).catch(function(){});
+      });
+
+      fi.addEventListener('input', function(){
+        var val = this.value==='' ? null : parseFloat(this.value);
+        if(!Array.isArray(fisico[brTarima])) fisico[brTarima] = new Array(items.length).fill(null);
+        var it3 = items[idx];
+        fisico[brTarima][idx] = {
+          fisico:   val,
+          daniado:  null,
+          cobertura: val!==null?'Auditado':'En revision',
+          quien:    currentUser?currentUser.name:'',
+          lastUser: currentUser?currentUser.name:'',
+          ts:       new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}),
+          lastAt:   Date.now()
+        };
+        if(it3){
+          var d3 = val!==null ? val-Number(it3.qty) : null;
+          var dEl = document.getElementById('br-d'+idx);
+          if(dEl) dEl.textContent = d3===null?'--':(d3>0?'+':'')+d3;
+        }
+        clearTimeout(brSaveTimers[idx]);
+        brSaveTimers[idx] = setTimeout(function(){ brSaveField(idx); }, 2500);
+      });
+    })(ii);
+  }
+}
+
+
+
 function brSaveField(idx){
   if(!brTarima || !currentUser) return;
   var sv = (fisico[brTarima]||[])[idx];
@@ -12438,10 +12493,6 @@ function brRenderReporte(){
 
 /* ── Hallazgos BoomRoom ──────────────────────────────────────────── */
 function brRenderHallazgos(){
-  // Reutilizar exactamente renderHallazgosList() de Embarques.
-  // Filtra temporalmente hallazgos[] para mostrar solo los de tarimas BoomRoom,
-  // llama renderHallazgosList() que incluye Modificar, Exportar Word y micrófono,
-  // luego restaura hallazgos[].
   var listEl = document.getElementById('br-hall-list'); if(!listEl) return;
   var brs = brConts();
   var orig = hallazgos ? hallazgos.slice() : [];
@@ -12450,7 +12501,7 @@ function brRenderHallazgos(){
   hallazgos = orig;
 }
 
-/* ── Asignaciones BoomRoom ───────────────────────────────────────── */
+
 function brRenderAsign(){
   var div = document.getElementById('br-asign-content'); if(!div) return;
   var brs = brConts();
@@ -12600,17 +12651,16 @@ function brExport(){
 window.brInit             = brInit;
 window._brRefreshIfActive = function(){
   var pg = document.getElementById('pg-boomroom');
-  if(pg && pg.classList.contains('active')){
-    var conteoVisible = document.getElementById('br-tab-conteo');
-    if(conteoVisible && conteoVisible.style.display !== 'none'){
-      brRenderSelector();
-      brRenderConteo(); // re-render aplica serverLocks actualizados del polling
-    }
-    var reporteVisible = document.getElementById('br-tab-reporte');
-    if(reporteVisible && reporteVisible.style.display !== 'none'){
-      brRenderReporte();
-    }
+  if(!pg || !pg.classList.contains('active')) return;
+  var conteoDiv = document.getElementById('br-tab-conteo');
+  if(conteoDiv && conteoDiv.style.display !== 'none'){
+    brRenderSelector();
+    brRenderConteo();
+    // Aplicar locks en vivo sin esperar al proximo render completo
+    if(typeof brApplyConteoLocks === 'function') brApplyConteoLocks();
   }
+  var reporteDiv = document.getElementById('br-tab-reporte');
+  if(reporteDiv && reporteDiv.style.display !== 'none') brRenderReporte();
 };
 
 })(); // FIN BOOMROOM MODULE
