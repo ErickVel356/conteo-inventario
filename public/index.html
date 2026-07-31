@@ -1398,6 +1398,13 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888;margin-left:8px"></span>
         </div>
 
+        <!-- Buscador SKU/nombre — mismo patrón que Embarques (sku-search) -->
+        <div style="margin-bottom:.75rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input id="br-sku-search" type="search" placeholder="🔍 Buscar SKU o nombre..."
+            style="flex:1;max-width:380px;padding:9px 14px;font-size:.9rem;border:1px solid #ccc;border-radius:8px;min-height:42px;-webkit-appearance:none;background:#fff">
+          <span id="br-sku-search-count" style="font-size:.78rem;color:#888"></span>
+        </div>
+
         <!-- Formulario agregar SKU — siempre visible cuando hay tarima seleccionada -->
         <div id="br-add-form" style="display:none;background:#fafaf8;border:1px solid #e0e0e0;border-radius:10px;padding:.75rem .9rem;margin-bottom:.75rem;margin-top:.5rem">
           <div style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.3px">➕ Agregar SKU no teórico</div>
@@ -3936,7 +3943,8 @@ document.getElementById('btn-hall-save').addEventListener('click',async function
   renderHallazgosList();
   // FIX (jul-2026): si el hallazgo se creó/editó desde BoomRoom (cont = tarima BR),
   // también hay que repintar su propio listado (#br-hall-list), que no se actualiza
-  // solo con renderHallazgosList() (esa función pinta #hall-list de Embarques).
+  // solo con renderHallazgosList() (esa función pinta #hall-list de Embarques,
+  // ahora ya filtrado para excluir las tarimas BR).
   if (typeof window.brRenderHallazgos === 'function') window.brRenderHallazgos();
   flashMsg('status-bar','ok', editingId ? '✅ Hallazgo modificado.' : '✅ Hallazgo guardado.');
 });
@@ -3948,7 +3956,14 @@ function renderHallazgosList(){
   // FIX (mié 20-may-2026 noche): excluir hallazgos creados desde CDG.
   // Estos tienen tipo === 'CDG' y se renderizan en renderCDGHallazgosPanel.
   // Antes aparecían duplicados en ambos listados.
-  var visibleHall = hallazgos.filter(function(h){ return h.tipo !== 'CDG'; });
+  // FIX (jul-2026): excluir también hallazgos cuyo cont es una tarima
+  // BoomRoom (h.cont pertenece a brConts()). Antes aparecían acá porque
+  // este filtro solo miraba `tipo`, y los hallazgos de BoomRoom no traen
+  // tipo — se guardan con cont=brTarima pero sin marca de tipo alguna.
+  var brContList = (typeof window.brConts === 'function') ? window.brConts() : [];
+  var visibleHall = hallazgos.filter(function(h){
+    return h.tipo !== 'CDG' && brContList.indexOf(h.cont) < 0;
+  });
   if(!visibleHall.length){
     list.innerHTML='';
     if(empty) empty.style.display='';
@@ -6163,6 +6178,39 @@ document.getElementById('sel-cont').addEventListener('change', function() {
   var s = document.getElementById('sku-search');
   if(s) s.value = '';
   var c = document.getElementById('sku-search-count');
+  if(c) c.textContent = '';
+});
+
+// FIX (jul-2026): mismo buscador pero para la pestaña Conteo de BoomRoom.
+// Réplica exacta de applySkuSearchFilter, apuntando a #br-tbody-conteo.
+// Se expone global para poder re-aplicarse al final de cada brRenderConteo
+// (igual que applySkuSearchFilter se re-aplica al final de renderConteo),
+// así el filtro no se "pierde" cuando la tabla se repinta por un poll.
+window.applyBrSkuSearchFilter = function() {
+  var inp = document.getElementById('br-sku-search');
+  if(!inp) return;
+  var q = (inp.value || '').trim().toLowerCase();
+  var rows = document.querySelectorAll('#br-tbody-conteo tr');
+  var shown = 0;
+  rows.forEach(function(row) {
+    if(!row.cells || row.cells.length < 2) return;
+    var sku  = (row.cells[0] ? row.cells[0].textContent : '').toLowerCase();
+    var name = (row.cells[1] ? row.cells[1].textContent : '').toLowerCase();
+    var match = !q || sku.indexOf(q) >= 0 || name.indexOf(q) >= 0;
+    row.style.display = match ? '' : 'none';
+    if(match) shown++;
+  });
+  var cnt = document.getElementById('br-sku-search-count');
+  if(cnt) cnt.textContent = q ? (shown + ' resultado' + (shown!==1?'s':'')) : '';
+};
+
+document.getElementById('br-sku-search').addEventListener('input', window.applyBrSkuSearchFilter);
+
+// Limpiar el buscador al cambiar de tarima
+document.getElementById('br-sel-tarima').addEventListener('change', function() {
+  var s = document.getElementById('br-sku-search');
+  if(s) s.value = '';
+  var c = document.getElementById('br-sku-search-count');
   if(c) c.textContent = '';
 });
 </script>
@@ -12323,6 +12371,11 @@ function brRenderConteo(){
 
   // Aplicar locks y registrar listeners -- igual que el patch de Embarques
   brApplyConteoLocks();
+
+  // FIX (jul-2026): reaplicar el filtro de búsqueda SKU tras repintar la tabla
+  // (mismo motivo que en Embarques: un poll puede disparar brRenderConteo y
+  // "perder" visualmente el filtro si no se reaplica).
+  if (typeof window.applyBrSkuSearchFilter === 'function') window.applyBrSkuSearchFilter();
 }
 
 /* -- brApplyConteoLocks -- identico al patch renderConteo de Embarques --
@@ -12707,6 +12760,7 @@ function brExport(){
 
 /* ── Exponer funciones globalmente ───────────────────────────────── */
 window.brInit             = brInit;
+window.brConts            = brConts;
 window.brRenderHallazgos  = brRenderHallazgos;
 window._brRefreshIfActive = function(){
   var pg = document.getElementById('pg-boomroom');
