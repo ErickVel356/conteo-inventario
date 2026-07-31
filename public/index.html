@@ -1392,10 +1392,10 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <!-- Selector de Tarima + Fecha de trabajo -->
         <div class="sel-wrap" style="flex-wrap:wrap;gap:8px;align-items:center">
           <label style="font-size:.8rem;color:#666;font-weight:600">Tarima (BoomRoom):</label>
-          <select id="br-sel-tarima" style="display:none"></select>
+          <select id="br-sel-tarima" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:180px"></select>
           <input type="text" id="br-tarima-buscar" list="br-tarima-datalist" autocomplete="off"
-            placeholder="Buscar o escribir tarima (ej: BR001.01)"
-            style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:220px">
+            placeholder="🔍 Buscar tarima (ej: BR001.01)"
+            style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:200px">
           <datalist id="br-tarima-datalist"></datalist>
           <label style="font-size:.8rem;color:#666;font-weight:600;margin-left:12px">F. Trabajo:</label>
           <input type="date" id="br-fecha-trabajo" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-height:36px">
@@ -12102,28 +12102,43 @@ function brWireEvents(){
     });
 
     // FIX (jul-2026): buscador con autocompletado (datalist) para la Tarima.
-    // El <select> original queda oculto pero sigue siendo la fuente de
-    // verdad — al detectar una coincidencia exacta con una opción del
-    // datalist, se refleja en el select y se dispara su 'change' para
-    // reusar toda la lógica ya existente (fecha, brRenderConteo, etc).
+    // El <select> original queda visible al lado como respaldo — si el
+    // buscador fallara por algún motivo, el usuario siempre puede usar el
+    // dropdown de toda la vida. Escucha 'input' Y 'change' porque algunos
+    // navegadores solo disparan uno de los dos al elegir una sugerencia
+    // del datalist con clic (en vez de tipear el valor completo).
     var tarimaBuscar = document.getElementById('br-tarima-buscar');
     if(tarimaBuscar && !tarimaBuscar._brW){
       tarimaBuscar._brW = true;
-      tarimaBuscar.addEventListener('input', function(){
-        var val = this.value.trim();
+      var handleTarimaBuscar = function(){
+        var val = tarimaBuscar.value.trim();
         var brs = brConts();
         if(val && brs.indexOf(val) >= 0){
+          // FIX: siempre disparar el render, incluso si sel.value ya
+          // coincidía con val — antes, si brTarima quedaba igual al valor
+          // ya escrito, no se forzaba brRenderConteo() y la tabla podía
+          // quedarse desactualizada tras editar un dígito y volver al
+          // mismo valor, o si el 'change' del select no llegaba a tiempo.
           var sel = document.getElementById('br-sel-tarima');
-          if(sel && sel.value !== val){
+          if(sel){
             sel.value = val;
-            sel.dispatchEvent(new Event('change'));
+            brTarima = val;
+            var fechaInp = document.getElementById('br-fecha-trabajo');
+            if(fechaInp && teorico[brTarima] && teorico[brTarima].fechaCarga){
+              fechaInp.value = teorico[brTarima].fechaCarga;
+            } else if(fechaInp) {
+              fechaInp.value = '';
+            }
+            brRenderConteo();
           }
         } else if(!val && brTarima){
           // Campo vaciado manualmente -> deseleccionar tarima
           var sel2 = document.getElementById('br-sel-tarima');
-          if(sel2){ sel2.value = ''; sel2.dispatchEvent(new Event('change')); }
+          if(sel2){ sel2.value = ''; brTarima = null; brRenderConteo(); }
         }
-      });
+      };
+      tarimaBuscar.addEventListener('input', handleTarimaBuscar);
+      tarimaBuscar.addEventListener('change', handleTarimaBuscar);
     }
 
     // Fecha de trabajo — guarda en teorico[brTarima].fechaCarga
@@ -12820,6 +12835,12 @@ window._brRefreshIfActive = function(){
   }
   var reporteDiv = document.getElementById('br-tab-reporte');
   if(reporteDiv && reporteDiv.style.display !== 'none') brRenderReporte();
+  // FIX (jul-2026): también refrescar Hallazgos de BoomRoom si esa pestaña
+  // está activa — antes solo se refrescaba al hacer click en la pestaña,
+  // así que un hallazgo nuevo (propio o de otro usuario) no aparecía hasta
+  // que el usuario cambiaba de pestaña y volvía.
+  var hallDiv = document.getElementById('br-tab-hallazgos');
+  if(hallDiv && hallDiv.style.display !== 'none') brRenderHallazgos();
 };
 
 })(); // FIN BOOMROOM MODULE
