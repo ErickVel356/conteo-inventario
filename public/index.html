@@ -3934,6 +3934,10 @@ document.getElementById('btn-hall-save').addEventListener('click',async function
   window._editingHallId=null;
   document.getElementById('modal-hallazgo').classList.remove('open');
   renderHallazgosList();
+  // FIX (jul-2026): si el hallazgo se creó/editó desde BoomRoom (cont = tarima BR),
+  // también hay que repintar su propio listado (#br-hall-list), que no se actualiza
+  // solo con renderHallazgosList() (esa función pinta #hall-list de Embarques).
+  if (typeof window.brRenderHallazgos === 'function') window.brRenderHallazgos();
   flashMsg('status-bar','ok', editingId ? '✅ Hallazgo modificado.' : '✅ Hallazgo guardado.');
 });
 document.getElementById('modal-hallazgo').addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});
@@ -12703,6 +12707,7 @@ function brExport(){
 
 /* ── Exponer funciones globalmente ───────────────────────────────── */
 window.brInit             = brInit;
+window.brRenderHallazgos  = brRenderHallazgos;
 window._brRefreshIfActive = function(){
   var pg = document.getElementById('pg-boomroom');
   if(!pg || !pg.classList.contains('active')) return;
