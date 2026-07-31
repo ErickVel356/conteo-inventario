@@ -1393,10 +1393,12 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <div class="sel-wrap" style="flex-wrap:wrap;gap:8px;align-items:center">
           <label style="font-size:.8rem;color:#666;font-weight:600">Tarima (BoomRoom):</label>
           <select id="br-sel-tarima" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:180px"></select>
-          <input type="text" id="br-tarima-buscar" list="br-tarima-datalist" autocomplete="off"
-            placeholder="🔍 Buscar tarima (ej: BR001.01)"
-            style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:200px">
-          <datalist id="br-tarima-datalist"></datalist>
+          <div style="position:relative;display:inline-block">
+            <input type="text" id="br-tarima-buscar" autocomplete="off"
+              placeholder="🔍 Buscar tarima (ej: BR001.01)"
+              style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:200px">
+            <div id="br-tarima-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:#fff;border:1px solid #ccc;border-radius:8px;max-height:220px;overflow-y:auto;min-width:220px;box-shadow:0 4px 12px rgba(0,0,0,.15);margin-top:2px"></div>
+          </div>
           <label style="font-size:.8rem;color:#666;font-weight:600;margin-left:12px">F. Trabajo:</label>
           <input type="date" id="br-fecha-trabajo" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-height:36px">
           <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888;margin-left:8px"></span>
@@ -3965,11 +3967,8 @@ function renderHallazgosList(){
   // este filtro solo miraba `tipo`, y los hallazgos de BoomRoom no traen
   // tipo — se guardan con cont=brTarima pero sin marca de tipo alguna.
   var brContList = (typeof window.brConts === 'function') ? window.brConts() : [];
-  var isBrContext = window._brHallazgosContext === true;
   var visibleHall = hallazgos.filter(function(h){
-    if (h.tipo === 'CDG') return false;
-    if (isBrContext) return true; // ya viene pre-filtrado a solo BR desde brRenderHallazgos
-    return brContList.indexOf(h.cont) < 0; // vista Embarques: excluir los de BoomRoom
+    return h.tipo !== 'CDG' && brContList.indexOf(h.cont) < 0; // vista Embarques: excluir los de BoomRoom
   });
   if(!visibleHall.length){
     list.innerHTML='';
@@ -12101,44 +12100,72 @@ function brWireEvents(){
       brRenderConteo();
     });
 
-    // FIX (jul-2026): buscador con autocompletado (datalist) para la Tarima.
-    // El <select> original queda visible al lado como respaldo — si el
-    // buscador fallara por algún motivo, el usuario siempre puede usar el
-    // dropdown de toda la vida. Escucha 'input' Y 'change' porque algunos
-    // navegadores solo disparan uno de los dos al elegir una sugerencia
-    // del datalist con clic (en vez de tipear el valor completo).
-    var tarimaBuscar = document.getElementById('br-tarima-buscar');
+    // FIX (jul-2026, v2): el <datalist> nativo del navegador se percibía
+    // "lento" (varios segundos) al escribir, porque el navegador filtra su
+    // propio popup de sugerencias contra TODAS las opciones cargadas, y con
+    // cientos/miles de tarimas ese filtrado nativo se vuelve pesado en
+    // varios navegadores/dispositivos. Se reemplaza por un dropdown propio
+    // en JS: se filtra en memoria (rápido) y se muestran máximo 25
+    // resultados, evitando el cuello de botella del datalist.
+    // El <select> original queda visible al lado como respaldo.
+    var tarimaBuscar   = document.getElementById('br-tarima-buscar');
+    var tarimaDropdown = document.getElementById('br-tarima-dropdown');
     if(tarimaBuscar && !tarimaBuscar._brW){
       tarimaBuscar._brW = true;
-      var handleTarimaBuscar = function(){
+
+      var brHideDropdown = function(){
+        if(tarimaDropdown){ tarimaDropdown.style.display='none'; tarimaDropdown.innerHTML=''; }
+      };
+
+      var brSelectTarima = function(val){
+        var sel = document.getElementById('br-sel-tarima');
+        if(sel) sel.value = val;
+        brTarima = val || null;
+        var fechaInp = document.getElementById('br-fecha-trabajo');
+        if(fechaInp){
+          fechaInp.value = (brTarima && teorico[brTarima] && teorico[brTarima].fechaCarga)
+            ? teorico[brTarima].fechaCarga : '';
+        }
+        tarimaBuscar.value = val || '';
+        brHideDropdown();
+        brRenderConteo();
+      };
+
+      var brRenderTarimaDropdown = function(q){
+        if(!tarimaDropdown) return;
+        var brs = brConts();
+        var ql = q.toLowerCase();
+        var matches = q ? brs.filter(function(c){ return c.toLowerCase().indexOf(ql) >= 0; }) : brs;
+        var total = matches.length;
+        matches = matches.slice(0, 25); // limitar resultados -> mantiene el dropdown rápido
+        if(!matches.length){ brHideDropdown(); return; }
+        tarimaDropdown.innerHTML = matches.map(function(c){
+          return '<div class="br-tarima-opt" data-v="'+brEsc(c)+'" style="padding:7px 12px;cursor:pointer;font-size:.85rem">'+brEsc(c)+'</div>';
+        }).join('') + (total>25 ? '<div style="padding:5px 12px;font-size:.72rem;color:#999">'+(total-25)+' más — seguí escribiendo para acotar</div>' : '');
+        tarimaDropdown.style.display = 'block';
+        tarimaDropdown.querySelectorAll('.br-tarima-opt').forEach(function(opt){
+          // mousedown (no click) para que dispare ANTES del blur del input
+          opt.addEventListener('mousedown', function(e){
+            e.preventDefault();
+            brSelectTarima(this.dataset.v);
+          });
+          opt.addEventListener('mouseenter', function(){ this.style.background='#f2f2f2'; });
+          opt.addEventListener('mouseleave', function(){ this.style.background=''; });
+        });
+      };
+
+      tarimaBuscar.addEventListener('input', function(){
         var val = tarimaBuscar.value.trim();
+        brRenderTarimaDropdown(val);
         var brs = brConts();
         if(val && brs.indexOf(val) >= 0){
-          // FIX: siempre disparar el render, incluso si sel.value ya
-          // coincidía con val — antes, si brTarima quedaba igual al valor
-          // ya escrito, no se forzaba brRenderConteo() y la tabla podía
-          // quedarse desactualizada tras editar un dígito y volver al
-          // mismo valor, o si el 'change' del select no llegaba a tiempo.
-          var sel = document.getElementById('br-sel-tarima');
-          if(sel){
-            sel.value = val;
-            brTarima = val;
-            var fechaInp = document.getElementById('br-fecha-trabajo');
-            if(fechaInp && teorico[brTarima] && teorico[brTarima].fechaCarga){
-              fechaInp.value = teorico[brTarima].fechaCarga;
-            } else if(fechaInp) {
-              fechaInp.value = '';
-            }
-            brRenderConteo();
-          }
+          brSelectTarima(val); // coincidencia exacta -> seleccionar de inmediato
         } else if(!val && brTarima){
-          // Campo vaciado manualmente -> deseleccionar tarima
-          var sel2 = document.getElementById('br-sel-tarima');
-          if(sel2){ sel2.value = ''; brTarima = null; brRenderConteo(); }
+          brSelectTarima(''); // campo vaciado -> deseleccionar
         }
-      };
-      tarimaBuscar.addEventListener('input', handleTarimaBuscar);
-      tarimaBuscar.addEventListener('change', handleTarimaBuscar);
+      });
+      tarimaBuscar.addEventListener('focus', function(){ brRenderTarimaDropdown(tarimaBuscar.value.trim()); });
+      tarimaBuscar.addEventListener('blur', function(){ setTimeout(brHideDropdown, 150); });
     }
 
     // Fecha de trabajo — guarda en teorico[brTarima].fechaCarga
@@ -12307,10 +12334,8 @@ function brRenderSelector(){
   if(brTarima && brs.indexOf(brTarima) < 0) brTarima = null;
   sel.value = brTarima || '';
 
-  // FIX (jul-2026): poblar datalist para el buscador con autocompletado
-  // y mantener sincronizado el input de texto con la tarima seleccionada.
-  var dl = document.getElementById('br-tarima-datalist');
-  if(dl) dl.innerHTML = brs.map(function(c){ return '<option value="'+brEsc(c)+'">'; }).join('');
+  // Mantener sincronizado el input de búsqueda con la tarima seleccionada
+  // (no tocar mientras el usuario está escribiendo en ese mismo campo).
   var buscarInp = document.getElementById('br-tarima-buscar');
   if(buscarInp && document.activeElement !== buscarInp) buscarInp.value = brTarima || '';
 
@@ -12387,7 +12412,7 @@ function brRenderConteo(){
         +' style="width:80px;padding:5px 8px;border:1px solid #ccc;border-radius:6px;text-align:center;font-size:.88rem">'
         +hint+lockLabel+'</td>'
       +'<td class="tc '+dc+'" id="br-d'+i+'">'+dv+'</td>'
-      +'<td class="tc">'+estado+'</td>'
+      +'<td class="tc" id="br-est'+i+'">'+estado+'</td>'
       +'<td class="tc">--</td>'
       +'</tr>';
   });
@@ -12524,6 +12549,17 @@ function brApplyConteoLocks(){
           var d3 = val!==null ? val-Number(it3.qty) : null;
           var dEl = document.getElementById('br-d'+idx);
           if(dEl) dEl.textContent = d3===null?'--':(d3>0?'+':'')+d3;
+          // FIX (jul-2026): actualizar Estado en el mismo instante que Diferencia.
+          // Antes Estado solo se recalculaba en el próximo brRenderConteo()
+          // completo (al guardar/poll/blur), por eso se percibía "lento" o
+          // desincronizado respecto a la Diferencia, que sí era inmediata.
+          var estEl = document.getElementById('br-est'+idx);
+          if(estEl){
+            estEl.innerHTML = d3===null ? '&mdash;'
+              : d3===0 ? '<span style="color:#1e7e34;font-weight:600">Exacto</span>'
+              : d3>0   ? '<span style="color:#1565c0">Sobrante</span>'
+              :          '<span style="color:#c0392b">Faltante</span>';
+          }
         }
         clearTimeout(brSaveTimers[idx]);
         brSaveTimers[idx] = setTimeout(function(){ brSaveField(idx); }, 2500);
@@ -12639,38 +12675,97 @@ function brRenderReporte(){
 }
 
 /* ── Hallazgos BoomRoom ──────────────────────────────────────────── */
+// FIX (jul-2026, v2): reescrita de forma totalmente independiente.
+// La versión anterior reasignaba temporalmente el array global `hallazgos`
+// y movía el <div id="hall-list"> de Embarques dentro de #br-hall-list
+// para reusar renderHallazgosList(). Eso dependía de un flag de contexto
+// (_brHallazgosContext) para que ese mismo filtro no se auto-anulara, y
+// terminó siendo frágil: alcanzaba con que brConts() devolviera algo
+// inesperado en ese instante para que el resultado quedara vacío en los
+// dos lados. Ahora esta función NUNCA toca `hallazgos` ni mueve nodos —
+// solo lee y pinta directo en #br-hall-list, con su propio HTML (mismo
+// diseño de tarjeta que Embarques).
 function brRenderHallazgos(){
-  var brList  = document.getElementById('br-hall-list'); if(!brList) return;
-  var embList = document.getElementById('hall-list');
+  var brList = document.getElementById('br-hall-list'); if(!brList) return;
 
-  // Filtrar hallazgos de BoomRoom
-  var brs  = brConts();
-  var orig = hallazgos ? hallazgos.slice() : [];
-  hallazgos = orig.filter(function(h){ return h.cont && brs.indexOf(h.cont) >= 0; });
+  var brs = brConts();
+  var visibleHall = (hallazgos||[]).filter(function(h){
+    return h.tipo !== 'CDG' && h.cont && brs.indexOf(h.cont) >= 0;
+  });
 
-  // Mover temporalmente hall-list al contenedor de BoomRoom para que
-  // renderHallazgosList() escriba en el lugar correcto
-  if(embList && embList.parentNode) {
-    brList.appendChild(embList);
-  }
-  // FIX (jul-2026): renderHallazgosList() ahora excluye por su cuenta los
-  // conts de BoomRoom (para no duplicarlos en Embarques). Pero acá, dentro
-  // de brRenderHallazgos, el array `hallazgos` YA viene pre-filtrado a solo
-  // BR (línea de arriba) — sin este flag, ese mismo filtro de exclusión
-  // volvía a quitarlos y el resultado quedaba vacío en ambos lados.
-  window._brHallazgosContext = true;
-  renderHallazgosList();
-  window._brHallazgosContext = false;
-
-  // Restaurar hall-list a su lugar original (tab-hallazgos de Embarques)
-  var embTab = document.getElementById('tab-hallazgos');
-  if(embList && embTab) {
-    var emptyP = embTab.querySelector('p.empty');
-    if(emptyP) embTab.insertBefore(embList, emptyP);
-    else embTab.appendChild(embList);
+  if(!visibleHall.length){
+    brList.innerHTML = '<p class="empty" style="color:#aaa;text-align:center;padding:1rem;font-size:.85rem">Sin hallazgos registrados aún.</p>';
+    return;
   }
 
-  hallazgos = orig;
+  var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">'
+    +'<span style="font-size:.85rem;color:#666">Total: <strong>'+visibleHall.length+'</strong> hallazgo'+(visibleHall.length!==1?'s':'')+' en '+Object.keys(visibleHall.reduce(function(a,h){a[h.cont]=1;return a;},{})).length+' tarima(s)</span>'
+    +(typeof exportHallazgosWord==='function' ? '<button class="btn btn-sm btn-blue" id="br-btn-hall-word">📥 Exportar Word</button>' : '')
+    +'</div>';
+
+  var byCont = {};
+  visibleHall.forEach(function(h){ (byCont[h.cont] = byCont[h.cont]||[]).push(h); });
+  var groupKeys = Object.keys(byCont).sort();
+  var globalIdx = 0;
+  var html = toolbar;
+  groupKeys.forEach(function(cont){
+    html += '<div class="sec" style="margin-top:1rem;margin-bottom:.5rem">📦 '+brEsc(cont)+' <span style="font-weight:400;color:#888;font-size:.8rem">('+byCont[cont].length+')</span></div>';
+    byCont[cont].forEach(function(hh){
+      globalIdx++;
+      var metaLine = [];
+      if(hh.fecha)        metaLine.push('📅 '+brEsc(hh.fecha));
+      if(hh.turno)        metaLine.push('⏱ '+brEsc(hh.turno));
+      if(hh.area)         metaLine.push('📍 '+brEsc(hh.area));
+      if(hh.tipoHallazgo) metaLine.push('🏷 '+brEsc(hh.tipoHallazgo));
+      html += '<div class="card" style="margin-bottom:.75rem">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:.5rem">'
+        +'<span class="badge b-diff">⚠ Hallazgo #'+globalIdx+'</span>'
+        +'<span style="font-size:.75rem;color:#aaa">'+brEsc(hh.autor||'—')+' · '+brEsc(hh.ts||'')+'</span>'
+        +'</div>'
+        +(metaLine.length?'<p style="font-size:.72rem;color:#666;margin-bottom:.4rem">'+metaLine.join(' · ')+'</p>':'')
+        +'<p style="font-size:.875rem;font-weight:700;margin-bottom:.4rem">'+brEsc(hh.quePaso||hh.desc||'')+'</p>'
+        +(hh.condicion?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Condición:</strong> '+brEsc(hh.condicion)+'</p>':'')
+        +(hh.criterio?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Criterio:</strong> '+brEsc(hh.criterio)+'</p>':'')
+        +(hh.causa?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Causa:</strong> '+brEsc(hh.causa)+'</p>':'')
+        +(hh.efecto?'<p style="font-size:.82rem;margin-bottom:.2rem"><strong>Efecto:</strong> '+brEsc(hh.efecto)+'</p>':'')
+        +(hh.recomendacion?'<p style="font-size:.82rem"><strong>Recomendación:</strong> '+brEsc(hh.recomendacion)+'</p>':'')
+        +(hh.foto?'<img src="'+hh.foto+'" style="max-width:100%;max-height:120px;border-radius:8px;margin-top:6px;border:1px solid #e0e0e0">':'')
+        +(hh.modificadoPor?'<p style="font-size:.72rem;color:#aaa;margin-top:4px">Modificado por '+brEsc(hh.modificadoPor)+' · '+brEsc(hh.modificadoTs)+'</p>':'')
+        +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-warn br-edit-hall-btn" data-id="'+brEsc(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px">✏️ Modificar</button>'
+        +((typeof isHallazgoAdmin==='function' && isHallazgoAdmin())?'<button class="btn btn-sm br-del-hall-btn" data-id="'+brEsc(hh.id)+'" style="font-size:.78rem;min-height:34px;padding:4px 12px;background:#c0392b;color:#fff">🗑 Eliminar</button>':'')
+        +'</div>'
+        +'</div>';
+    });
+  });
+  brList.innerHTML = html;
+
+  var btnWord = document.getElementById('br-btn-hall-word');
+  if(btnWord && typeof exportHallazgosWord==='function') btnWord.addEventListener('click', exportHallazgosWord);
+
+  brList.querySelectorAll('.br-edit-hall-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(typeof openHallazgoModal==='function') openHallazgoModal(this.dataset.id);
+    });
+  });
+  brList.querySelectorAll('.br-del-hall-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if(typeof isHallazgoAdmin==='function' && !isHallazgoAdmin()){ alert('Sin permiso para eliminar.'); return; }
+      var id = this.dataset.id;
+      var h = hallazgos.find(function(x){ return x.id===id; });
+      var label = h ? (h.cont+' — '+(h.quePaso||h.desc||'(sin descripción)').substring(0,60)) : id;
+      if(!confirm('¿Eliminar este hallazgo?\n\n'+label+'\n\nEsta acción NO se puede deshacer.')) return;
+      hallazgos = hallazgos.filter(function(x){ return x.id !== id; });
+      if(typeof deleteHallazgoDirectToSupabase==='function') deleteHallazgoDirectToSupabase(id);
+      fetch('/api/hallazgo',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'delete', id:id})})
+        .then(function(r){return r.json();})
+        .then(function(d){if(d&&d.ok)lastVersion=d.version;})
+        .catch(function(){});
+      if(typeof addHist==='function') addHist('Eliminó hallazgo '+(h?h.cont:id));
+      brRenderHallazgos();
+      if(typeof flashMsg==='function') flashMsg('status-bar','ok','✅ Hallazgo eliminado.');
+    });
+  });
 }
 
 
