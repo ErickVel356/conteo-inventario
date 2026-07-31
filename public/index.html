@@ -1392,7 +1392,11 @@ textarea.field-inp{resize:vertical;min-height:72px}
         <!-- Selector de Tarima + Fecha de trabajo -->
         <div class="sel-wrap" style="flex-wrap:wrap;gap:8px;align-items:center">
           <label style="font-size:.8rem;color:#666;font-weight:600">Tarima (BoomRoom):</label>
-          <select id="br-sel-tarima" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:200px"></select>
+          <select id="br-sel-tarima" style="display:none"></select>
+          <input type="text" id="br-tarima-buscar" list="br-tarima-datalist" autocomplete="off"
+            placeholder="Buscar o escribir tarima (ej: BR001.01)"
+            style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-width:220px">
+          <datalist id="br-tarima-datalist"></datalist>
           <label style="font-size:.8rem;color:#666;font-weight:600;margin-left:12px">F. Trabajo:</label>
           <input type="date" id="br-fecha-trabajo" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-height:36px">
           <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888;margin-left:8px"></span>
@@ -3961,8 +3965,11 @@ function renderHallazgosList(){
   // este filtro solo miraba `tipo`, y los hallazgos de BoomRoom no traen
   // tipo — se guardan con cont=brTarima pero sin marca de tipo alguna.
   var brContList = (typeof window.brConts === 'function') ? window.brConts() : [];
+  var isBrContext = window._brHallazgosContext === true;
   var visibleHall = hallazgos.filter(function(h){
-    return h.tipo !== 'CDG' && brContList.indexOf(h.cont) < 0;
+    if (h.tipo === 'CDG') return false;
+    if (isBrContext) return true; // ya viene pre-filtrado a solo BR desde brRenderHallazgos
+    return brContList.indexOf(h.cont) < 0; // vista Embarques: excluir los de BoomRoom
   });
   if(!visibleHall.length){
     list.innerHTML='';
@@ -12094,6 +12101,31 @@ function brWireEvents(){
       brRenderConteo();
     });
 
+    // FIX (jul-2026): buscador con autocompletado (datalist) para la Tarima.
+    // El <select> original queda oculto pero sigue siendo la fuente de
+    // verdad — al detectar una coincidencia exacta con una opción del
+    // datalist, se refleja en el select y se dispara su 'change' para
+    // reusar toda la lógica ya existente (fecha, brRenderConteo, etc).
+    var tarimaBuscar = document.getElementById('br-tarima-buscar');
+    if(tarimaBuscar && !tarimaBuscar._brW){
+      tarimaBuscar._brW = true;
+      tarimaBuscar.addEventListener('input', function(){
+        var val = this.value.trim();
+        var brs = brConts();
+        if(val && brs.indexOf(val) >= 0){
+          var sel = document.getElementById('br-sel-tarima');
+          if(sel && sel.value !== val){
+            sel.value = val;
+            sel.dispatchEvent(new Event('change'));
+          }
+        } else if(!val && brTarima){
+          // Campo vaciado manualmente -> deseleccionar tarima
+          var sel2 = document.getElementById('br-sel-tarima');
+          if(sel2){ sel2.value = ''; sel2.dispatchEvent(new Event('change')); }
+        }
+      });
+    }
+
     // Fecha de trabajo — guarda en teorico[brTarima].fechaCarga
     var brFechaInp = document.getElementById('br-fecha-trabajo');
     if(brFechaInp && !brFechaInp._brW) {
@@ -12259,6 +12291,13 @@ function brRenderSelector(){
 
   if(brTarima && brs.indexOf(brTarima) < 0) brTarima = null;
   sel.value = brTarima || '';
+
+  // FIX (jul-2026): poblar datalist para el buscador con autocompletado
+  // y mantener sincronizado el input de texto con la tarima seleccionada.
+  var dl = document.getElementById('br-tarima-datalist');
+  if(dl) dl.innerHTML = brs.map(function(c){ return '<option value="'+brEsc(c)+'">'; }).join('');
+  var buscarInp = document.getElementById('br-tarima-buscar');
+  if(buscarInp && document.activeElement !== buscarInp) buscarInp.value = brTarima || '';
 
   // Cargar fecha de trabajo de la tarima actual
   var fechaInp2 = document.getElementById('br-fecha-trabajo');
@@ -12599,7 +12638,14 @@ function brRenderHallazgos(){
   if(embList && embList.parentNode) {
     brList.appendChild(embList);
   }
+  // FIX (jul-2026): renderHallazgosList() ahora excluye por su cuenta los
+  // conts de BoomRoom (para no duplicarlos en Embarques). Pero acá, dentro
+  // de brRenderHallazgos, el array `hallazgos` YA viene pre-filtrado a solo
+  // BR (línea de arriba) — sin este flag, ese mismo filtro de exclusión
+  // volvía a quitarlos y el resultado quedaba vacío en ambos lados.
+  window._brHallazgosContext = true;
   renderHallazgosList();
+  window._brHallazgosContext = false;
 
   // Restaurar hall-list a su lugar original (tab-hallazgos de Embarques)
   var embTab = document.getElementById('tab-hallazgos');
