@@ -490,6 +490,37 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
 
     <!-- ── PÁGINA: MENÚ PRINCIPAL ─────────────────────────────── -->
+    <!-- ── PÁGINA: SELECCIÓN DE GRUPO (HPC / Cemaco) ─────────────────
+         Agregado ago-2026. HPC agrupa los 3 módulos que ya existían
+         (Conteos Hamilton, Conteos CDG, Bodega CDG — estos siguen viviendo
+         dentro de #pg-menu, sin cambios). Cemaco es un grupo nuevo, vacío
+         por ahora, a la espera de que se definan sus módulos.
+    ─────────────────────────────────────────────────────────────────── -->
+    <div id="pg-grupo" class="page">
+      <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Con qué grupo vas a trabajar?</p>
+      <div class="menu-grid">
+        <div class="menu-card" id="mc-grupo-hpc">
+          <div class="mc-icon">🏭</div>
+          <div class="mc-title">HPC</div>
+          <div class="mc-sub">Conteos Hamilton · Conteos CDG · Bodega CDG</div>
+        </div>
+        <div class="menu-card" id="mc-grupo-cemaco">
+          <div class="mc-icon">🏬</div>
+          <div class="mc-title">Cemaco</div>
+          <div class="mc-sub">Próximamente</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PÁGINA: CEMACO — vacía por ahora -->
+    <div id="pg-cemaco" class="page">
+      <div style="text-align:center;padding:3rem 1rem;color:#888">
+        <div style="font-size:2.6rem;margin-bottom:1rem">🏬</div>
+        <p style="font-size:1rem;font-weight:600;color:#555">Cemaco</p>
+        <p style="font-size:.85rem;margin-top:.5rem">Todavía no hay módulos disponibles para este grupo.</p>
+      </div>
+    </div>
+
     <div id="pg-menu" class="page active">
       <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Qué vas a contar hoy?</p>
       <div id="menu-grid-cards" class="menu-grid" style="visibility:hidden">
@@ -2239,8 +2270,9 @@ function afterLogin(){
     updateSubmenúCounts();
     return;
   }
-  navTo('pg-menu','📦 Conteo de Inventario');
+  navTo('pg-grupo','📦 Conteo de Inventario');
   // Revelar cards del menú — permisos ya resueltos, sin parpadeo
+  // (el menú de módulos sigue viviendo en #pg-menu, detrás de la tarjeta HPC)
   var _mgc = document.getElementById('menu-grid-cards');
   if(_mgc) _mgc.style.visibility = '';
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
@@ -2292,6 +2324,16 @@ function updateOnlineBar(){
   if(!activos.length){bar.innerHTML='👥 En línea: <em style="color:#aaa">Ninguno</em>';return;}
   bar.innerHTML='👥 En línea: '+activos.map(function(u){return'<span style="margin-right:8px">🟢 '+escH(u)+'</span>';}).join('');
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   SELECCIÓN DE GRUPO (HPC / Cemaco) — agregado ago-2026
+══════════════════════════════════════════════════════════════════ */
+document.getElementById('mc-grupo-hpc').addEventListener('click',function(){
+  navTo('pg-menu','📦 Conteo de Inventario');
+});
+document.getElementById('mc-grupo-cemaco').addEventListener('click',function(){
+  navTo('pg-cemaco','🏬 Cemaco');
+});
 
 /* ══════════════════════════════════════════════════════════════════
    MENÚ PRINCIPAL
