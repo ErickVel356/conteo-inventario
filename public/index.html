@@ -427,6 +427,35 @@ textarea.field-inp{resize:vertical;min-height:72px}
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════
+     GATE CEMACO — clave de acceso propia del grupo Cemaco (ago-2026)
+     - Mismo mecanismo que el gate de HPC: clave vive en Supabase
+       (key='app_config', campo "cemacoKey"), default 'cemaco2026' si
+       el campo aún no existe. Se cambia desde Supabase igual que las
+       otras claves (accessKey, bodegaKey, rgisKey).
+     - Se recuerda por el día en sessionStorage (mismo criterio que HPC):
+       recargar el MISMO día no vuelve a pedir la clave de Cemaco.
+     - Al pasar, lleva directo a #pg-cemaco (que hoy está vacío).
+══════════════════════════════════════════════════════════════ -->
+<div id="pg-gate-cemaco" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+    <div style="text-align:center;margin-bottom:1.5rem">
+      <div style="font-size:2.5rem;margin-bottom:8px">🔒</div>
+      <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:4px">Acceso restringido</h2>
+      <p style="font-size:.85rem;color:#888">Ingresa la clave de acceso de Cemaco</p>
+    </div>
+    <div style="margin-bottom:1rem">
+      <input id="gate-cemaco-pass" type="password" autocomplete="off" placeholder="Clave de acceso"
+        style="display:block;width:100%;padding:12px 14px;font-size:1rem;border:1px solid #ccc;border-radius:10px;background:#fff;min-height:48px;font-family:inherit;box-sizing:border-box">
+    </div>
+    <div id="gate-cemaco-err" style="display:none;color:#c0392b;font-size:.85rem;margin-bottom:.75rem;padding:8px 12px;background:#fdecea;border-radius:8px"></div>
+    <button id="btn-gate-cemaco-enter" style="display:block;width:100%;padding:13px;font-size:1rem;font-weight:700;background:#1a1a1a;color:#fff;border:none;border-radius:10px;cursor:pointer;min-height:48px;font-family:inherit">Continuar</button>
+    <div id="gate-cemaco-loading" style="display:none;text-align:center;margin-top:1rem;font-size:.8rem;color:#888">Verificando…</div>
+    <button id="btn-gate-cemaco-volver" style="display:block;width:100%;margin-top:.75rem;padding:10px;font-size:.82rem;background:none;border:none;color:#888;cursor:pointer">‹ Volver</button>
+    <div style="text-align:center;margin-top:1rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.32 · 13-jun</div>
+  </div>
+</div>
+
 <div id="pg-login" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
   <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
     <div style="text-align:center;margin-bottom:1.5rem">
@@ -2082,7 +2111,7 @@ function fetchAccessKey(){
   })
   .then(function(r){ if(!r.ok) throw new Error('config HTTP '+r.status); return r.json(); })
   .then(function(rows){
-    if(!rows || !rows.length) return { accessKey:'', bodegaKey:'12345', rgisKey:'', gateVersion:'v1' };
+    if(!rows || !rows.length) return { accessKey:'', bodegaKey:'12345', rgisKey:'', cemacoKey:'cemaco2026', gateVersion:'v1' };
     var v = rows[0].value;
     try {
       var cfg = (typeof v === 'string') ? JSON.parse(v) : v;
@@ -2090,10 +2119,14 @@ function fetchAccessKey(){
         accessKey:   (cfg && cfg.accessKey)   ? String(cfg.accessKey)   : '',
         bodegaKey:   (cfg && cfg.bodegaKey)   ? String(cfg.bodegaKey)   : '12345',
         rgisKey:     (cfg && cfg.rgisKey)     ? String(cfg.rgisKey)     : '',
+        // FIX (ago-2026): clave de acceso para el grupo Cemaco, mismo mecanismo
+        // que accessKey/bodegaKey/rgisKey. Default 'cemaco2026' mientras no se
+        // agregue el campo "cemacoKey" al JSON de app_config en Supabase.
+        cemacoKey:   (cfg && cfg.cemacoKey)   ? String(cfg.cemacoKey)   : 'cemaco2026',
         gateVersion: (cfg && cfg.gateVersion) ? String(cfg.gateVersion) : 'v1'
       };
     }
-    catch(e){ return { accessKey:'', bodegaKey:'12345', rgisKey:'', gateVersion:'v1' }; }
+    catch(e){ return { accessKey:'', bodegaKey:'12345', rgisKey:'', cemacoKey:'cemaco2026', gateVersion:'v1' }; }
   });
 }
 
@@ -2135,6 +2168,54 @@ function tryGate(){
 }
 document.getElementById('btn-gate-enter').addEventListener('click', tryGate);
 document.getElementById('gate-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') tryGate(); });
+
+/* ── GATE CEMACO — mismo mecanismo que el gate de HPC, clave propia ── */
+var CEMACO_GATE_MARK_KEY = 'cemaco_gate_ok_date';
+
+function cemacoGatePassedToday(){
+  try {
+    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    return sessionStorage.getItem(CEMACO_GATE_MARK_KEY) === today;
+  } catch(e){ return false; }
+}
+function markCemacoGatePassed(){
+  try {
+    var today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Guatemala' });
+    sessionStorage.setItem(CEMACO_GATE_MARK_KEY, today);
+  } catch(e){ /* si sessionStorage falla, simplemente pedirá la clave de nuevo */ }
+}
+
+function showCemacoEmpty(){
+  document.getElementById('pg-gate-cemaco').style.display = 'none';
+  document.getElementById('pg-cemaco').style.display = 'flex';
+}
+
+function tryGateCemaco(){
+  var inp = document.getElementById('gate-cemaco-pass');
+  var err = document.getElementById('gate-cemaco-err');
+  var val = (inp.value || '').trim();
+  if(!val){ err.textContent='Ingresa la clave.'; err.style.display='block'; return; }
+  err.style.display='none';
+  var loading = document.getElementById('gate-cemaco-loading');
+  if(loading) loading.style.display='block';
+  fetchAccessKey().then(function(cfg){
+    if(loading) loading.style.display='none';
+    var key = cfg.cemacoKey || 'cemaco2026';
+    if(val === key){ markCemacoGatePassed(); showCemacoEmpty(); }
+    else { err.textContent='Clave incorrecta.'; err.style.display='block'; inp.value=''; inp.focus(); }
+  }).catch(function(){
+    if(loading) loading.style.display='none';
+    err.textContent='Error al verificar. Reintentá.'; err.style.display='block';
+  });
+}
+document.getElementById('btn-gate-cemaco-enter').addEventListener('click', tryGateCemaco);
+document.getElementById('gate-cemaco-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') tryGateCemaco(); });
+document.getElementById('btn-gate-cemaco-volver').addEventListener('click', function(){
+  document.getElementById('pg-gate-cemaco').style.display = 'none';
+  document.getElementById('gate-cemaco-pass').value = '';
+  document.getElementById('gate-cemaco-err').style.display = 'none';
+  document.getElementById('pg-grupo').style.display = 'flex';
+});
 
 // NOTA: initGate() se llama MÁS ABAJO, después de definir SUPABASE_URL/KEY
 // (si se llama acá, SUPABASE_URL aún es undefined → la lectura de la clave
@@ -2681,7 +2762,11 @@ document.getElementById('mc-grupo-hpc').addEventListener('click', function(){
 });
 document.getElementById('mc-grupo-cemaco').addEventListener('click', function(){
   document.getElementById('pg-grupo').style.display = 'none';
-  document.getElementById('pg-cemaco').style.display = 'flex';
+  if(cemacoGatePassedToday()){
+    showCemacoEmpty();
+  } else {
+    document.getElementById('pg-gate-cemaco').style.display = 'flex';
+  }
 });
 document.getElementById('btn-cemaco-volver').addEventListener('click', function(){
   document.getElementById('pg-cemaco').style.display = 'none';
