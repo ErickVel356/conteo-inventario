@@ -355,14 +355,61 @@ textarea.field-inp{resize:vertical;min-height:72px}
      LOGIN
 ══════════════════════════════════════════════════════════════ -->
 <!-- ══════════════════════════════════════════════════════════════
-     GATE — clave de acceso (FIX 27-may-2026, login v1). Se muestra ANTES
-     del dropdown de nombres. La clave vive en Supabase (key='app_config'),
-     se cambia solo desde ahí. Interruptor de emergencia: si la clave en
-     Supabase está vacía o es 'OFF', el gate se salta (login desactivado).
-     Modo equilibrado: una vez pasada, se recuerda por el día (sessionStorage
-     + fecha); recargar el mismo día NO la vuelve a pedir.
+     SELECCIÓN DE GRUPO — HPC / Cemaco (agregado ago-2026)
+     Esta es la PRIMERA pantalla que ve cualquiera al entrar, antes
+     del gate de clave y del login por nombre. HPC revela el flujo
+     que ya existía (gate -> login -> menú de 3 módulos), sin ningún
+     cambio. Cemaco no tiene módulos aún, así que no pasa por gate
+     ni login: solo muestra un mensaje.
 ══════════════════════════════════════════════════════════════ -->
-<div id="pg-gate" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+<div id="pg-grupo" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:420px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+    <div style="text-align:center;margin-bottom:1.5rem">
+      <div style="font-size:2.5rem;margin-bottom:8px">📦</div>
+      <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:4px">Conteo Físico</h2>
+      <p style="font-size:.85rem;color:#888">¿Con qué grupo vas a trabajar?</p>
+    </div>
+    <div class="menu-grid" style="margin-top:0">
+      <div class="menu-card" id="mc-grupo-hpc">
+        <div class="mc-icon">🏭</div>
+        <div class="mc-title">HPC</div>
+        <div class="mc-sub">Ingresar</div>
+      </div>
+      <div class="menu-card" id="mc-grupo-cemaco">
+        <div class="mc-icon">🏬</div>
+        <div class="mc-title">Cemaco</div>
+        <div class="mc-sub">Ingresar</div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:1.25rem;font-size:.7rem;color:#999;font-family:monospace">Versión: v5.2.32 · 13-jun</div>
+  </div>
+</div>
+
+<!-- PÁGINA CEMACO — vacía por ahora, sin gate ni login -->
+<div id="pg-cemaco" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2.5rem 2rem;width:100%;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center">
+    <div style="font-size:2.6rem;margin-bottom:1rem">🏬</div>
+    <p style="font-size:1.05rem;font-weight:700;color:#333;margin-bottom:.4rem">Cemaco</p>
+    <p style="font-size:.85rem;color:#888">Todavía no hay módulos disponibles para este grupo.</p>
+    <button id="btn-cemaco-volver" style="margin-top:1.5rem;padding:10px 20px;font-size:.85rem;background:#f0f0f0;border:1px solid #ddd;border-radius:10px;cursor:pointer">‹ Volver</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     GATE — clave de acceso (login v1, 27-may-2026)
+     - La clave vive en Supabase: key='app_config', value JSON { "accessKey": "..." }
+     - Interruptor de emergencia: si accessKey es '' o 'OFF' (o no existe el
+       registro), el gate se SALTA y la app entra directo al dropdown de nombres.
+     - Modo equilibrado: al pasar la clave se guarda una marca con la fecha de
+       hoy en sessionStorage; recargar el MISMO día no vuelve a pedir la clave.
+     - El gate NO se mete en el conteo: valida UNA vez al entrar y nada más.
+       Si la clave de Supabase cambia mientras alguien cuenta, el que ya está
+       adentro sigue sin interrupción (sus guardados no dependen del gate).
+     FIX (ago-2026): el gate ahora arranca OCULTO — solo se muestra cuando
+     el usuario elige el grupo "HPC" en #pg-grupo. Antes era la primera
+     pantalla visible de toda la app.
+══════════════════════════════════════════════════════════════ -->
+<div id="pg-gate" style="min-height:100vh;display:none;align-items:center;justify-content:center;background:#f0f0ee;padding:1rem">
   <div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
     <div style="text-align:center;margin-bottom:1.5rem">
       <div style="font-size:2.5rem;margin-bottom:8px">🔒</div>
@@ -490,37 +537,6 @@ textarea.field-inp{resize:vertical;min-height:72px}
 
 
     <!-- ── PÁGINA: MENÚ PRINCIPAL ─────────────────────────────── -->
-    <!-- ── PÁGINA: SELECCIÓN DE GRUPO (HPC / Cemaco) ─────────────────
-         Agregado ago-2026. HPC agrupa los 3 módulos que ya existían
-         (Conteos Hamilton, Conteos CDG, Bodega CDG — estos siguen viviendo
-         dentro de #pg-menu, sin cambios). Cemaco es un grupo nuevo, vacío
-         por ahora, a la espera de que se definan sus módulos.
-    ─────────────────────────────────────────────────────────────────── -->
-    <div id="pg-grupo" class="page">
-      <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Con qué grupo vas a trabajar?</p>
-      <div class="menu-grid">
-        <div class="menu-card" id="mc-grupo-hpc">
-          <div class="mc-icon">🏭</div>
-          <div class="mc-title">HPC</div>
-          <div class="mc-sub">Conteos Hamilton · Conteos CDG · Bodega CDG</div>
-        </div>
-        <div class="menu-card" id="mc-grupo-cemaco">
-          <div class="mc-icon">🏬</div>
-          <div class="mc-title">Cemaco</div>
-          <div class="mc-sub">Próximamente</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PÁGINA: CEMACO — vacía por ahora -->
-    <div id="pg-cemaco" class="page">
-      <div style="text-align:center;padding:3rem 1rem;color:#888">
-        <div style="font-size:2.6rem;margin-bottom:1rem">🏬</div>
-        <p style="font-size:1rem;font-weight:600;color:#555">Cemaco</p>
-        <p style="font-size:.85rem;margin-top:.5rem">Todavía no hay módulos disponibles para este grupo.</p>
-      </div>
-    </div>
-
     <div id="pg-menu" class="page active">
       <p style="font-size:.9rem;color:#666;margin-bottom:.5rem">Bienvenido/a. ¿Qué vas a contar hoy?</p>
       <div id="menu-grid-cards" class="menu-grid" style="visibility:hidden">
@@ -2270,9 +2286,8 @@ function afterLogin(){
     updateSubmenúCounts();
     return;
   }
-  navTo('pg-grupo','📦 Conteo de Inventario');
+  navTo('pg-menu','📦 Conteo de Inventario');
   // Revelar cards del menú — permisos ya resueltos, sin parpadeo
-  // (el menú de módulos sigue viviendo en #pg-menu, detrás de la tarjeta HPC)
   var _mgc = document.getElementById('menu-grid-cards');
   if(_mgc) _mgc.style.visibility = '';
   // BOD: si supervisor, verificar si hay módulo bodega para mostrar su tarjeta
@@ -2324,16 +2339,6 @@ function updateOnlineBar(){
   if(!activos.length){bar.innerHTML='👥 En línea: <em style="color:#aaa">Ninguno</em>';return;}
   bar.innerHTML='👥 En línea: '+activos.map(function(u){return'<span style="margin-right:8px">🟢 '+escH(u)+'</span>';}).join('');
 }
-
-/* ══════════════════════════════════════════════════════════════════
-   SELECCIÓN DE GRUPO (HPC / Cemaco) — agregado ago-2026
-══════════════════════════════════════════════════════════════════ */
-document.getElementById('mc-grupo-hpc').addEventListener('click',function(){
-  navTo('pg-menu','📦 Conteo de Inventario');
-});
-document.getElementById('mc-grupo-cemaco').addEventListener('click',function(){
-  navTo('pg-cemaco','🏬 Cemaco');
-});
 
 /* ══════════════════════════════════════════════════════════════════
    MENÚ PRINCIPAL
@@ -2665,7 +2670,23 @@ var _supaTimer = null;
   });
 })();
 
-initGate();
+// FIX (ago-2026): initGate() ya NO corre automáticamente al cargar la página.
+// Ahora la primera pantalla es #pg-grupo (HPC / Cemaco). Solo al elegir HPC
+// se revela el gate y se dispara initGate() (que decide si pide la clave o
+// si la salta directo al login, exactamente igual que antes).
+document.getElementById('mc-grupo-hpc').addEventListener('click', function(){
+  document.getElementById('pg-grupo').style.display = 'none';
+  document.getElementById('pg-gate').style.display = 'flex';
+  initGate();
+});
+document.getElementById('mc-grupo-cemaco').addEventListener('click', function(){
+  document.getElementById('pg-grupo').style.display = 'none';
+  document.getElementById('pg-cemaco').style.display = 'flex';
+});
+document.getElementById('btn-cemaco-volver').addEventListener('click', function(){
+  document.getElementById('pg-cemaco').style.display = 'none';
+  document.getElementById('pg-grupo').style.display = 'flex';
+});
 
 // FIX (vie 22-may-2026 noche): banner persistente de errores de red.
 // Cuenta los errores consecutivos y muestra detalle. NO se auto-oculta:
