@@ -1551,7 +1551,7 @@ textarea.field-inp{resize:vertical;min-height:72px}
             <th class="tc">Ítems teórico</th><th class="tc">Ítems finales</th>
             <th class="tc">Exactos</th><th class="tc">Sobrantes</th><th class="tc">Faltantes</th>
             <th class="tc">% Cobertura</th><th class="tc">IRA</th>
-            <th class="tc">Costo total Q</th><th>Fecha trabajo</th><th>Clasificación</th>
+            <th class="tc">Costo total Q</th><th>Fecha trabajo</th><th>Responsable</th><th>Clasificación</th>
           </tr></thead><tbody id="br-tbody-reporte"></tbody></table>
         </div>
       </div>
@@ -12773,7 +12773,7 @@ function brRenderReporte(){
   });
 
   if(!filtrados.length){
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">Sin BoomRooms para el filtro seleccionado.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">Sin BoomRooms para el filtro seleccionado.</td></tr>';
     return;
   }
 
@@ -12804,6 +12804,10 @@ function brRenderReporte(){
     var badge = cl==='Auditado'
       ? '<span style="background:#eafaf1;color:#1e7e34;font-size:.72rem;padding:2px 8px;border-radius:8px">Auditado</span>'
       : '<span style="background:#fef9e7;color:#b7770d;font-size:.72rem;padding:2px 8px;border-radius:8px">Pendiente</span>';
+    // FIX (ago-2026): Responsable = nombres asignados a esta tarima en la
+    // pestaña Asignaciones (asignaciones[t]), mismo dato que ya usan
+    // Embarques/Traslados — solo que ahí no se mostraba en Reporte.
+    var responsable = (asignaciones[t] || []).join(', ') || '—';
 
     html += '<tr>'
       +'<td style="font-weight:600">'+brEsc(t)+'</td>'
@@ -12816,6 +12820,7 @@ function brRenderReporte(){
       +'<td class="tc">'+ira+'</td>'
       +'<td class="tc" style="font-family:monospace">Q'+Math.round(costoTotal).toLocaleString('es-GT')+'</td>'
       +'<td style="font-size:.78rem">'+brFechaTrabajo(t)+'</td>'
+      +'<td style="font-size:.78rem">'+brEsc(responsable)+'</td>'
       +'<td>'+badge+'</td>'
       +'</tr>';
   });
@@ -13013,12 +13018,14 @@ function brExport(){
   // Hoja Detalle
   var det = [['Fecha auditoría','Tipo SKU','SKU','Descripción','Ubicación Boomroom',
     'Teórico','Físico','Diferencia','Diferencia ABS','Costo unitario',
-    'Costo diferencia Q','Costo diferencia Q (ABS)','Estatus']];
+    'Costo diferencia Q','Costo diferencia Q (ABS)','Estatus','Responsable']];
 
   brs.forEach(function(t){
     var items = brItems(t);
     var fis   = brFisArr(t);
     var fecha = brFechaTrabajo(t) || today.toLocaleDateString('es-GT');
+    // FIX (ago-2026): Responsable = nombres asignados en Asignaciones
+    var responsableDet = (asignaciones[t] || []).join(', ') || '—';
     items.forEach(function(it,i){
       var sv  = fis[i];
       var fv  = sv && sv.fisico!==null && sv.fisico!==undefined ? Number(sv.fisico) : null;
@@ -13027,20 +13034,20 @@ function brExport(){
       var est = fv!==null ? (d===0?'Exacto':d>0?'Sobrante':'Faltante') : 'Pendiente';
       det.push([fecha,'Teórico',it.sku,it.desc||'',t,
         Number(it.qty||0), fv!==null?fv:'', d!==null?d:'', d!==null?Math.abs(d):'',
-        cu||'', d!==null&&cu?cu*d:'', d!==null&&cu?Math.abs(cu*d):'', est]);
+        cu||'', d!==null&&cu?cu*d:'', d!==null&&cu?Math.abs(cu*d):'', est, responsableDet]);
     });
     for(var j=items.length;j<fis.length;j++){
       var ex=fis[j]; if(!ex||!ex.extraSku) continue;
       var fvEx=ex.fisico!==null&&ex.fisico!==undefined?Number(ex.fisico):0;
       det.push([fecha,'Agregado',ex.sku||'',ex.desc||'',t,
-        0,fvEx,fvEx,fvEx,'','','','Sobrante']);
+        0,fvEx,fvEx,fvEx,'','','','Sobrante',responsableDet]);
     }
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(det), 'Detalle BoomRoom');
 
   // Hoja Resumen
   var sum = [['Tarima (BoomRoom)','Ítems teórico','Ítems finales','Exactos',
-    'Sobrantes','Faltantes','% Cobertura','IRA','Costo total Q','Fecha trabajo','Clasificación']];
+    'Sobrantes','Faltantes','% Cobertura','IRA','Costo total Q','Fecha trabajo','Responsable','Clasificación']];
   brs.forEach(function(t){
     var items=brItems(t); var fis=brFisArr(t);
     var ex=0,so=0,fa=0,ct=0,fin=items.length;
@@ -13053,10 +13060,13 @@ function brExport(){
     });
     for(var j=items.length;j<fis.length;j++){var e=fis[j];if(!e||!e.extraSku)continue;fin++;so++;}
     var cnt=ex+so+fa;
+    // FIX (ago-2026): Responsable = nombres asignados en la pestaña
+    // Asignaciones (asignaciones[t]), igual que ahora se muestra en pantalla.
+    var responsable = (asignaciones[t] || []).join(', ') || '—';
     sum.push([t,items.length,fin,ex,so,fa,
       items.length?Math.round(cnt/items.length*100)+'%':'0%',
       items.length?(ex/items.length*100).toFixed(1)+'%':'—',
-      Math.round(ct),brFechaTrabajo(t),brClasif(t)]);
+      Math.round(ct),brFechaTrabajo(t),responsable,brClasif(t)]);
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sum), 'Resumen BoomRoom');
   XLSX.writeFile(wb, 'Reporte_BoomRoom_'+ds+'.xlsx');
