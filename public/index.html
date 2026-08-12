@@ -12988,8 +12988,8 @@ function brRenderAsign(){
       var t = this.dataset.cont; var name = this.value; if(!name) return;
       if(!asignaciones[t]) asignaciones[t]=[];
       if(asignaciones[t].indexOf(name)<0) asignaciones[t].push(name);
-      fetch('/api/asignar',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({cont:t, nombre:name, usuario:currentUser.name})}).catch(function(){});
+      fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:t, name:name, action:'add', usuario:currentUser.name})}).catch(function(){});
       brRenderAsign();
     });
   });
@@ -13000,8 +13000,8 @@ function brRenderAsign(){
       var t = this.dataset.brCont; var name = this.dataset.name;
       if(!asignaciones[t]) return;
       asignaciones[t] = asignaciones[t].filter(function(a){ return a!==name; });
-      fetch('/api/asignar',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({cont:t, nombre:name, action:'remove', usuario:currentUser.name})}).catch(function(){});
+      fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cont:t, name:name, action:'remove', usuario:currentUser.name})}).catch(function(){});
       brRenderAsign();
     });
   });
