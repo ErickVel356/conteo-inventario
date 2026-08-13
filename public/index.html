@@ -1478,6 +1478,9 @@ textarea.field-inp{resize:vertical;min-height:72px}
           <label style="font-size:.8rem;color:#666;font-weight:600;margin-left:12px">F. Trabajo:</label>
           <input type="date" id="br-fecha-trabajo" style="padding:7px 10px;border:1px solid #ccc;border-radius:8px;font-size:.88rem;min-height:36px">
           <span class="prog" id="br-prog-text" style="font-size:.78rem;color:#888;margin-left:8px"></span>
+          <span id="br-self-assign-wrap" style="display:none">
+            <button class="btn btn-sm btn-blue" id="br-btn-self-assign">📋 Registrarme en este conteo</button>
+          </span>
         </div>
 
         <!-- Buscador SKU/nombre — mismo patrón que Embarques (sku-search) -->
@@ -12565,6 +12568,35 @@ function brRenderSelector(){
 }
 
 /* -- Render Conteo -- igual que Embarques: solo HTML, locks via brApplyConteoLocks -- */
+/* ── Autoasignación BoomRoom (ago-2026) ─────────────────────────────
+   Mismo mecanismo que Embarques (updateSelfAssignBtn/btn-self-assign):
+   cualquier usuario (RGIS incluido, con su nombre real ya capturado al
+   entrar) puede registrarse con un click en la tarima que está contando,
+   sin necesitar que un supervisor lo busque en el dropdown de Asignaciones. */
+function brUpdateSelfAssignBtn(){
+  var wrap = document.getElementById('br-self-assign-wrap'); if(!wrap) return;
+  if(isSup() || !brTarima){ wrap.style.display='none'; return; }
+  var assigned = asignaciones[brTarima] || [];
+  wrap.style.display = (assigned.indexOf(currentUser.name)<0) ? '' : 'none';
+}
+
+var brBtnSelfAssign = document.getElementById('br-btn-self-assign');
+if(brBtnSelfAssign) brBtnSelfAssign.addEventListener('click', function(){
+  if(!brTarima || !currentUser) return;
+  if(!asignaciones[brTarima]) asignaciones[brTarima] = [];
+  if(asignaciones[brTarima].indexOf(currentUser.name) < 0){
+    asignaciones[brTarima].push(currentUser.name);
+    if(typeof addHist === 'function') addHist('Se registró en '+brTarima);
+    fetch('/api/asign',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cont:brTarima, name:currentUser.name, action:'self', usuario:currentUser.name})})
+      .then(function(r){return r.json();})
+      .then(function(d){ if(d.ok){ lastVersion=d.version; pollNow(); } })
+      .catch(function(e){ console.warn('self-assign BoomRoom error:', e); });
+  }
+  document.getElementById('br-self-assign-wrap').style.display='none';
+  if(typeof flashMsg === 'function') flashMsg('status-bar','ok','📋 Registrado en '+brTarima);
+});
+
 function brRenderConteo(){
   brRenderSelector();
   var tbody = document.getElementById('br-tbody-conteo'); if(!tbody) return;
@@ -12665,6 +12697,12 @@ function brRenderConteo(){
   // (mismo motivo que en Embarques: un poll puede disparar brRenderConteo y
   // "perder" visualmente el filtro si no se reaplica).
   if (typeof window.applyBrSkuSearchFilter === 'function') window.applyBrSkuSearchFilter();
+
+  // FIX (ago-2026): mostrar/ocultar el botón de autoasignación — mismo
+  // patrón que Embarques (updateSelfAssignBtn), así cualquier auditor (RGIS
+  // incluido) queda registrado con su nombre real con un solo click, sin
+  // necesitar un supervisor que lo busque en un dropdown.
+  brUpdateSelfAssignBtn();
 }
 
 /* -- brApplyConteoLocks -- identico al patch renderConteo de Embarques --
